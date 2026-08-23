@@ -229,8 +229,39 @@ A covenant SHOULD branch to a recorded error state rather than aborting, so that
 reason. ⚠ A covenant can only explain failures it anticipated; unanticipated ones are reported by
 whoever replays the entry.
 
-⏭ **OPEN, and it should be closed early: the standard error-state shape.** Without a convention every
-covenant invents its own encoding and no tool can read any of them.
+### 9.1 What is standardised: the discriminator, and nothing else
+
+⚠ **Errors are unbounded.** A deslot, an empty depot, a patient outside protocol — no enumeration can
+span applications, and a maintained registry would be exactly the protocol constant §4.5 forbids.
+
+⇒ Two questions, and only the first is universal:
+
+| **that something failed** | ★ all generic tooling needs |
+| **what failed** | application-specific, unbounded, **the covenant's business** |
+
+A covenant that reports errors MUST declare a single-byte state field named **`err`**. Zero means
+success; any non-zero value is a failure code assigned by the covenant itself.
+
+A covenant that cannot fail MUST NOT be required to declare it. Tooling determines the field's presence
+and position from the covenant's source, which is committed in the genesis (§2).
+
+⚠ This is a reserved **field name**, not a protocol field. It adds nothing to §3's entry layout.
+
+### 9.2 Codes name themselves
+
+Error codes MUST be declared in the covenant's source, so that a decompiler can render the name and not
+merely the number:
+
+```basic
+ERROR 3 "deslot: v² > K·r"
+```
+
+⇒ There is no registry, no allocation authority and no reserved range. **The covenant carries its own
+dictionary**, and because the source hash is the covenant's identity (§2, §7), **the meaning of a code is
+fixed at genesis and cannot drift.**
+
+⏭ **OPEN: the `ERROR` statement's surface syntax in BASIC.** The encoding is settled; the spelling
+is not.
 
 ## 10. Conformance
 
@@ -252,6 +283,6 @@ not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
 | §6.1 | anchor transaction output format |
 | §6.2 | recommended confirmation depth |
 | §7 | AST node encoding |
-| §9 | standard error-state shape |
+| §9 | the `ERROR` statement's spelling in BASIC — the encoding is settled (§9.1–9.2) |
 
 An implementation MUST NOT claim conformance to version 1 while any of these remain open.
