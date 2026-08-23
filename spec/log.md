@@ -193,7 +193,28 @@ An anchor MUST commit to:
 an explicit chain between anchors their order is undefined**, and ordering is the only thing anchoring
 buys.
 
-⏭ **OPEN: the anchor transaction's output format.**
+### 6.1a Anchors form a UTXO chain — PushDrop, not OP_RETURN
+
+⏭ **PROPOSED 24 Aug, not yet normative.** A modified BRC-113 carrying its commitment in a **PushDrop**
+output rather than `OP_RETURN`.
+
+⚠ A commitment held in `OP_RETURN` data can be forged or omitted, and **two anchors may both CLAIM the
+same predecessor.** A PushDrop output is **spendable**, so anchor *n* does not cite anchor *n−1* — it
+**SPENDS** it.
+
+| `OP_RETURN` | anchor *n* **claims** to follow *n−1* ⚠ two anchors can both claim it |
+| ★★★ **PushDrop** | anchor *n* **spends** *n−1* ⇒ **only one ever can.** Double-spend protection yields anchor uniqueness for free |
+
+⇒ **The anchor sequence becomes ENFORCED rather than ASSERTED**, and a log cannot equivocate about its
+anchors at all: conflicting anchored heads would require a double spend, which proof of work prevents.
+★ Strictly stronger than §6.1's requirement 2, which it supersedes if adopted.
+★ And the output carries value, so it may hold the satoshi funding the next anchor — **a self-funding
+anchor chain**, the same pattern as an agent battery.
+
+⏭ **OPEN: the PushDrop field layout, and whether the anchor output is itself a covenant** (e.g. refusing
+to advance except under the log's key, or except on a well-formed head).
+
+⏭ **OPEN: the anchor transaction's output format** — see 6.1a.
 
 ### 6.2 Confirmed, not attempted
 
