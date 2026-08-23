@@ -1,0 +1,525 @@
+{
+  "spec": "jetmora-conformance",
+  "version": 1,
+  "basis": "Bitcoin 0.1.3 (MIT) — github.com/trottier/original-bitcoin src/script.cpp",
+  "note": "Expected results are hand-derived from the 0.1.3 source. oracle=bsv can be confirmed by an independent BSV interpreter; oracle=013 CANNOT (BSV differs); oracle=jetmora is our own decision.",
+  "vectors": [
+    {
+      "id": "num.zero",
+      "oracle": "bsv",
+      "script": "00",
+      "stack": [
+        ""
+      ],
+      "result_hash": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+    },
+    {
+      "id": "num.one",
+      "oracle": "bsv",
+      "script": "51",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "num.sixteen",
+      "oracle": "bsv",
+      "script": "60",
+      "stack": [
+        "10"
+      ],
+      "result_hash": "af340aa58ea7d72c2f9a7405f3734167bb27dd2a520d216addef65f8362102b6"
+    },
+    {
+      "id": "num.negone",
+      "oracle": "bsv",
+      "script": "4f",
+      "stack": [
+        "81"
+      ],
+      "result_hash": "3bcc2d6d48ffeade5ac5af3ee7acd7875082e50ab5e77d9d52149ddf13ef21c1"
+    },
+    {
+      "id": "num.128",
+      "oracle": "bsv",
+      "script": "028000",
+      "stack": [
+        "8000"
+      ],
+      "result_hash": "b512ea0404c4c7611e90f05bf100c51c50c5e2d3e1b85848f35b8155e56a33db"
+    },
+    {
+      "id": "num.neg128",
+      "oracle": "bsv",
+      "script": "028080",
+      "stack": [
+        "8080"
+      ],
+      "result_hash": "18b22814bc2f7085f5c5bb7d175a692b7e58b1632b631734b512e096c59915e5"
+    },
+    {
+      "id": "num.negzero",
+      "oracle": "bsv",
+      "script": "0180",
+      "stack": [
+        "80"
+      ],
+      "result_hash": "3be90d393f91241448d7dceadad32d91c1c94f307805937b46ed01ea669c17c3"
+    },
+    {
+      "id": "add.small",
+      "oracle": "bsv",
+      "script": "525393",
+      "stack": [
+        "05"
+      ],
+      "result_hash": "bc5959f43bc6e47175374b6716e53c9a7d72c59424c821336995bad760d9aeb3"
+    },
+    {
+      "id": "sub.negative",
+      "oracle": "bsv",
+      "script": "525394",
+      "stack": [
+        "81"
+      ],
+      "result_hash": "3bcc2d6d48ffeade5ac5af3ee7acd7875082e50ab5e77d9d52149ddf13ef21c1"
+    },
+    {
+      "id": "sub.tozero",
+      "oracle": "bsv",
+      "script": "535394",
+      "stack": [
+        ""
+      ],
+      "result_hash": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+    },
+    {
+      "id": "mul.small",
+      "oracle": "bsv",
+      "script": "535495",
+      "stack": [
+        "0c"
+      ],
+      "result_hash": "6b6daa8334bbcc8f6b5906b6c04be041d92700b74024f73f50e0a9f0dae5f06f"
+    },
+    {
+      "id": "mul.signs",
+      "oracle": "bsv",
+      "script": "01875395",
+      "stack": [
+        "95"
+      ],
+      "result_hash": "360671abc40afd33ae0091e87e589fc320bf9e3dd1db0a89a2ba3d10ec953e85"
+    },
+    {
+      "id": "div.trunc",
+      "oracle": "bsv",
+      "script": "01075296",
+      "stack": [
+        "03"
+      ],
+      "result_hash": "c79b932e1e1da3c0e098e5ad2c422937eb904a76cf61d83975a74a68fbb04b99"
+    },
+    {
+      "id": "div.negtrunc",
+      "oracle": "bsv",
+      "script": "01875296",
+      "stack": [
+        "83"
+      ],
+      "result_hash": "69fcdc41817bb7f7b267652f2666d476f3e91138daaceafda3061dbdfc58537e"
+    },
+    {
+      "id": "mod.sign",
+      "oracle": "bsv",
+      "script": "01875297",
+      "stack": [
+        "81"
+      ],
+      "result_hash": "3bcc2d6d48ffeade5ac5af3ee7acd7875082e50ab5e77d9d52149ddf13ef21c1"
+    },
+    {
+      "id": "1add",
+      "oracle": "bsv",
+      "script": "558b",
+      "stack": [
+        "06"
+      ],
+      "result_hash": "44602a999abbebedf7de0ae1318e4f57e3cb1d67e482a65f9657f7541f3fe4bb"
+    },
+    {
+      "id": "2mul",
+      "oracle": "bsv",
+      "script": "558d",
+      "stack": [
+        "0a"
+      ],
+      "result_hash": "c04b5bb1a5b2eb3e9cd4805420dba5a9d133da5b7adeeafb5474c4adae9faa80"
+    },
+    {
+      "id": "2div",
+      "oracle": "bsv",
+      "script": "558e",
+      "stack": [
+        "02"
+      ],
+      "result_hash": "a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222"
+    },
+    {
+      "id": "negate",
+      "oracle": "bsv",
+      "script": "558f",
+      "stack": [
+        "85"
+      ],
+      "result_hash": "d02af1cbf0fb1d6ef9d5c489ba52c2d1f2034e7ffd4c94a4ff988e6dccfaf034"
+    },
+    {
+      "id": "abs.neg",
+      "oracle": "bsv",
+      "script": "018590",
+      "stack": [
+        "05"
+      ],
+      "result_hash": "bc5959f43bc6e47175374b6716e53c9a7d72c59424c821336995bad760d9aeb3"
+    },
+    {
+      "id": "bignum.add",
+      "oracle": "bsv",
+      "script": "1a00000000000000000000000000000000000000000000000000015193",
+      "stack": [
+        "0100000000000000000000000000000000000000000000000001"
+      ],
+      "result_hash": "4eab8e5b43754ce7fcde0b3b9e44c73d11085068db46b7a8ee014f2745e38dc5"
+    },
+    {
+      "id": "bignum.mul",
+      "oracle": "bsv",
+      "script": "1a00000000000000000000000000000000000000000000000000015295",
+      "stack": [
+        "0000000000000000000000000000000000000000000000000002"
+      ],
+      "result_hash": "6892f5ffb0b36cb5399d22394de08cfa34791b23f9f91a9d614aff3c6328a540"
+    },
+    {
+      "id": "lshift.numeric",
+      "oracle": "013",
+      "script": "515898",
+      "stack": [
+        "0001"
+      ],
+      "result_hash": "9463926d4640a53a0cf1ac00657361f5a6d64fbc554df30721cdacf503aebc2b"
+    },
+    {
+      "id": "rshift.numeric",
+      "oracle": "013",
+      "script": "0200015899",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "lshift.negative",
+      "oracle": "013",
+      "script": "51018198",
+      "error": "negative shift"
+    },
+    {
+      "id": "invert.bytes",
+      "oracle": "bsv",
+      "script": "020ff083",
+      "stack": [
+        "f00f"
+      ],
+      "result_hash": "bb347593412cecc83a2cab48cb35dd811f9887fd47059f60b1ab811536626af4"
+    },
+    {
+      "id": "and.bytes",
+      "oracle": "bsv",
+      "script": "02ff0f020fff84",
+      "stack": [
+        "0f0f"
+      ],
+      "result_hash": "d14e88dff626b1e40d9ab20cd0ee907e150824f2d25f4d750e295a9bb9750f79"
+    },
+    {
+      "id": "or.bytes",
+      "oracle": "bsv",
+      "script": "02f000020f0085",
+      "stack": [
+        "ff00"
+      ],
+      "result_hash": "33c85d5661a704d2ffb647cb1c85f5350d813047ab867dbd4ba7a6b0f70b71c8"
+    },
+    {
+      "id": "xor.bytes",
+      "oracle": "bsv",
+      "script": "02ff00020f0086",
+      "stack": [
+        "f000"
+      ],
+      "result_hash": "fa62cf896422bc54c86720093e99282705b36166b974c08c31f332462d9ebde7"
+    },
+    {
+      "id": "cat",
+      "oracle": "bsv",
+      "script": "01aa01bb7e",
+      "stack": [
+        "aabb"
+      ],
+      "result_hash": "b2d4aaa795128d1bf9bac68fc5222b01f2e8dc1f05c69556f4467fa8953cd309"
+    },
+    {
+      "id": "substr",
+      "oracle": "013",
+      "script": "05010203040551537f",
+      "stack": [
+        "020304"
+      ],
+      "result_hash": "1dc62143dde40596597e4e5f9ec10d6fa23a48a19b04a68f13405f5966387586"
+    },
+    {
+      "id": "left",
+      "oracle": "013",
+      "script": "0501020304055280",
+      "stack": [
+        "0102"
+      ],
+      "result_hash": "36df8eaa58f53c3bfb6bcf9dfbe9617ef023b192bb7c4a479926198a463401dc"
+    },
+    {
+      "id": "right",
+      "oracle": "013",
+      "script": "0501020304055281",
+      "stack": [
+        "030405"
+      ],
+      "result_hash": "e42013bf131b537052493dc0f96afd8af62fef49392b29f6933d541f5acdd905"
+    },
+    {
+      "id": "size",
+      "oracle": "bsv",
+      "script": "0301020382",
+      "stack": [
+        "010203",
+        "03"
+      ],
+      "result_hash": "3577e1568ecea87c22db9c83fa640771c34dc1906345a621f2ba211128a1ddbb"
+    },
+    {
+      "id": "numequal.true",
+      "oracle": "bsv",
+      "script": "53539c",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "lessthan",
+      "oracle": "bsv",
+      "script": "52539f",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "min",
+      "oracle": "bsv",
+      "script": "5253a3",
+      "stack": [
+        "02"
+      ],
+      "result_hash": "a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222"
+    },
+    {
+      "id": "within.in",
+      "oracle": "bsv",
+      "script": "535255a5",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "within.out",
+      "oracle": "bsv",
+      "script": "565255a5",
+      "stack": [
+        ""
+      ],
+      "result_hash": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+    },
+    {
+      "id": "dup",
+      "oracle": "bsv",
+      "script": "5776",
+      "stack": [
+        "07",
+        "07"
+      ],
+      "result_hash": "5eb55f4e05c338015d14cbd351d4cf7d5d4506446c911583890e4b06613b4802"
+    },
+    {
+      "id": "swap",
+      "oracle": "bsv",
+      "script": "51527c",
+      "stack": [
+        "02",
+        "01"
+      ],
+      "result_hash": "d6c3e1e7bc6b234efe65a74afc471828b649ca9ea0e9bba5775eff7d0d230692"
+    },
+    {
+      "id": "rot",
+      "oracle": "bsv",
+      "script": "5152537b",
+      "stack": [
+        "02",
+        "03",
+        "01"
+      ],
+      "result_hash": "99a296cbc1bfc914da1013b6bd0e2213db8a1002c09847a5a03b9a80ad687d6c"
+    },
+    {
+      "id": "pick",
+      "oracle": "bsv",
+      "script": "5152535279",
+      "stack": [
+        "01",
+        "02",
+        "03",
+        "01"
+      ],
+      "result_hash": "eb45276a093938e6e3d8140629c25fe4d86e818160c98d0a80730e02b1bb4995"
+    },
+    {
+      "id": "roll",
+      "oracle": "bsv",
+      "script": "515253527a",
+      "stack": [
+        "02",
+        "03",
+        "01"
+      ],
+      "result_hash": "99a296cbc1bfc914da1013b6bd0e2213db8a1002c09847a5a03b9a80ad687d6c"
+    },
+    {
+      "id": "depth",
+      "oracle": "bsv",
+      "script": "515174",
+      "stack": [
+        "01",
+        "01",
+        "02"
+      ],
+      "result_hash": "833b6ec8f3b41413aac655e0ef7c635f800cb51e20fda88988c7bc8cbc6ce2c3"
+    },
+    {
+      "id": "altstack",
+      "oracle": "bsv",
+      "script": "596b6c",
+      "stack": [
+        "09"
+      ],
+      "result_hash": "ac9e61d54eb6967e212c06aab15408292f8558c48f06f9d705150063c68753b0"
+    },
+    {
+      "id": "if.taken",
+      "oracle": "bsv",
+      "script": "516357675868",
+      "stack": [
+        "07"
+      ],
+      "result_hash": "ca6c6588fa01171b200740344d354e8548b7470061fb32a34f4feee470ec281f"
+    },
+    {
+      "id": "if.nottaken",
+      "oracle": "bsv",
+      "script": "006357675868",
+      "stack": [
+        "08"
+      ],
+      "result_hash": "9e6282e4f25e370ce617e21d6fe265e88b9e7b8682cf00059b9d128d9381f09d"
+    },
+    {
+      "id": "verify.pass",
+      "oracle": "bsv",
+      "script": "515169",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "verify.fail",
+      "oracle": "bsv",
+      "script": "0069",
+      "error": "VERIFY failed"
+    },
+    {
+      "id": "ver.pushes",
+      "oracle": "jetmora",
+      "script": "62",
+      "note": "0.1.3 pushes VERSION=103. Jetmora pushes the ENTRY-BOUND protocol version."
+    },
+    {
+      "id": "verif.atleast",
+      "oracle": "jetmora",
+      "script": "01676551670068",
+      "note": "true iff running version >= 103. Entry-bound in jetmora."
+    },
+    {
+      "id": "sha256.empty",
+      "oracle": "bsv",
+      "script": "00a8",
+      "stack": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "result_hash": "41f19f0d37a75165b073c9faca82ecd5f15ec6cb170c2caf41ecbd58cf58c6b3"
+    },
+    {
+      "id": "hash256.empty",
+      "oracle": "bsv",
+      "script": "00aa",
+      "stack": [
+        "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+      ],
+      "result_hash": "1defe0ed38d49e20d9dbd53eed83ed5f4e0d97c592182c42c1ed3c57c46505a2"
+    },
+    {
+      "id": "err.underflow",
+      "oracle": "bsv",
+      "script": "93",
+      "error": "stack underflow"
+    },
+    {
+      "id": "return.skipsToEnd",
+      "oracle": "bsv",
+      "script": "516a",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "return.dropsRest",
+      "oracle": "bsv",
+      "script": "516a52",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "err.div0",
+      "oracle": "013",
+      "script": "510096",
+      "error": "division by zero",
+      "note": "⚠ UNVERIFIED — 0.1.3 divides via BIGNUM; confirm the failure mode."
+    }
+  ]
+}

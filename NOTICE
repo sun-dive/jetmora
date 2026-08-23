@@ -1,0 +1,25 @@
+jetmora
+Copyright 2026 sun-dive
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this work except in compliance with the License. You may obtain a copy of the
+License in the LICENSE file, or at http://www.apache.org/licenses/LICENSE-2.0
+
+────────────────────────────────────────────────────────────────────────────────
+THIRD-PARTY AND DERIVED MATERIAL
+
+Opcode semantics and numbering are derived from Bitcoin version 0.1.3
+(src/script.h, src/script.cpp), Copyright (c) 2009 Satoshi Nakamoto, released
+under the MIT/X11 licence. That permission notice is preserved here as required.
+
+NOT derived from, and NOT licensed under, the Open BSV License. No code or text
+from any Open BSV Licensed work is included in this repository. The @bsv/sdk
+package is used ONLY by tools/crosscheck.mjs, to establish BSV compatibility —
+which is use on BSV — and is neither redistributed nor vendored here.
+
+────────────────────────────────────────────────────────────────────────────────
+PUBLIC DOMAIN CARVE-OUT
+
+vectors/core.json is dedicated to the public domain under CC0 1.0 (see
+vectors/LICENSE). The vectors ARE the specification: an implementation that
+reproduces them must not thereby become a derivative work of it.
