@@ -7,8 +7,9 @@
 import { VECTORS } from './vectors.mjs'
 import { stackHash } from './hash.mjs'
 
-const SDK = process.env.BSV_SDK ??
-  '/home/sundive/Documents/GitHub/grafverse/mint/node_modules/@bsv/sdk/dist/esm/mod.js'
+// Resolve the SDK however the caller has it. Set BSV_SDK to an absolute path if it is not
+// installed alongside this repo:  BSV_SDK=/path/to/@bsv/sdk/dist/esm/mod.js node tools/crosscheck.mjs
+const SDK = process.env.BSV_SDK ?? '@bsv/sdk'
 const { Spend, LockingScript, UnlockingScript } = await import(SDK)
 
 const hx = b => Buffer.from(b).toString('hex')

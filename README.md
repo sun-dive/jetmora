@@ -50,7 +50,7 @@ and an implementation must not claim conformance while any remain.
 | `tools/vectors.mjs` | the vectors, hand-derived from the MIT source |
 | `tools/hash.mjs` | the O(1) comparison hash |
 | `tools/emit.mjs` | `node tools/emit.mjs` → writes `vectors/core.json` |
-| `tools/crosscheck.mjs` | `node tools/crosscheck.mjs` → differential check of the `bsv` subset |
+| `tools/crosscheck.mjs` | `node tools/crosscheck.mjs` → differential check of the `bsv` subset. ⚠ Needs `@bsv/sdk` resolvable; set `BSV_SDK=/abs/path/to/@bsv/sdk/dist/esm/mod.js` if it is not installed alongside |
 
 ⚠ **Licence position.** Expected results are derived from **Bitcoin 0.1.3, which is MIT/X11**.
 `crosscheck.mjs` uses `@bsv/sdk` (Open BSV Licence) **solely to establish BSV compatibility** — that is
