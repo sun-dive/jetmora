@@ -1,0 +1,8 @@
+# jetmora.org — © 2026 sun-dive
+# ⚠ Directory listing is ON by default on this host: an empty docroot served "Index of /".
+# index.html covers the root, but spec/ and vectors/ would otherwise be browsable listings.
+Options -Indexes
+
+# Serve the spec and the vectors as readable text rather than prompting a download.
+AddType text/plain .md
+AddCharset UTF-8 .md .json .html
