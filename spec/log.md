@@ -1,0 +1,257 @@
+# jetmora log — specification
+
+**Status: DRAFT, 24 August 2026.** Normative keywords MUST / MUST NOT / SHOULD / MAY are used in the
+usual sense. ⏭ marks a decision not yet made; those are the only parts an implementer may not rely on.
+
+This document says **what**. The reasoning lives elsewhere and is not normative.
+
+---
+
+## 1. What a log is
+
+A **log** is an append-only merkle tree of **entries**, published by one **operator**, whose tree head is
+periodically **anchored** into a proof-of-work chain.
+
+A log MUST NOT be understood as a chain, a consensus system, or a settlement layer. **It is a witness.**
+It records what it was given. It does not adjudicate.
+
+⇒ Three consequences, each normative and each easy to get wrong:
+
+- a log MUST NOT reject an entry because the entry's state transition is invalid (§4.3)
+- a log MUST NOT choose between conflicting entries (§4.4)
+- a log MUST NOT be required to execute Bitcoin Script at all (§4.1)
+
+## 2. Covenant identity
+
+A **covenant** is identified by its **genesis**, never by the log that carries it.
+A covenant is *"the thing descended from genesis G"*; a log merely witnessed some of its history.
+
+A genesis commitment MUST contain:
+
+| `source_hash` | the hash of the covenant's **BASIC source**, canonicalised per §7 |
+| `script` | the compiled locking script |
+| `state` | the initial state |
+| `authorised` | the key, key set, or the literal `open`, that may append (§4.2) |
+
+The genesis commitment SHOULD be timestamped in its own proof-of-work transaction, independent of any
+log. A covenant whose genesis is only witnessed by a log inherits that log's honesty for its identity,
+which the rest of this specification does not otherwise require.
+
+⏭ **OPEN: the genesis commitment's serialization and its on-chain envelope.**
+
+## 3. The entry
+
+**An entry IS a transaction.** It MUST serialize such that the sighash preimage computed over it has the
+BIP143 layout, so that `OP_PUSH_TX` reads identical bytes to those it reads on a proof-of-work chain.
+
+| field | jetmora meaning |
+|---|---|
+| `nVersion` | **the protocol version in force when the entry was appended.** This is the value `OP_VER` pushes (§6.2) |
+| `hashPrevouts` | hash of the previous-entry references consumed |
+| `hashSequence` | hash of the `nSequence` values |
+| `outpoint` | (previous entry hash, output index) |
+| `scriptCode` | the covenant's locking script |
+| `value` | 8 bytes. An **application-defined quantity**. It MUST NOT be interpreted as money, and MAY be zero |
+| `nSequence` | **the tick index.** Time in a covenant MUST derive from this and MUST NOT derive from any clock (§6.3) |
+| `hashOutputs` | hash of the successor states. An entry MUST support **more than one** output |
+| `nLocktime` | MUST be 0 in version 1 |
+| sighash type | MUST be `0x01` (`SIGHASH_ALL`). `FORKID` MUST NOT be set (§6.4) |
+
+### 3.1 Canonical serialization
+
+There MUST be exactly one byte string per entry.
+
+An implementation MUST NOT accept two encodings of the same entry, MUST NOT define optional fields, and
+MUST NOT permit any integer encoding that admits more than one form.
+
+⚠ This is not tidiness. `OP_PUSH_TX` is secure only because the verifier recomputes the preimage and
+compares; **two encodings would let a signer push a preimage that does not describe what they did.**
+
+### 3.2 Self-containment
+
+An entry MUST contain everything needed to replay it: the unlocking data, every input, and any value the
+script reads. An entry that cannot be replayed from its own contents is malformed, **even if every party
+present at the time could have replayed it.**
+
+## 4. Appending
+
+### 4.1 What an operator checks
+
+On receiving an entry an operator MUST check, and MUST check only:
+
+1. the entry is well-formed and canonically serialized (§3.1)
+2. the entry is signed by a key permitted by the covenant's genesis `authorised` field
+
+An operator MUST NOT execute the covenant's script as a condition of appending.
+
+⚠ Checking **who signed** is not checking **whether it is valid**. Only the second requires an
+interpreter, and this specification does not require one in a log.
+
+### 4.2 Who may append
+
+The genesis `authorised` field governs. A covenant MAY declare `open`, in which case any signature is
+permitted and the operator's own policy (§4.5) is the only limit.
+
+### 4.3 Invalid transitions
+
+An operator MUST NOT reject an entry because its state transition would fail the covenant's script.
+
+⏭ **OPEN — deliberately: whether such an entry is *valid*.** It is recorded either way. Whether it forms
+part of the covenant's history is not settled, and MUST NOT be settled by an operator's admission policy.
+
+### 4.4 Conflicting entries
+
+An operator MUST NOT reject an entry because another entry already exists at the same
+`(covenant, sequence)`, and MUST NOT mark, rank, or otherwise adjudicate between them.
+
+⚠ Rejecting a duplicate would make the operator decide first-seen, which is consensus in miniature.
+Both are recorded; two conflicting entries at one sequence are **a fact about the signer**, faithfully
+witnessed. Resolving them is a reader's concern.
+
+### 4.5 Operator policy
+
+An operator MAY impose any admission policy that is not a check on validity: a price, an account, a rate
+limit, a proof of work, an allow-list. An operator SHOULD publish its policy.
+
+A log's limits — memory, execution time, entry size — are **operator policy and MUST NOT be protocol
+constants.** ⚠ A limit written into the protocol becomes a number nobody can promise to hold.
+
+## 5. The tree
+
+### 5.1 Construction — RFC 6962, NOT Bitcoin's tree
+
+Merkle tree hashing MUST follow **RFC 6962 §2**:
+
+```
+leaf hash  = SHA-256( 0x00 ‖ entry_bytes )
+node hash  = SHA-256( 0x01 ‖ left ‖ right )
+empty tree = SHA-256( )
+```
+
+For an odd number of nodes the tree MUST be split at the largest power of two less than *n*. **A node
+MUST NOT be duplicated and hashed with itself.**
+
+⚠⚠ **Bitcoin's merkle tree MUST NOT be used here.** It duplicates the final node on an odd count
+(`i2 = min(i+1, nSize-1)`, 0.1.3 `main.h`), so distinct entry lists can produce identical roots
+(CVE-2012-2459); and it applies no domain separation, so an internal node can be presented as a leaf.
+
+⚠ **Two tree types exist in this system and MUST NOT be conflated:** RFC 6962 for jetmora logs, and the
+carrying chain's own tree for anchor inclusion proofs (§6.1, and BRC-113 for BSV).
+
+### 5.2 Heads
+
+An operator MUST publish signed tree heads containing at least: tree size, root hash, and a signature by
+the operator's key. A head MUST NOT be modified once published.
+
+⏭ **OPEN: the signed-head serialization, and the signature scheme.**
+
+### 5.3 Proofs
+
+A log MUST serve, for any entry it holds:
+
+| **inclusion proof** | entry is in the tree with root R |
+| **consistency proof** | tree at root R₂ contains everything R₁ did, appended only, nothing rewritten |
+
+⚠ The consistency proof is the property a proof-of-work chain does not provide, and it is what makes an
+append-only claim checkable rather than trusted.
+
+## 6. Anchoring
+
+### 6.1 What an anchor is
+
+An anchor is a transaction on a proof-of-work chain committing to a tree head. Its purpose is to make
+**one history** objective — nothing else in this specification provides that.
+
+An anchor MUST commit to:
+
+1. the tree head being anchored
+2. **the previous anchor's transaction id**
+
+⚠ Requirement 2 is not redundant. Two anchors may be mined into one block, or out of order; **without
+an explicit chain between anchors their order is undefined**, and ordering is the only thing anchoring
+buys.
+
+⏭ **OPEN: the anchor transaction's output format.**
+
+### 6.2 Confirmed, not attempted
+
+A root is **anchored** only when its anchoring transaction has reached the log's published confirmation
+depth. A log MUST publish its **last confirmed** anchor, and MUST NOT present an attempted or
+unconfirmed anchor as an anchor.
+
+⚠ A failed anchor — underpriced, never mined, reorganised away — otherwise leaves a silent gap.
+
+⏭ **OPEN: recommended confirmation depth.**
+
+### 6.3 Cadence
+
+Anchor cadence is operator policy and SHOULD be published. It bounds, simultaneously:
+
+- how far a signed head may be backdated
+- how long two conflicting heads may both appear current
+- **how much history is stranded if the operator turns hostile** (§8)
+
+⇒ A log that stops anchoring SHOULD be treated as failing, whatever else it continues to serve.
+
+## 7. Source canonicalisation
+
+`source_hash` (§2) MUST be computed over the **parsed abstract syntax tree**, not the source text.
+
+⚠ Hashing text makes whitespace, comments and capitalisation significant, so a reformatted program
+becomes a different program. Hashing the tree makes formatting irrelevant and meaning significant.
+
+The AST serialization MUST itself be canonical, per the requirements of §3.1.
+
+⏭ **OPEN: the AST node encoding.**
+
+## 8. Portability
+
+A covenant MUST be continuable in another log. **A log MUST NOT be able to claim exclusivity over a
+covenant, and a covenant's script MUST NOT reference the log it runs in.**
+
+⚠ Without this, an operator who refuses to append can freeze a covenant permanently.
+
+A **port entry** MUST contain: `genesis`, `state`, `script`, `sequence`, the source log's public key,
+the source root, an inclusion proof, the source log's signature over that root, the anchor if one
+exists, and a signature by an authorised key (§4.2).
+
+A receiving log MUST verify only: the inclusion proof against the source root; the source operator's
+signature; the anchor, if presented; and the authorising signature. **It MUST NOT replay the covenant's
+history.**
+
+★ A port from an **anchored** root is final. A port from a signed-but-unanchored head is portable but
+contestable — the source operator cannot un-sign it, but nothing has yet collapsed the possibility that
+they signed two.
+
+## 9. Error states
+
+A covenant SHOULD branch to a recorded error state rather than aborting, so that a refusal carries a
+reason. ⚠ A covenant can only explain failures it anticipated; unanticipated ones are reported by
+whoever replays the entry.
+
+⏭ **OPEN, and it should be closed early: the standard error-state shape.** Without a convention every
+covenant invents its own encoding and no tool can read any of them.
+
+## 10. Conformance
+
+An implementation is conformant if it reproduces `vectors/core.json`. Vectors carry a result hash so
+comparison is O(1):
+
+```
+H(result) = SHA-256( for each stack item: varint(len) ‖ bytes )
+```
+
+⚠ Vectors marked `013` describe behaviour where **Bitcoin 0.1.3 and BSV differ**; a BSV interpreter is
+not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
+
+## 11. Version 1 summary of open items
+
+| §2 | genesis commitment serialization and on-chain envelope |
+| §4.3 | whether an invalid transition is *valid* — deliberately open |
+| §5.2 | signed-head serialization and signature scheme |
+| §6.1 | anchor transaction output format |
+| §6.2 | recommended confirmation depth |
+| §7 | AST node encoding |
+| §9 | standard error-state shape |
+
+An implementation MUST NOT claim conformance to version 1 while any of these remain open.

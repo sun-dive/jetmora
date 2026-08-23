@@ -37,6 +37,12 @@ continues; the stack survives. ⚠ BTC made it an unconditional failure in 2010.
 ★ This one was found by the cross-check on its first run, correcting a vector written from familiarity
 rather than from the source.
 
+## The specification
+
+`spec/log.md` — what a log is, the entry format, appending, the tree, anchoring, portability.
+⚠ It says **what**; the reasoning lives elsewhere and is not normative. Seven items are marked ⏭ OPEN
+and an implementation must not claim conformance while any remain.
+
 ## Files
 
 | `tools/ops.mjs` | the 0.1.3 opcode table. ⚠ `0x7f`–`0x81` are `SUBSTR`/`LEFT`/`RIGHT`, **not** `SPLIT`/`NUM2BIN`/`BIN2NUM` |
