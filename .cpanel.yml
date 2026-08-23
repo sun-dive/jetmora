@@ -1,0 +1,21 @@
+---
+# jetmora — © 2026 sun-dive — Apache License 2.0 (see LICENSE).
+# cPanel Git™ Version Control deployment for jetmora.org.
+# In cPanel → Git Version Control: "Update from Remote", THEN "Deploy HEAD Commit". Push ≠ live.
+# DEPLOYPATH mirrors the house convention ($HOME/<domain>/), as grafverse.com and bitgraf.com do.
+#
+# ⚠ A NEW FILE IS INVISIBLE UNTIL IT IS LISTED HERE. Adding a page to site/ is not enough.
+# ⚠ This repo deploys ONLY its own files to ONLY its own docroot. It must never touch another site's.
+deployment:
+  tasks:
+    - export DEPLOYPATH="$HOME/jetmora.org/"
+    - /bin/mkdir -p "$DEPLOYPATH"
+    - /bin/cp site/index.html "$DEPLOYPATH/index.html"      # the paper — crawlable, self-contained, no CDN
+    # The specification and the vectors are published as static files so they can be cited and fetched.
+    # ⚠ vectors/core.json is CC0 and IS the specification — an implementation reproducing it is conformant.
+    - /bin/mkdir -p "$DEPLOYPATH/spec" && /bin/cp spec/log.md "$DEPLOYPATH/spec/log.md"
+    - /bin/mkdir -p "$DEPLOYPATH/vectors" && /bin/cp vectors/core.json "$DEPLOYPATH/vectors/core.json"
+    - /bin/cp vectors/LICENSE "$DEPLOYPATH/vectors/LICENSE"  # CC0 1.0, alongside the file it dedicates
+    - /bin/cp LICENSE "$DEPLOYPATH/LICENSE"                  # Apache-2.0
+    - /bin/cp NOTICE "$DEPLOYPATH/NOTICE"                    # derivation + the Open BSV position
+    - echo "jetmora.org ← $(git rev-parse --short HEAD)"

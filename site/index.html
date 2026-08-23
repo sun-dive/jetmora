@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>jetmora — verifiable computation</title>
+<meta name="description" content="Verifiable computation on anchored transparency logs. Run a program anywhere, hash the result, compare. No coin, no consensus, no proofs to trust — just the work, checkable by anyone.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🐟</text></svg>">
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#1a1a19; --dim:#5c5c58; --rule:#e2e0da;
+    --accent:#8a4b2a; --card:#f4f2ec; --code:#f0eee7;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+    --bg:#131311; --fg:#e8e6e0; --dim:#9c9a93; --rule:#2c2b28;
+    --accent:#d99460; --card:#1c1b19; --code:#1e1d1a;
+  }}
+  :root[data-theme=dark]{
+    --bg:#131311; --fg:#e8e6e0; --dim:#9c9a93; --rule:#2c2b28;
+    --accent:#d99460; --card:#1c1b19; --code:#1e1d1a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:17px/1.65 ui-serif,Georgia,'Times New Roman',serif;
+    -webkit-text-size-adjust:100%}
+  .wrap{max-width:44rem;margin:0 auto;padding:3.5rem 1.5rem 6rem}
+  h1{font-size:2.4rem;line-height:1.1;margin:0 0 .3rem;letter-spacing:-.02em}
+  h1 small{display:block;font-size:1rem;font-weight:400;color:var(--dim);
+    letter-spacing:.02em;margin-top:.7rem;font-family:ui-sans-serif,system-ui,sans-serif}
+  h2{font-size:1.35rem;margin:3.2rem 0 .8rem;line-height:1.25;letter-spacing:-.01em}
+  h3{font-size:1.05rem;margin:2rem 0 .5rem;color:var(--accent);
+    font-family:ui-sans-serif,system-ui,sans-serif;letter-spacing:.01em}
+  p{margin:0 0 1.1rem}
+  hr{border:0;border-top:1px solid var(--rule);margin:3rem 0}
+  a{color:var(--accent)}
+  .lede{font-size:1.2rem;line-height:1.55}
+  .key{background:var(--card);border-left:3px solid var(--accent);
+    padding:1rem 1.2rem;margin:1.6rem 0;border-radius:0 4px 4px 0}
+  .key p:last-child{margin:0}
+  code,pre{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace}
+  code{background:var(--code);padding:.12em .35em;border-radius:3px;font-size:.88em}
+  pre{background:var(--code);padding:1rem 1.1rem;border-radius:4px;overflow-x:auto;
+    font-size:.85rem;line-height:1.5;margin:1.4rem 0}
+  pre code{background:none;padding:0;font-size:1em}
+  .tbl{width:100%;border-collapse:collapse;margin:1.4rem 0;font-size:.95rem;display:block;overflow-x:auto}
+  .tbl td{border-top:1px solid var(--rule);padding:.6rem .8rem .6rem 0;vertical-align:top}
+  .tbl td:first-child{white-space:nowrap;color:var(--dim);
+    font-family:ui-sans-serif,system-ui,sans-serif;font-size:.9rem}
+  .tbl tr:first-child td{border-top:none}
+  .note{color:var(--dim);font-size:.93rem}
+  footer{margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--rule);
+    color:var(--dim);font-size:.88rem;font-family:ui-sans-serif,system-ui,sans-serif}
+  footer a{color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>jetmora
+  <small>Verifiable computation — run it anywhere, and check the work.</small>
+</h1>
+
+<p class="lede">A program runs. It produces a result. Somebody else, somewhere else, later — possibly
+much later — needs to know that result is what the program actually produces.</p>
+
+<p>Today they have two options. Trust whoever ran it. Or run it again, and hope they can find the same
+program, the same inputs, and an interpreter that behaves identically.</p>
+
+<p><strong>jetmora makes the second option cheap, exact, and permanent.</strong></p>
+
+<div class="key">
+<p><strong>Verification by re-execution, not by proof.</strong> This matters, because
+&ldquo;verifiable computation&rdquo; usually means zero-knowledge proofs — verify the answer without
+re-running the work. That is a fine thing and it is not this.</p>
+<p>A zero-knowledge proof tells you the computation was performed correctly. <strong>It does not tell
+you what the computation was.</strong> For a clinical analysis, a safety calculation or a compliance
+check, seeing the work <em>is</em> the requirement.</p>
+</div>
+
+<h2>Three hashes describe any computation</h2>
+
+<pre><code>H(source)  ·  H(input state)  →  H(output state)</code></pre>
+
+<p>Ninety-six bytes. Comparison is a single equality check no matter how much work was done. A verifier
+never has to send you a result — it publishes a hash, and agreement is one line.</p>
+
+<p>Disagreement is just as cheap, and considerably more interesting: it names the exact computation to
+go and look at.</p>
+
+<h3>The identity is the source, not the compiled bytes</h3>
+
+<p>Programs are written in a small BASIC and compiled to Bitcoin Script. The hash is taken over the
+parsed program, not the emitted bytes — so formatting is invisible and meaning is not, and
+<strong>the thing a human reads is the thing that is identified.</strong></p>
+
+<p>Which has a useful consequence. The same program compiled two different ways, executed by two
+different interpreters, should produce the same output hash. If it does not, something is wrong — and
+that is a far stronger test than running one artefact twice, because identical bytes share their
+bugs.</p>
+
+<hr>
+
+<h2>How it works</h2>
+
+<table class="tbl">
+<tr><td>the log</td><td>An append-only Merkle tree of entries, published by one operator. It records
+what it is given. <strong>It does not adjudicate.</strong></td></tr>
+<tr><td>the entry</td><td>A state transition: previous state in, new state out, signed. An entry
+contains everything needed to replay it.</td></tr>
+<tr><td>the covenant</td><td>The program. Written in BASIC, compiled to Script, and readable back out
+again by a decompiler.</td></tr>
+<tr><td>the anchor</td><td>The tree head, committed periodically into a proof-of-work chain. One small
+transaction. This is what makes <em>one</em> history objective.</td></tr>
+</table>
+
+<p>There is no coin, no consensus, and no global ordering. Logs are independent: anyone may run one, and
+the same computation may be recorded in several. <strong>Duplication is not a conflict — it is
+corroboration.</strong></p>
+
+<h3>What that buys</h3>
+
+<table class="tbl">
+<tr><td>latency</td><td>A state transition is an append, not an agreement. There is no round trip to
+wait for, so a physics simulation can tick at frame rate.</td></tr>
+<tr><td>parallelism</td><td>No global sequence to serialise into. Adding a log adds capacity with zero
+coordination.</td></tr>
+<tr><td>cost</td><td>No protocol fee, because there is no shared block space to ration. Operators
+charge for the service; the protocol has no opinion about money.</td></tr>
+</table>
+
+<p class="note">A million transactions per second is throughput. Physics needs latency, and no amount
+of throughput buys back a round trip you did not take.</p>
+
+<h3>Cheating is provable, not prevented</h3>
+
+<p>This is the honest trade, and it is stated first rather than buried.</p>
+
+<p>A log can misbehave. It can drop an entry, or show different trees to different people, or sign two
+conflicting histories. What it cannot do is <strong>hide any of it</strong>: a Merkle log that
+equivocates has published the evidence of its own lying, permanently, and anyone can show it.</p>
+
+<p>An entry whose state transition the program would refuse is <em>recorded</em> — but it does not
+advance anything. It sits in the log as a signed claim that someone asserted otherwise. Evidence, not
+history.</p>
+
+<hr>
+
+<h2>Why it exists</h2>
+
+<p>Programs that hold value and enforce their own rules — covenants — are a good way to build things.
+They do not ask permission, they do not care who you are, and you cannot talk them out of their rules.</p>
+
+<p>They have one structural weakness, and it is not in the program.</p>
+
+<p>A covenant on a public chain must pay a fee to move, and it commits to a <strong>maximum fee</strong>
+when it is created — a number written permanently into the script, because the script is the coin and
+the coin cannot be edited. Raise the network's minimum above that number and the covenant can no longer
+pay to move. Not slower. Not dearer. <strong>Stuck, with whatever it holds inside it.</strong></p>
+
+<p>Fitting that number honestly to the published rate is the correct thing to do. It is also what
+leaves no room at all: measured against live covenants, one of ours dies if the floor rises by
+<strong>one percent</strong>.</p>
+
+<div class="key">
+<p>The flaw is not the number. It is that <strong>one side of the arrangement is bound forever and the
+other is not bound at all</strong> — and the unbound side sets the value.</p>
+</div>
+
+<p>jetmora's answer is not to argue about the fee. It is that <strong>a covenant here never references
+one</strong>. Operators charge for their service, in whatever currency they like, and that price can
+move freely forever without being able to kill anything — because nothing immutable depends on it.</p>
+
+<p>And because state is portable between logs, an operator who overcharges watches covenants leave.
+Exit is what disciplines the price, and no single chain can offer that at any fee level.</p>
+
+<hr>
+
+<h2>Two rails</h2>
+
+<div class="key">
+<p><strong>BSV is the payment rail. Jetmora is the computational rails.</strong></p>
+</div>
+
+<p>A proof-of-work chain is good at the discrete and the valuable: ownership, stakes, settlement,
+timestamps. It is bad at variable outcomes, because every branch costs a transaction and must be
+anticipated in advance.</p>
+
+<p>So: commit on the payment rail, compute on the computational rails, settle back on the payment rail.
+One fee, many steps. And a settlement contract can verify a jetmora result <em>in script</em>, by
+walking a Merkle path to an anchored root — no relayer, no oracle, no bridge multisig.</p>
+
+<p class="note">With one limit stated plainly: a chain can verify that a log <em>said</em> something. It
+cannot verify that the something is <em>correct</em>. That is what re-execution is for.</p>
+
+<hr>
+
+<h2>What it is for</h2>
+
+<p>Underneath the applications there are only two primitives: <strong>a witnessed claim, and a witnessed
+computation on it.</strong> Everything below is those two, pointed somewhere different.</p>
+
+<table class="tbl">
+<tr><td>science</td><td>Reproducibility is not &ldquo;here is my repository.&rdquo; It is
+<em>here is the execution</em> — same program, same inputs, same intermediate states, or a provable
+divergence.</td></tr>
+<tr><td>medicine</td><td>A trial's analysis plan, committed and timestamped <em>before</em> the data
+arrives. Then the data arrives and it runs. Provably not adjusted afterwards.</td></tr>
+<tr><td>standards</td><td>A safety standard is a computation. Published as a program, a manufacturer
+proves compliance by running it, and a regulator verifies without trusting anyone's
+spreadsheet.</td></tr>
+<tr><td>engineering</td><td>A load rating becomes a program, with the formula version pinned to a
+date.</td></tr>
+<tr><td>oracles</td><td>It cannot make an oracle honest. It makes one <em>accountable</em>: statements
+are signed, append-only, and cannot be quietly revised. A track record becomes something you can
+compute.</td></tr>
+<tr><td>agents</td><td>Do not give an autonomous agent a wallet. Give it a battery: a program that
+bounds what it can do, with no key to steal, and every action recorded, signed and auditable by
+construction.</td></tr>
+</table>
+
+<h3>And a racetrack</h3>
+
+<p>The first thing built on it is a slot-car game, which sounds like the least serious item on that
+list and is in fact the reason any of the others can be trusted.</p>
+
+<p>Physics is a hard test: non-linear, iterative, sensitive to rounding. The correctness criterion is
+unambiguous — the car leaves the track or it does not. And crucially, <strong>a human can feel when the
+model is lying</strong>, instantly, before any test catches it.</p>
+
+<p class="note">You cannot debug a physics model you cannot feel, and you cannot feel a dosing
+calculation. Every other domain has to trust its tests. This one has someone who knows.</p>
+
+<hr>
+
+<h2>Not new, and that is the point</h2>
+
+<p>Three of the eight references in Bitcoin's white paper are Haber and Stornetta's digital timestamping
+papers. Merkle-linked records, witnessed, tamper-evident — <strong>and no coin anywhere.</strong> Their
+commercial implementation published a weekly hash in a newspaper's classified advertisements, which is
+this design's anchor done in newsprint.</p>
+
+<p>The coin was never the point of the record. It was the payment for the consensus. Remove the need for
+open permissionless agreement and the coin has no job left to do.</p>
+
+<p>Coinless systems did not stop working — they stopped being called blockchains. Certificate
+Transparency secures the certificate ecosystem of the entire web and is barely mentioned in this
+industry. Git is a Merkle tree everyone uses without discussing.</p>
+
+<p><strong>The record-keeping here is a thirty-five-year-old tradition. Running programs inside the log
+is the part with no precedent.</strong></p>
+
+<hr>
+
+<h2>Status</h2>
+
+<p>Early, and deliberately public while it is still moving.</p>
+
+<p>The specification is a file of test vectors rather than a document: prose about what an instruction
+does cannot be executed, and two honest implementations will still diverge on overflow and edge cases,
+silently. A vector fails instead. An implementation that reproduces the vectors is conformant.</p>
+
+<p>The first run of that suite found three divergences between historical and current Bitcoin Script,
+one of which was an error in the vectors themselves — written from familiarity rather than from the
+source. It was caught immediately, which is the entire argument for building it this way.</p>
+
+<table class="tbl">
+<tr><td>specification</td><td><a href="./spec/log.md">spec/log.md</a> — normative, with its open items
+listed</td></tr>
+<tr><td>vectors</td><td><a href="./vectors/core.json">vectors/core.json</a> — public domain (CC0),
+because the specification should not make implementations derivative of it</td></tr>
+<tr><td>source</td><td><a href="https://github.com/sun-dive/jetmora">github.com/sun-dive/jetmora</a> —
+Apache&nbsp;2.0</td></tr>
+</table>
+
+<footer>
+<p>© 2026 sun-dive. Apache License 2.0. Opcode semantics derive from Bitcoin 0.1.3, MIT-licensed.
+<br>Not licensed under the Open BSV License — that licence restricts use to the BSV blockchains, and
+would forbid running jetmora on jetmora.</p>
+</footer>
+
+</div>
+</body>
+</html>
