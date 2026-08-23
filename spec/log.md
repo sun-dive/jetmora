@@ -92,12 +92,34 @@ interpreter, and this specification does not require one in a log.
 The genesis `authorised` field governs. A covenant MAY declare `open`, in which case any signature is
 permitted and the operator's own policy (§4.5) is the only limit.
 
-### 4.3 Invalid transitions
+### 4.3 Invalid transitions — recorded, and NOT honoured
 
 An operator MUST NOT reject an entry because its state transition would fail the covenant's script.
 
-⏭ **OPEN — deliberately: whether such an entry is *valid*.** It is recorded either way. Whether it forms
-part of the covenant's history is not settled, and MUST NOT be settled by an operator's admission policy.
+**An invalid transition MUST NOT advance the covenant's tip.** The tip is the last state the covenant's
+script actually permitted.
+
+⚠⚠ **RECORDING IS NOT HONOURING, and the two must not be conflated.** The entry is in the log
+permanently, as a signed claim that someone asserted otherwise. It is evidence. It is not history.
+
+⇒ The log still has no opinion: it records everything, and **a reader determines the tip by replaying.**
+Validity is a reader's determination and MUST NOT be an operator's.
+
+★ Every property this preserves:
+· evidence of a false claim survives permanently, attributable to the key that signed it
+· **the tip is always a state the program could have produced**
+· verifiers that disagree can examine the entry, because it exists
+· ★★ **a later protocol version MAY find the transition valid and compute a different tip** (§6b) —
+  which is the reason the entry must be recorded rather than refused
+
+⚠ **DO NOT CONFUSE THIS WITH §9.** An error state and an invalid transition are **opposites, not
+variants:**
+
+| **error state** (§9) | the script RAN and PERMITTED it, producing `err≠0` ⇒ **valid. It advances the tip.** |
+| **invalid transition** (§4.3) | the script would REFUSE ⇒ recorded as a claim, **does not advance** |
+
+⇒ §9 exists so that a covenant has a **legitimate** way to record a failure, and therefore never needs
+an invalid transition to express one.
 
 ### 4.4 Conflicting entries
 
@@ -209,10 +231,11 @@ There MUST NOT be an activation height, a flag day, or a coordinated upgrade sch
 - a covenant MAY branch on protocol version with `OP_VERIF`, giving a **forward upgrade path** without
   the covenant being reissued
 
-⚠ This is the reason §4.3 must remain open. If invalid transitions were rejected at append time, a log
-running version *n* could never accept an entry that only becomes valid at version *n+k* — **and the
-rejection would be permanent, because the entry would not exist to re-examine.** Recording it preserves
-the option; rejecting it destroys one.
+⚠ This is the reason §4.3 requires invalid transitions to be **recorded**. If they were rejected at
+append time, a log running version *n* could never accept an entry that only becomes valid at version
+*n+k* — **and the rejection would be permanent, because the entry would not exist to re-examine.**
+Recording it preserves the option; rejecting it destroys one. ★ Recording it does not honour it: an
+invalid transition never advances the tip (§4.3).
 
 ★ Three requirements lock together: **entry-bound version · record-don't-reject · `OP_VERIF`**
 ⇒ flexibility forward, compatibility backward, and no flag day.
@@ -302,7 +325,6 @@ not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
 ## 11. Version 1 summary of open items
 
 | §2 | genesis commitment serialization and on-chain envelope |
-| §4.3 | whether an invalid transition is *valid* — deliberately open |
 | §5.2 | signed-head serialization and signature scheme |
 | §6.1 | anchor transaction output format |
 | §6.2 | recommended confirmation depth |
