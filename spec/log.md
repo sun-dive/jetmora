@@ -193,6 +193,30 @@ Anchor cadence is operator policy and SHOULD be published. It bounds, simultaneo
 
 ⇒ A log that stops anchoring SHOULD be treated as failing, whatever else it continues to serve.
 
+## 6b. Protocol versioning — no activation height
+
+The protocol version in force for an entry is carried **in the entry** (`nVersion`, §3), and is the value
+`OP_VER` pushes.
+
+A verifier replaying an entry MUST apply the semantics of the version named **in that entry**, and MUST
+NOT apply its own. ⇒ A log therefore remains fully replayable across arbitrary protocol evolution.
+
+There MUST NOT be an activation height, a flag day, or a coordinated upgrade schedule.
+
+⇒ Two consequences follow, and both are intended:
+
+- **two logs MAY run different protocol versions simultaneously**, and both remain verifiable
+- a covenant MAY branch on protocol version with `OP_VERIF`, giving a **forward upgrade path** without
+  the covenant being reissued
+
+⚠ This is the reason §4.3 must remain open. If invalid transitions were rejected at append time, a log
+running version *n* could never accept an entry that only becomes valid at version *n+k* — **and the
+rejection would be permanent, because the entry would not exist to re-examine.** Recording it preserves
+the option; rejecting it destroys one.
+
+★ Three requirements lock together: **entry-bound version · record-don't-reject · `OP_VERIF`**
+⇒ flexibility forward, compatibility backward, and no flag day.
+
 ## 7. Source canonicalisation
 
 `source_hash` (§2) MUST be computed over the **parsed abstract syntax tree**, not the source text.
