@@ -14,6 +14,8 @@
 import { createHash } from 'node:crypto'
 import { OP, JET, NAME } from './ops.mjs'
 import { toNum, fromNum } from './scriptnum.mjs'
+import { verify as ecdsaVerify, splitSignature } from './ecdsa.mjs'
+import { preimage } from './preimage.mjs'
 
 const sha1 = b => [...createHash('sha1').update(Buffer.from(b)).digest()]
 const sha256 = b => [...createHash('sha256').update(Buffer.from(b)).digest()]
@@ -44,6 +46,9 @@ export function evaluate(script, opts = {}) {
   const altStack = []
   const vfExec = []           // 0.1.3's conditional stack
   const version = opts.version ?? 103
+  // The entry this script is being evaluated against. Required only by OP_CHECKSIG.
+  // { entry, inputIndex, value, scriptCode? } — scriptCode defaults to the script being run.
+  const context = opts.context ?? null
   const maxOps = opts.maxOps ?? 1_000_000
   // ⚠ OPERATOR POLICY, never a protocol constant (spec §4.5). A ceiling written into the protocol
   //   becomes a number nobody can promise to hold — which is the problem this design exists to escape.
@@ -287,9 +292,38 @@ export function evaluate(script, opts = {}) {
         case OP.OP_CODESEPARATOR: break        // ⏭ affects scriptCode once the preimage exists (spec §5.1)
 
         // ── signatures ──────────────────────────────────────────────────────────────────────
-        case OP.OP_CHECKSIG: case OP.OP_CHECKSIGVERIFY:
+        // ★★ This is what OP_PUSH_TX is built on. The covenant pushes a claimed preimage and derives a
+        //    signature from it against a PUBLIC constant; the check passes only if that preimage
+        //    matches the one WE compute from the entry that actually happened. ⇒ The security is that
+        //    the verifier recomputes — never that the script is trusted about its own inputs.
+        // ⚠ No key is being proved here. `pushtx-checksig-is-not-a-key`: the covenant has nothing to
+        //   steal, and CHECKSIG is doing arithmetic, not authorisation.
+        case OP.OP_CHECKSIG: case OP.OP_CHECKSIGVERIFY: {
+          need(2, opcode)
+          if (!context) fail('OP_CHECKSIG needs an entry context — pass { entry, inputIndex, value }', opcode)
+          const pub = stack.pop(), sig = stack.pop()
+          let ok = false
+          if (sig.length) {
+            // ⚠ THE APPENDED BYTE SELECTS THE PREIMAGE. Read it, build that preimage, then verify the
+            //   DER without it. The same value also sits in the preimage's last four bytes, so altering
+            //   it here changes what we build and the signature stops matching.
+            const { sighashType } = splitSignature(sig)
+            try {
+              // ⚠ the RAW preimage, not a hash of it — ecdsa.verify hashes once and node hashes again,
+              //   which together are Bitcoin's double SHA-256. See the contract note in ecdsa.mjs.
+              const pre = preimage({ entry: context.entry, inputIndex: context.inputIndex,
+                                     scriptCode: context.scriptCode ?? script, value: context.value, sighashType })
+              ok = ecdsaVerify(sig, pub, pre)
+            } catch { ok = false }        // an unsupported sighash type is a failed check, not a crash
+          }
+          if (opcode === OP.OP_CHECKSIGVERIFY) { if (!ok) fail('OP_CHECKSIGVERIFY failed', opcode) }
+          else stack.push(ok ? [1] : [])
+          break
+        }
+        // ⏭ OPEN: covenants here are keyless, so multisig has no use yet. Left explicitly unimplemented
+        //    rather than written untested — a wrong signature check is worse than an absent one.
         case OP.OP_CHECKMULTISIG: case OP.OP_CHECKMULTISIGVERIFY:
-          fail('signature checking not implemented yet — needs the entry preimage (spec §3)', opcode)
+          fail('OP_CHECKMULTISIG is not implemented — no use case yet, and an untested one would be worse', opcode)
       }
     }
     // ⚠ 0.1.3 does NOT check that OP_IF was balanced. EvalScript simply ends and returns

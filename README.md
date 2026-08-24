@@ -89,6 +89,7 @@ putting these in the free single-byte range rather than the two-byte space costs
 | `tools/serialize.mjs` | chunks ⇄ bytes, including the two-byte space. ⚠ `@bsv/sdk`'s `LockingScript` cannot represent a two-byte opcode, so this had to exist regardless of any licence question |
 | `tools/transcode.mjs` | **BSV numbering → jetmora numbering.** ⚠ Not optional — see below |
 | `tools/crosscompile.mjs` | `node --experimental-strip-types tools/crosscompile.mjs` → compiles BASIC once, runs it both ways, requires one answer |
+| `tools/ecdsa.mjs` | secp256k1 verification, no dependencies. ⚠ Takes the **raw preimage** — see the contract note in the file |
 | `tools/entry.mjs` | the entry — canonical serialization, ⚠ refuses non-minimal varints and trailing bytes |
 | `tools/preimage.mjs` | the BIP143 preimage **over an entry** — what lets `OP_PUSH_TX` exist with no transaction |
 | `tools/preimage-check.mjs` | proves an entry's preimage is byte-identical to a transaction's |

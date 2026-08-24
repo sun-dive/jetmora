@@ -259,6 +259,25 @@ Anchor cadence is operator policy and SHOULD be published. It bounds, simultaneo
 
 ⇒ A log that stops anchoring SHOULD be treated as failing, whatever else it continues to serve.
 
+## 4b. Signature checking
+
+`OP_CHECKSIG` verifies a signature against the preimage of **the entry that actually happened** (§3),
+never against anything the script supplies. ⇒ That recomputation is the entire security property: a
+script is not trusted about its own inputs.
+
+A signature is DER followed by **one appended sighash-type byte**. That byte is not part of the
+signature; it selects which preimage to build. ★ The same value also occupies the preimage's final four
+bytes, so altering the appended byte changes the preimage and the signature ceases to match.
+
+⚠ **NO LOW_S RULE.** Bitcoin 0.1.3 has none, and an implementation MUST NOT impose one. Signature
+malleability is not a threat here: an entry is identified by the hash of its own canonical bytes, and
+nothing in this specification depends on a signature being unique.
+
+⏭ **OPEN: `OP_CHECKMULTISIG`.** Covenants here are keyless, so it has no use yet. It is deliberately
+unimplemented rather than written untested — **a wrong signature check is worse than an absent one.**
+
+⏭ **OPEN: `OP_CODESEPARATOR`'s effect on `scriptCode`.** Currently the whole script is used.
+
 ## 5b. Opcode assignment
 
 ### 5b.1 ★ The governing rule
@@ -443,5 +462,6 @@ not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
 | §6.2 | recommended confirmation depth |
 | §7 | AST node encoding |
 | §9 | the `ERROR` statement's spelling in BASIC — the encoding is settled (§9.1–9.2) |
+| §4b | `OP_CHECKMULTISIG`, and `OP_CODESEPARATOR`'s effect on `scriptCode` |
 
 An implementation MUST NOT claim conformance to version 1 while any of these remain open.
