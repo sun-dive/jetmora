@@ -434,6 +434,25 @@ subtree root and recomputing the lower path — roughly 434 KB at *K* = 1,024 wi
 data generally: **identity is guaranteed forever, availability while someone values it.** A log that has
 pruned is not a broken log; it is a log that has stopped being a CDN for its own past.
 
+### 5c.2a ★★★ TESTED 25 Aug — and offloading to an untrusted store is SAFE
+
+4,096 entries pruned to level 10 (K = 1,024) below entry 3,072. **3,072 bodies and 6,138 nodes
+discarded; 2,053 nodes remain.**
+
+| ★ **the root is unchanged** | pruning alters nothing the log has committed to |
+| proofs for unpruned entries | **1,024 verify, 0 fail** |
+| ⚠ a proof for a pruned entry | **refused honestly** — absent, not wrong |
+| ★★★ **restore the K bodies, rebuild the proof** | **verifies against the SAME root** |
+
+★★ **A RESTORED BODY IS CHECKED AGAINST ITS STORED LEAF HASH before it is accepted**, so a wrong body
+is refused. ⇒ **Bodies may therefore be offloaded to an UNTRUSTED store.** A hostile mirror can withhold
+them; it cannot substitute them. That makes §5c.3 safe as well as economical.
+
+⚠ **Two implementation notes earned here:** a pruned body is an EMPTY value, not a missing one — code
+checking only for absence returns success with nothing in it, which is worse than either. And SQLite
+does not return the space to the filesystem without `VACUUM`; pruning frees logical space immediately
+and disk space only when asked.
+
 ### 5c.3 Where the bodies go
 
 ⚠ **This specification does not say.** A proof-of-work chain gives permanence and addressability; a

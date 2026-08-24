@@ -63,9 +63,15 @@ case 'inclusion':
     $size = (int)($_GET['size'] ?? $n);
     if ($size < 1 || $size > $n) out(['error' => "size must be 1..$n"], 400);
     if ($leaf < 0 || $leaf >= $size) out(['error' => "leaf must be 0.." . ($size - 1)], 400);
-    out(['leaf_index' => $leaf, 'tree_size' => $size,
-         'root' => $hex($store->root($size)),
-         'proof' => array_map($hex, $store->inclusionProof($leaf, $size))]);
+    try {
+        out(['leaf_index' => $leaf, 'tree_size' => $size,
+             'root' => $hex($store->root($size)),
+             'proof' => array_map($hex, $store->inclusionProof($leaf, $size))]);
+    } catch (PrunedException $e) {
+        // ⚠ absent, not wrong — and recoverable by restoring the bodies under the retained subtree root
+        out(['error' => 'pruned', 'note' => $e->getMessage(),
+             'prune' => $store->pruneState()], 410);
+    }
 
 // ── PROOF(m, D[n]) — ★ what no proof-of-work chain provides ──────────────────────────────────
 case 'consistency':
@@ -79,9 +85,12 @@ case 'consistency':
 case 'entry':
     $seq = (int)($_GET['seq'] ?? -1);
     $body = $seq >= 0 ? $store->entry($seq) : null;
-    // ⚠ A pruned log can still PROVE an entry; it cannot PRODUCE one (spec §5c.2). 410, not 404 —
-    //   the entry existed and is provable, it is simply no longer held here.
-    if ($body === null) out(['error' => 'not held by this log', 'note' => 'may have been pruned — see §5c'], 410);
+    if ($body === null) out(['error' => 'no such entry'], 404);
+    // ⚠⚠ A PRUNED body is an EMPTY STRING, not null — checking only for null returned 200 with an
+    //    empty entry, which is the worst of both: it looks like data and is not.
+    //    ⇒ 410, not 404: the entry existed and is still provable, it is simply no longer held here.
+    if ($body === '') out(['error' => 'pruned — not held by this log',
+                           'note' => 'still provable given the body; see spec §5c.2 for where to obtain it'], 410);
     out(['seq' => $seq, 'entry' => $hex($body)]);
 
 case 'genesis':

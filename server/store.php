@@ -24,6 +24,9 @@
 declare(strict_types=1);
 require_once __DIR__ . '/merkle.php';
 
+/** ⚠ Distinct from a generic failure: the data is not wrong, it is ABSENT and recoverable (§5c.2). */
+class PrunedException extends RuntimeException {}
+
 final class LogStore
 {
     private PDO $db;
@@ -127,7 +130,9 @@ final class LogStore
         $n = $hi - $lo;
         if ($n === 1) {
             $h = $this->node(0, $lo);
-            if ($h === null) throw new RuntimeException("missing leaf $lo");
+            // ⚠ PRUNED. The leaf is gone and cannot be recomputed without the body (§5c.2). Say so
+            //   plainly rather than returning something wrong.
+            if ($h === null) throw new PrunedException("leaf $lo has been pruned — fetch the body and restore it");
             return $h;
         }
         // ★ a range that is a whole aligned power-of-two subtree is ONE stored node — the fast path
@@ -183,6 +188,64 @@ final class LogStore
         $b = $st->fetchColumn();
         return $b === false ? null : $b;
     }
+    /**
+     * ★★ PRUNE — spec §5c. Discard entry bodies below $upTo, and tree nodes below $level for the
+     * ranges they cover. Keeps subtree roots at $level, so K = 2^$level entries share one node.
+     *
+     * ⚠⚠ THE CALLER MUST HAVE ANCHORED $upTo FIRST (§6.2a). Between broadcast and depth a
+     *    reorganisation can remove the anchor, and bodies discarded against a commitment that no
+     *    longer exists cannot be recovered. This method cannot check that and does not try.
+     *
+     * ⚠ A node is removed only if the range it covers lies ENTIRELY below $upTo. A node straddling
+     *   the boundary is still needed by the unpruned side.
+     * @return array{bodies:int,nodes:int} what was discarded
+     */
+    public function prune(int $level, int $upTo): array
+    {
+        if ($level < 1) throw new InvalidArgumentException('prune level must be >= 1');
+        if ($upTo < 0 || $upTo > $this->size()) throw new InvalidArgumentException('upTo outside the log');
+        $this->db->beginTransaction();
+        try {
+            $b = $this->db->prepare('UPDATE entries SET body = X\'\' WHERE seq < ? AND length(body) > 0');
+            $b->execute([$upTo]);
+            $bodies = $b->rowCount();
+            // levels 0..level-1: a node at (L,i) covers [i*2^L, (i+1)*2^L)
+            $nodes = 0;
+            for ($L = 0; $L < $level; $L++) {
+                $span = 1 << $L;
+                $maxIdx = intdiv($upTo, $span);          // ⚠ strictly-below: idx*span + span <= upTo
+                $st = $this->db->prepare('DELETE FROM nodes WHERE level = ? AND idx < ?');
+                $st->execute([$L, $maxIdx]);
+                $nodes += $st->rowCount();
+            }
+            $this->db->prepare('INSERT OR REPLACE INTO meta (k,v) VALUES (\'prune_level\', ?)')->execute([(string)$level]);
+            $this->db->prepare('INSERT OR REPLACE INTO meta (k,v) VALUES (\'pruned_to\', ?)')->execute([(string)$upTo]);
+            $this->db->commit();
+            return ['bodies' => $bodies, 'nodes' => $nodes];
+        } catch (Throwable $e) { $this->db->rollBack(); throw $e; }
+    }
+
+    public function pruneState(): array
+    {
+        $g = fn(string $k) => (int)($this->db->query("SELECT v FROM meta WHERE k='$k'")->fetchColumn() ?: 0);
+        return ['level' => $g('prune_level'), 'to' => $g('pruned_to')];
+    }
+
+    /** ⚠ Restore bodies fetched back from wherever they were offloaded, so a proof can be rebuilt. */
+    public function restore(int $seq, string $body): void
+    {
+        // ★ the leaf hash is the check: a body that does not hash to the stored leaf is not the body
+        $st = $this->db->prepare('SELECT hash FROM entries WHERE seq=?');
+        $st->execute([$seq]);
+        $leaf = $st->fetchColumn();
+        if ($leaf === false) throw new RuntimeException("no entry at $seq");
+        if (!hash_equals($leaf, mt_leaf_hash($body)))
+            throw new RuntimeException("restored body for $seq does not match its leaf hash");
+        $this->db->prepare('UPDATE entries SET body=? WHERE seq=?')->execute([$body, $seq]);
+        // and put its leaf node back so proofs can be recomputed
+        $this->db->prepare('INSERT OR REPLACE INTO nodes (level,idx,hash) VALUES (0,?,?)')->execute([$seq, $leaf]);
+    }
+
     public function storedNodeCount(): int
     {
         return (int)$this->db->query('SELECT COUNT(*) FROM nodes')->fetchColumn();
