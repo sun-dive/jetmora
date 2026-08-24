@@ -348,7 +348,17 @@ anchors at all: conflicting anchored heads would require a double spend, which p
 ★ And the output carries value, so it may hold the satoshi funding the next anchor — **a self-funding
 anchor chain**, the same pattern as an agent battery.
 
-⏭ **OPEN: the PushDrop field layout, and whether the anchor output is itself a covenant** (e.g. refusing
+★ **IMPLEMENTED AND VALIDATED 24 Aug.** Output 88 B: `<pubkey> OP_CHECKSIG <marker> <root> <size>
+OP_2DROP OP_DROP`. Unlock **73 B — the signature alone**, because the key is already in the locking
+script; strictly smaller than a P2PKH unlock, which pushes a key nothing consumes. **An anchor spending
+its predecessor validates through an independent interpreter.** Whole transaction 403 B, **41 sat**.
+
+★★ **This IS a modified BRC-113.** MPT commits in `OP_RETURN`; the anchor commits in a **spendable**
+output — and that spendability is the whole difference between a series of commitments and a chain.
+⇒ **MPT proves a token's identity; the anchor chain proves a log's order.** Same structure, one field
+moved.
+
+⏭ **OPEN: whether the anchor output should itself be a covenant** (e.g. refusing
 to advance except under the log's key, or except on a well-formed head).
 
 ⏭ **OPEN: the anchor transaction's output format** — see 6.1a.

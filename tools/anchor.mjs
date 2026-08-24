@@ -15,7 +15,8 @@
 import { createHash } from 'node:crypto'
 
 const SDK = process.env.BSV_SDK ?? '@bsv/sdk'
-const { Transaction, PrivateKey, P2PKH, Script, OP, LockingScript, Utils } = await import(SDK)
+const { Transaction, PrivateKey, P2PKH, Script, OP, LockingScript, UnlockingScript,
+        TransactionSignature, Hash } = await import(SDK)
 
 /** ⚠ 100 sat/KB. Never inflated, never taken from a broadcaster's suggestion. */
 export const FEE_PER_KB = 100
@@ -60,6 +61,41 @@ export function decodeAnchor(scriptHex) {
 }
 
 /**
+ * ★★ THE PUSHDROP UNLOCK — the piece that makes an anchor CHAIN rather than a series of unrelated
+ * commitments. The public key already sits in the locking script, so the unlocking script is JUST THE
+ * SIGNATURE: strictly smaller than a P2PKH unlock, which pushes a key nothing consumes.
+ *
+ * ⚠ Scope is ALL|FORKID (0x41) — this transaction lives on a proof-of-work chain, so it uses that
+ *   chain's rules. Jetmora's own entries use 0x01 with the BIP143 layout (spec §3.0a); the two are
+ *   different systems and the byte means different things in each.
+ */
+export function pushDropUnlock(priv) {
+  return {
+    sign: async (tx, inputIndex) => {
+      const input = tx.inputs[inputIndex]
+      const src = input.sourceTransaction?.outputs[input.sourceOutputIndex]
+      if (!src) throw new Error('pushDropUnlock: sourceTransaction is required')
+      const scope = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
+      const preimage = TransactionSignature.format({
+        sourceTXID: input.sourceTXID ?? input.sourceTransaction.id('hex'),
+        sourceOutputIndex: input.sourceOutputIndex,
+        sourceSatoshis: src.satoshis,
+        transactionVersion: tx.version,
+        otherInputs: tx.inputs.filter((_, i) => i !== inputIndex),
+        inputIndex, outputs: tx.outputs,
+        inputSequence: input.sequence ?? 0xffffffff,
+        subscript: src.lockingScript,
+        lockTime: tx.lockTime, scope,
+      })
+      const raw = priv.sign(Hash.sha256(preimage))
+      const sig = new TransactionSignature(raw.r, raw.s, scope).toChecksigFormat()
+      return new UnlockingScript([{ op: sig.length, data: sig }])
+    },
+    estimateLength: async () => 73,
+  }
+}
+
+/**
  * Build the next anchor. ⚠ Does NOT broadcast — returns the transaction for inspection.
  * @param prev  null for the first anchor, else { txid, vout, satoshis, lockingScript }
  * @param funding  a P2PKH output to pay the fee from, and to receive change
@@ -75,7 +111,7 @@ export async function buildAnchor({ key, root, treeSize, prev, funding, anchorSa
     tx.addInput({
       sourceTXID: prev.txid, sourceOutputIndex: prev.vout,
       sourceSatoshis: prev.satoshis,
-      unlockingScriptTemplate: new P2PKH().unlock(priv),   // ⏭ PushDrop unlock; P2PKH shape for now
+      unlockingScriptTemplate: pushDropUnlock(priv),       // ★ the chain-forming spend
       sequence: 0xffffffff,
     })
   }
