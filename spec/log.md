@@ -172,6 +172,32 @@ limit, a proof of work, an allow-list. An operator SHOULD publish its policy.
 A log's limits — memory, execution time, entry size — are **operator policy and MUST NOT be protocol
 constants.** ⚠ A limit written into the protocol becomes a number nobody can promise to hold.
 
+## 4c. ⚠⚠ Vocabulary — there is no such thing as an unconfirmed entry
+
+**This system has no pending state.** No mempool, no queue, no reorganisation. **An entry is appended or
+it is not**, and an append is final at the instant it happens. There is nothing to converge on,
+therefore nothing to wait for.
+
+⚠ **"Confirmed" and "unconfirmed" MUST NOT be used of anything in this specification except an anchoring
+transaction on the carrying proof-of-work chain (§6).** There, confirmations are real and the word is
+borrowed correctly. Used of an entry or a head it is an error, and it invites a reader to expect a
+limbo that does not exist.
+
+★ **There IS a gradation, and it is not confirmation. These are different KINDS of assurance, not
+degrees of one:**
+
+| **witnessed** | the log holds the entry. **Final immediately** |
+| **signed** | the operator has publicly committed to holding it ⇒ as good as their key, and their equivocation becomes provable (§3.4b) |
+| **anchored** | that commitment is dated by proof of work ⇒ **it cannot be walked back**, and it is objectively ordered against other logs |
+
+⇒ Confirmation counts are degrees of one thing — one, six, a hundred, all the same guarantee more
+firmly. **These add different guarantees**: signing adds ACCOUNTABILITY, anchoring adds OBJECTIVE
+ORDERING. Flattening them into a number would misdescribe all three.
+
+★★ **A consequence worth stating for implementers:** an application MUST NOT build a wait-for-N-blocks
+flow around an entry. **A lap time is final the moment it is recorded.** Anchoring is about what a third
+party can later be made to accept, never about whether the entry happened.
+
 ## 5. The tree
 
 ### 5.1 Construction — RFC 6962, NOT Bitcoin's tree
@@ -199,7 +225,28 @@ carrying chain's own tree for anchor inclusion proofs (§6.1, and BRC-113 for BS
 An operator MUST publish signed tree heads containing at least: tree size, root hash, and a signature by
 the operator's key. A head MUST NOT be modified once published.
 
-⏭ **OPEN: the signed-head serialization.**
+⏭ **PROPOSED and implemented — 89 bytes, canonical by construction:**
+
+```
+version      1 byte
+tree_size    8 bytes, big-endian
+root        32 bytes
+timestamp    8 bytes, big-endian, unix seconds
+anchor_root 32 bytes  — the last ANCHORED root, or 32 zero bytes if none
+anchor_size  8 bytes  — the tree size at that anchored root
+```
+
+⚠ **The timestamp is the operator's clock and is a CLAIM, not a fact.** Nothing depends on it being
+honest; anyone may compare it against the anchor. ★ It exists so a reader can see a log that has
+stopped anchoring (§6.3), which is the health signal that matters.
+★ `anchor_root` and `anchor_size` make §4c's gradation visible in one object: entries above
+`anchor_size` are **witnessed and signed but not yet anchored** — a precise state, and never an
+"unconfirmed" one.
+
+⚠⚠ **AN IMPLEMENTATION SHOULD MAKE RE-SIGNING A SIZE IMPOSSIBLE, NOT MERELY FORBIDDEN.** Two heads at
+one tree size with different roots are the operator's own evidence of equivocation, and that evidence
+is the security model. ⇒ The reference implementation uses `tree_size` as a primary key, so a second
+head at that size fails in the database rather than relying on discipline.
 ★ **Signature scheme — PROPOSED and implemented:** the **key length selects the scheme**, so a host
 without libsodium can still run a log. **32 bytes ⇒ Ed25519 · 33 or 65 bytes ⇒ secp256k1.**
 ⚠ A malformed key or signature MUST be a failed check, never an error — a log that throws on bad input
@@ -254,15 +301,22 @@ to advance except under the log's key, or except on a well-formed head).
 
 ⏭ **OPEN: the anchor transaction's output format** — see 6.1a.
 
-### 6.2 Confirmed, not attempted
+### 6.2 Anchored, not merely broadcast
 
-A root is **anchored** only when its anchoring transaction has reached the log's published confirmation
-depth. A log MUST publish its **last confirmed** anchor, and MUST NOT present an attempted or
-unconfirmed anchor as an anchor.
+⚠ **This is the ONE place confirmation vocabulary is correct** (§4c), because it describes a
+transaction on a chain that has confirmations.
 
-⚠ A failed anchor — underpriced, never mined, reorganised away — otherwise leaves a silent gap.
+A root is **anchored** only when its anchoring transaction has reached the depth the log publishes as
+its threshold. A log MUST publish its **last anchored** root, and MUST NOT present a broadcast-but-not-
+yet-deep-enough anchor as an anchored one.
 
-⏭ **OPEN: recommended confirmation depth.**
+⚠ A failed anchor — underpriced, never mined, reorganised away — otherwise leaves a silent gap: the log
+looks anchored to that point and is not.
+
+★ Note what this does NOT affect: **the entries themselves are already final** (§4c). Anchoring changes
+what a third party can later be made to accept about their ORDER, not whether they happened.
+
+⏭ **OPEN: recommended depth.**
 
 ### 6.3 Cadence
 
@@ -472,9 +526,9 @@ not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
 ## 11. Version 1 summary of open items
 
 | §2 | genesis commitment serialization and on-chain envelope |
-| §5.2 | signed-head serialization and signature scheme |
+
 | §6.1 | anchor transaction output format |
-| §6.2 | recommended confirmation depth |
+| §6.2 | recommended anchor depth |
 | §7 | AST node encoding |
 | §9 | the `ERROR` statement's spelling in BASIC — the encoding is settled (§9.1–9.2) |
 | §4b | `OP_CHECKMULTISIG`, and `OP_CODESEPARATOR`'s effect on `scriptCode` |
