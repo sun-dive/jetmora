@@ -644,6 +644,31 @@ what a third party can later be made to accept about their ORDER, not whether th
 
 ⏭ **OPEN: recommended depth.**
 
+### 6.1a-i ★★★ TESTED 25 Aug — anchor 2 spends anchor 1, proved offline
+
+⚠ **A broadcast is not the test.** That a miner accepted a transaction says a node agreed; it does
+not say *why*. Running anchor 2's unlocking script **against anchor 1's locking script** says why,
+and needs no key on the network and no satoshi at risk.
+
+**11 of 11.** ★ The two that carry the weight:
+
+| ★★★ anchor 2's unlock **satisfies** anchor 1's lock | full script evaluation |
+| ⚠ a **different key's** anchor **refuses** the same unlock | ⇒ not a rubber stamp |
+
+⇒ Also: input 0 *is* anchor 1's output · the unlocking script is **just the signature**, 73 bytes,
+one push — smaller than a P2PKH unlock, which pushes a key nothing consumes · the new root and the
+advanced tree size decode from the output alone · 102 sat/KB.
+
+★★ **The test found that this had never worked.** The only anchor ever built had no predecessor, so
+`pushDropUnlock` — the entire point of §6.1a — had never once executed. `buildAnchor` took
+`{ txid, vout, satoshis }` where the signer needs the whole source transaction, and could not sign at
+all. Meanwhile `broadcast.mjs` had quietly grown its own working copy of the same logic, so the first
+anchor succeeded through code that was not the code anyone would have tested.
+
+⇒ ⚠ Two implementations of one rule, one of them dead and one of them live, is worse than either. The
+fix was not to repair the dead copy — that would have been *a green test on a path the change cannot
+reach*. Both now go through `buildAnchor`, and the test exercises what actually broadcasts.
+
 ### 6.1b ★★★ THE FIRST ANCHOR — ON MAINNET, 24 AUGUST 2026
 
 ```

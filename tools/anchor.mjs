@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto'
 
 const SDK = process.env.BSV_SDK ?? '@bsv/sdk'
 const { Transaction, PrivateKey, P2PKH, Script, OP, LockingScript, UnlockingScript,
-        TransactionSignature, Hash } = await import(SDK)
+        TransactionSignature, Hash, SatoshisPerKilobyte } = await import(SDK)
 
 /** ⚠ 100 sat/KB. Never inflated, never taken from a broadcaster's suggestion. */
 export const FEE_PER_KB = 100
@@ -96,12 +96,20 @@ export function pushDropUnlock(priv) {
 }
 
 /**
- * Build the next anchor. ⚠ Does NOT broadcast — returns the transaction for inspection.
- * @param prev  null for the first anchor, else { txid, vout, satoshis, lockingScript }
- * @param funding  a P2PKH output to pay the fee from, and to receive change
+ * Build AND SIGN the next anchor. ⚠ Does NOT broadcast — returns the transaction for inspection.
+ *
+ * ⚠⚠ `prev` and `funding` each need the FULL SOURCE TRANSACTION, not just a txid and a value. The
+ *    signer reads the source output's locking script and satoshis out of it to build the preimage,
+ *    and @bsv/sdk refuses fee computation without it. ⇒ Earned 25 Aug: this function took
+ *    `{ txid, vout, satoshis }`, could not sign at all, and nobody knew — the only anchor ever built
+ *    had no predecessor, so `broadcast.mjs` had quietly grown its own working copy of this logic and
+ *    the copy here was never executed. ★ Both now go through this one function.
+ *
+ * @param prev     null for the first anchor, else { sourceTransaction, vout }
+ * @param funding  { sourceTransaction, vout } — pays the fee and receives change
  */
 export async function buildAnchor({ key, root, treeSize, prev, funding, anchorSats = 1 }) {
-  const priv = PrivateKey.fromWif(key)
+  const priv = typeof key === 'string' ? PrivateKey.fromWif(key) : key
   const pubHex = priv.toPublicKey().toString()
   const tx = new Transaction()
 
@@ -109,19 +117,20 @@ export async function buildAnchor({ key, root, treeSize, prev, funding, anchorSa
   //    the whole of §6.1a, and it is one line.
   if (prev) {
     tx.addInput({
-      sourceTXID: prev.txid, sourceOutputIndex: prev.vout,
-      sourceSatoshis: prev.satoshis,
+      sourceTransaction: prev.sourceTransaction, sourceOutputIndex: prev.vout,
       unlockingScriptTemplate: pushDropUnlock(priv),       // ★ the chain-forming spend
       sequence: 0xffffffff,
     })
   }
   tx.addInput({
-    sourceTXID: funding.txid, sourceOutputIndex: funding.vout,
-    sourceSatoshis: funding.satoshis,
+    sourceTransaction: funding.sourceTransaction, sourceOutputIndex: funding.vout,
     unlockingScriptTemplate: new P2PKH().unlock(priv),
     sequence: 0xffffffff,
   })
   tx.addOutput({ lockingScript: anchorLock(pubHex, root, treeSize), satoshis: anchorSats })
   tx.addOutput({ lockingScript: new P2PKH().lock(priv.toPublicKey().toHash()), change: true })
+
+  await tx.fee(new SatoshisPerKilobyte(FEE_PER_KB))
+  await tx.sign()
   return { tx, pubHex }
 }

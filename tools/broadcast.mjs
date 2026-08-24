@@ -12,7 +12,7 @@
 //   node tools/broadcast.mjs status             → what that address holds
 //   node tools/broadcast.mjs anchor <root> <n>  → build and show; add --send to broadcast
 import { readFileSync, existsSync, writeFileSync } from 'node:fs'
-import { anchorLock, pushDropUnlock, decodeAnchor, FEE_PER_KB } from './anchor.mjs'
+import { anchorLock, pushDropUnlock, decodeAnchor, buildAnchor, FEE_PER_KB } from './anchor.mjs'
 
 const SDK = process.env.BSV_SDK ?? '@bsv/sdk'
 const { PrivateKey, P2PKH, Transaction, SatoshisPerKilobyte, Script } = await import(SDK)
@@ -105,26 +105,20 @@ const prev = chain.at(-1) ?? null
 const u = await utxos()
 if (!u.length) { console.error(`⚠ no funds at ${address} — run \`address\` and send a few thousand sat`); process.exit(1) }
 
-const tx = new Transaction()
-// ⚠⚠ INPUT 0 IS THE PREVIOUS ANCHOR when there is one. Consuming it is what makes the sequence
-//    unforgeable: two anchors claiming one predecessor would be a double spend.
-if (prev) {
-  const src = Transaction.fromHex(await (await fetch(`${WOC}/tx/${prev.txid}/hex`)).text())
-  tx.addInput({ sourceTransaction: src, sourceOutputIndex: prev.vout,
-                unlockingScriptTemplate: pushDropUnlock(priv), sequence: 0xffffffff })
-}
+const srcOf = async txid => Transaction.fromHex(await (await fetch(`${WOC}/tx/${txid}/hex`)).text())
+
 // fund from the largest utxo that is not the previous anchor's 1-sat output
 const fundUtxo = u.filter(x => !(prev && x.tx_hash === prev.txid && x.tx_pos === prev.vout))
                   .sort((a, b) => b.value - a.value)[0]
 if (!fundUtxo) { console.error('⚠ no funding utxo besides the previous anchor'); process.exit(1) }
-const fundTx = Transaction.fromHex(await (await fetch(`${WOC}/tx/${fundUtxo.tx_hash}/hex`)).text())
-tx.addInput({ sourceTransaction: fundTx, sourceOutputIndex: fundUtxo.tx_pos,
-              unlockingScriptTemplate: new P2PKH().unlock(priv), sequence: 0xffffffff })
-tx.addOutput({ lockingScript: anchorLock(pub.toString(), root, treeSize), satoshis: 1 })
-tx.addOutput({ lockingScript: new P2PKH().lock(pub.toHash()), change: true })
 
-await tx.fee(new SatoshisPerKilobyte(FEE_PER_KB))
-await tx.sign()
+// ★ ONE implementation, in anchor.mjs, exercised by tools/anchor-chain-test.mjs. This file used to
+//   carry its own copy; they disagreed, and the copy here was the only one that worked.
+const { tx } = await buildAnchor({
+  key: priv, root, treeSize,
+  prev: prev ? { sourceTransaction: await srcOf(prev.txid), vout: prev.vout } : null,
+  funding: { sourceTransaction: await srcOf(fundUtxo.tx_hash), vout: fundUtxo.tx_pos },
+})
 
 // ⚠⚠ MEASURE THE FEE BY SERIALIZING THE SIGNED TRANSACTION. Never hand-count, and never trust the
 //    figure computed before signing — this project has been bitten by a stale serialization before.
