@@ -98,6 +98,20 @@ earlier rather than letting it look like a divergence between implementations.
 run anywhere, same answer. The three paths share nothing — different opcode numbers, different
 serializers, different interpreters, written years apart by different hands.
 
+## The server
+
+`server/merkle.php` is the tree; `server/probe.php` answers what a host can actually do before anything
+is built on an assumption about it.
+
+⚠ **The probe is token-gated and meant to be deleted.** Set `PROBE_KEY`, upload it alongside
+`merkle.php`, call it as `?k=<key>`, read the verdict, remove both. It 404s rather than 403s so it does
+not confirm its own existence.
+
+★ It **runs the real merkle implementation on the host** rather than checking a proxy for it. An earlier
+draft compared against a hash written from memory, the hash was wrong, and the probe reported the *host*
+as broken — a capability probe producing false negatives is worse than none, because you redesign around
+a limitation that isn't there.
+
 ## Files
 
 | `tools/ops.mjs` | the 0.1.3 opcode table. ⚠ `0x7f`–`0x81` are `SUBSTR`/`LEFT`/`RIGHT`, **not** `SPLIT`/`NUM2BIN`/`BIN2NUM` |
