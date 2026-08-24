@@ -26,7 +26,35 @@ export const OP = {
   OP_CODESEPARATOR:0xab, OP_CHECKSIG:0xac, OP_CHECKSIGVERIFY:0xad,
   OP_CHECKMULTISIG:0xae, OP_CHECKMULTISIGVERIFY:0xaf,
 }
-export const NAME = Object.fromEntries(Object.entries(OP).map(([k,v])=>[v,k]))
+
+// ── JETMORA'S OWN OPCODES ───────────────────────────────────────────────────────────────────────────
+// 0.1.3 leaves 0xb0–0xef empty, so our single-byte additions go there. Nothing here is taken from any
+// later implementation: only the NAMES are shared with BSV, and a name is not an encoding.
+// ⚠ BSV places SPLIT/NUM2BIN/BIN2NUM at 0x7f–0x81, overwriting 0.1.3's SUBSTR/LEFT/RIGHT. We do not:
+//   0.1.3 keeps its range intact and ours live here, so a covenant may use BOTH sets.
+// ⚠ For anyone diffing against BTC: BTC repurposed 0xb1/0xb2 as CHECKLOCKTIMEVERIFY/CHECKSEQUENCEVERIFY.
+//   Jetmora has neither — there is no block height and no clock (spec §3, §6b) — so there is no conflict,
+//   but the numbers are NOT interchangeable with BTC's.
+export const JET = {
+  OP_SPLIT:   0xb0,
+  OP_NUM2BIN: 0xb1,
+  OP_BIN2NUM: 0xb2,
+}
+
+// ── TWO-BYTE SPACE ──────────────────────────────────────────────────────────────────────────────────
+// 0.1.3 declares OP_SINGLEBYTE_END = 0xf0 and OP_DOUBLEBYTE_BEGIN = 0xf000: a reader that sees 0xf0
+// takes the NEXT byte too. Satoshi implemented the space and it was later removed. We use it.
+// ⚠ OP_LOOP's count is an IMMEDIATE OPERAND in the script bytes, never taken from the stack — that is
+//   the whole safety property: a stack value is not knowable until runtime, and a bound you cannot
+//   compute in advance is worthless.
+export const DOUBLE = {
+  OP_LOOP:    0xf010,   // followed by a 4-byte little-endian count
+  OP_ENDLOOP: 0xf011,
+}
+export const SINGLEBYTE_END = 0xf0
+
+export const NAME = Object.fromEntries(
+  Object.entries({ ...OP, ...JET, ...DOUBLE }).map(([k, v]) => [v, k]))
 /** Push arbitrary bytes, 0.1.3 rules: len<=0x4b direct, else PUSHDATA1/2/4. */
 export function push(b) {
   if (b.length <= 0x4b) return [b.length, ...b]

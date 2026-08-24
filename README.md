@@ -59,6 +59,24 @@ It found two real defects on its first run, neither of which any curated vector 
 
 ⇒ **16,000 generated scripts across four seeds now diverge zero times** on the shared subset.
 
+## ⚠⚠ Why transcoding is not optional
+
+BSV places `SPLIT`/`NUM2BIN`/`BIN2NUM` at `0x7f`–`0x81`, overwriting 0.1.3's `SUBSTR`/`LEFT`/`RIGHT`.
+Jetmora keeps 0.1.3's range intact and puts its own at `0xb0`–`0xb2`. So the same byte is a different
+instruction on each rail:
+
+```
+0x7f    BSV: OP_SPLIT       jetmora: OP_SUBSTR
+0x80    BSV: OP_NUM2BIN     jetmora: OP_LEFT
+0x81    BSV: OP_BIN2NUM     jetmora: OP_RIGHT
+```
+
+⇒ Run BSV bytes on jetmora without transcoding and **they will not error. They will quietly compute
+something else.** The mapping is therefore explicit, total, and refuses anything it does not recognise.
+
+★ Measured: a state-peeling program renumbers 8 opcodes and **the byte length does not change** —
+putting these in the free single-byte range rather than the two-byte space costs nothing.
+
 ## Files
 
 | `tools/ops.mjs` | the 0.1.3 opcode table. ⚠ `0x7f`–`0x81` are `SUBSTR`/`LEFT`/`RIGHT`, **not** `SPLIT`/`NUM2BIN`/`BIN2NUM` |
@@ -68,6 +86,9 @@ It found two real defects on its first run, neither of which any curated vector 
 | `tools/interpreter.mjs` | **the interpreter.** 0.1.3 semantics, arbitrary-precision integers, no build step |
 | `tools/verify.mjs` | `node tools/verify.mjs` → runs the vectors against our interpreter |
 | `tools/fuzz.mjs` | `node tools/fuzz.mjs` → **differential fuzzing** against an independent BSV interpreter |
+| `tools/serialize.mjs` | chunks ⇄ bytes, including the two-byte space. ⚠ `@bsv/sdk`'s `LockingScript` cannot represent a two-byte opcode, so this had to exist regardless of any licence question |
+| `tools/transcode.mjs` | **BSV numbering → jetmora numbering.** ⚠ Not optional — see below |
+| `tools/crosscompile.mjs` | `node --experimental-strip-types tools/crosscompile.mjs` → compiles BASIC once, runs it both ways, requires one answer |
 | `tools/emit.mjs` | `node tools/emit.mjs` → writes `vectors/core.json` |
 | `tools/crosscheck.mjs` | `node tools/crosscheck.mjs` → differential check of the `bsv` subset. ⚠ Needs `@bsv/sdk` resolvable; set `BSV_SDK=/abs/path/to/@bsv/sdk/dist/esm/mod.js` if it is not installed alongside |
 
