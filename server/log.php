@@ -13,6 +13,7 @@ require_once __DIR__ . '/store.php';
 require_once __DIR__ . '/genesis.php';
 require_once __DIR__ . '/append.php';
 require_once __DIR__ . '/head.php';
+require_once __DIR__ . '/merkle.php';
 
 const DB_PATH = __DIR__ . '/data/log.db';       // ⚠ put this OUTSIDE the docroot in a real deployment
 
@@ -111,6 +112,63 @@ case 'register':
     ]);
     out(['genesis' => $hex($id)], 201);
 
+// ── PORT a covenant from another log — spec §4b ──────────────────────────────────────────────
+// ★★★ This is what defeats a censoring operator: state must be continuable ELSEWHERE, or a log that
+// refuses your tick freezes the covenant forever and §1 is rebuilt with a new lever.
+//
+// ⚠⚠ WHAT THIS LOG VERIFIES, AND ONLY THIS (spec §4b.4):
+//   1. the inclusion proof validates against the source root
+//   2. the source root carries the source operator's signature
+//   3. the author signature authorises the continuation
+//   ⇒ It does NOT replay the covenant's history. That is a verifier's job, not a log's (§4.1).
+case 'port':
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
+    $in = json_decode(file_get_contents('php://input') ?: '', true);
+    if (!is_array($in)) out(['error' => 'body must be JSON'], 400);
+    foreach (['genesis_fields','entry','sequence','source_pubkey','source_head','source_head_sig',
+              'inclusion_proof','author_pubkey','author_sig'] as $k)
+        if (!isset($in[$k])) out(['error' => "missing $k"], 400);
+
+    // the covenant's identity travels with it — a covenant is "descended from genesis G", never
+    // "the thing in log A" (spec §4b.1)
+    $gf = $in['genesis_fields'];
+    $genesisId = $registry->register([
+        'source_hash' => $unhex($gf['source_hash'], 32), 'script' => $unhex($gf['script']),
+        'state' => $unhex($gf['state']), 'authorised' => json_encode($gf['authorised']),
+    ]);
+
+    $entry = $unhex($in['entry']);
+    $head  = $unhex($in['source_head']);
+    $srcPk = $unhex($in['source_pubkey']);
+    // 2. the source operator really published that root
+    if (!SignedHead::verify($head, $srcPk, $unhex($in['source_head_sig'])))
+        out(['error' => 'source head signature does not verify'], 403);
+    $h = SignedHead::parse($head);
+
+    // 1. the entry really was in the source log's tree at that root
+    $proof = array_map($unhex, $in['inclusion_proof']);
+    if (!mt_verify_inclusion((int)$in['sequence'], $h['tree_size'], $entry, $proof, $h['root']))
+        out(['error' => 'inclusion proof does not verify against the source root'], 403);
+
+    // 3. an authorised key asked for this continuation — ⚠ this is what stops ANYONE porting
+    //    someone else's covenant, and it is why portable state is safe (spec §3.5)
+    $auth = $registry->authorisedFor($genesisId);
+    $authorHex = strtolower(bin2hex($unhex($in['author_pubkey'])));
+    if ($auth !== 'open' && !in_array($authorHex, array_map('strtolower', $auth ?? []), true))
+        out(['error' => 'author is not authorised for this covenant'], 403);
+    if (!Appender::verifySignature($entry, $unhex($in['author_pubkey']), $unhex($in['author_sig'])))
+        out(['error' => 'author signature does not verify'], 403);
+
+    // ⚠ An ANCHORED source root is final; a merely signed one is portable but CONTESTABLE (§4b.3).
+    //   Recorded, not adjudicated — the log has no opinion about which it was.
+    $anchored = $h['anchor_root'] !== null && $h['anchor_size'] >= (int)$in['sequence'] + 1;
+    $seq = $store->append($entry);
+    out(['seq' => $seq, 'genesis' => $hex($genesisId), 'tree_size' => $store->size(),
+         'root' => $hex($store->root()), 'source_tree_size' => $h['tree_size'],
+         'source_was_anchored' => $anchored,
+         'note' => $anchored ? 'ported from an anchored root — final'
+                             : 'ported from a signed but unanchored head — portable, contestable (spec §4b.3)'], 201);
+
 // ── the append rule: ONE signature check and nothing else (spec §4.1) ────────────────────────
 case 'append':
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
@@ -128,5 +186,5 @@ case 'append':
 
 default:
     out(['log' => 'jetmora', 'spec' => 'https://jetmora.org/spec/log.md',
-         'ops' => ['info', 'head', 'inclusion', 'consistency', 'entry', 'genesis', 'register', 'append']]);
+         'ops' => ['info', 'head', 'inclusion', 'consistency', 'entry', 'genesis', 'register', 'append', 'port']]);
 }

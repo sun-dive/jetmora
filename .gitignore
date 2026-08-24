@@ -5,3 +5,5 @@ server/data/
 *.db
 *.db-wal
 *.db-shm
+server/dataB/
+server/logB.php
