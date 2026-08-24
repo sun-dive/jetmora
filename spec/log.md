@@ -5,6 +5,10 @@ usual sense. ⏭ marks a decision not yet made; those are the only parts an impl
 
 This document says **what**. The reasoning lives elsewhere and is not normative.
 
+⚠⚠ **SECTION NUMBERS IN THIS DOCUMENT AND IN THE DESIGN NOTES DO NOT MATCH, AND THEY COLLIDE.** This
+specification's §4b is *signature checking*; the design notes' §4b is *portable state*, which is §8
+here. ⇒ **Always cite the document as well as the number.** This bit its own authors within a day.
+
 ---
 
 ## 1. What a log is
@@ -632,6 +636,23 @@ history.**
 ★ A port from an **anchored** root is final. A port from a signed-but-unanchored head is portable but
 contestable — the source operator cannot un-sign it, but nothing has yet collapsed the possibility that
 they signed two.
+
+### 8.1 ★★★ TESTED 24 Aug — a covenant survives a hostile operator
+
+⚠ Until this ran, this section was a paragraph and nothing more: the endpoint did not exist.
+
+A covenant took three entries on log A; A published a signed head and then **refused everything
+further** — the freeze described above. The covenant **ported to log B and continued there.**
+
+★ And B refused all four things it must: a **stranger** porting someone else's covenant, a **forged**
+source-head signature, an inclusion proof **for a different leaf**, and an entry **that was never in
+log A**.
+
+⇒ **A hostile operator cannot freeze a covenant.** Without that, an operator's refusal is the same
+lever this whole design exists to remove, wearing different clothes.
+
+⏭ **Not yet tested: porting from an ANCHORED root** — the *final* case above, as against the
+*contestable* one exercised here.
 
 ## 9. Error states
 
