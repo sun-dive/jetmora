@@ -370,6 +370,62 @@ signed head cannot.
 
 ## 6. Anchoring
 
+### 6.0 ★★★ WHY AN ANCHOR EXISTS: THIS SYSTEM HAS NO BLOCK HEADERS
+
+**There are no headers here because there are no blocks, and there are no blocks because there is no
+consensus.** A header is where **objectivity** comes from — the point at which a claim stops being
+somebody's word and becomes something work was spent on. ⇒ **Jetmora does not invent one. It borrows
+one.**
+
+The complete proof chain for a single entry:
+
+```
+entry
+  → log root           RFC 6962 tree, signed by the operator
+                       ⚠ as good as that key and no more
+  → anchor transaction PushDrop, spendable ⇒ anchor n+1 consumes anchor n (§6.1a)
+  → block merkle root  the carrying chain's own tree
+  → block header       ★ where proof of work enters, and the only place it does
+```
+
+⇒ **Five hops, and only the last two carry any work.** Everything above the anchor is signatures and
+hashes; everything below is somebody else's electricity.
+
+### 6.0a ⇒ Therefore BRC-113 applies at two levels, not one
+
+| **entry → log root** | jetmora's own tree — **the layer MPT never had** |
+| **anchor → block root → header** | **MPT's original job, completely unchanged** |
+
+★ A port entry (§8) is an MPT with one extra tree stacked underneath it. That is not an analogy; it is
+the same construction, applied twice.
+
+### 6.0b ⚠⚠ Two consequences that follow immediately
+
+**A log that never anchors has no headers at all.** Its entire history is the operator's word, provable
+against nothing. ⇒ This is why §6.3 requires that a log which stops anchoring be treated as failing —
+not as a health heuristic, but because **anchoring is the only place objectivity enters the system.**
+
+★★ **Multi-anchoring borrows headers from several chains.** A log's objectivity then rests on no single
+chain surviving, and on no single chain's fee policy. ⇒ The same escape as portable state (§8), one
+level up: **do not depend on a party who can change the terms.**
+
+### 6.0c A log may therefore have an unforgeable identity
+
+If a log's first anchor is taken as its genesis in the BRC-113 sense — identity derived from that
+transaction plus the log's immutable parameters — then **the log itself is a token whose identity is
+anchored in a block header.**
+
+⇒ Forging a log's identity would mean rewriting proof of work, which is the same difficulty as forging
+a transaction. ★ Not *"unforgeable"* by assertion — unforgeable **for a stated reason**.
+
+⚠ **And it closes a gap in §8.** A port entry currently names its source log by **public key**, and a
+hostile source could rotate keys and deny the port came from it. **An identity anchored at genesis
+cannot be rotated away from.**
+
+⏭ **OPEN: whether a log SHOULD have such an identity, and what its immutable parameters are.**
+
+
+
 ### 6.1 What an anchor is
 
 An anchor is a transaction on a proof-of-work chain committing to a tree head. Its purpose is to make
