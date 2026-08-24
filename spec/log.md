@@ -214,6 +214,44 @@ ORDERING. Flattening them into a number would misdescribe all three.
 flow around an entry. **A lap time is final the moment it is recorded.** Anchoring is about what a third
 party can later be made to accept, never about whether the entry happened.
 
+## 4d. Equivocation, and how it is proved
+
+The design's central claim is that a log **cannot cheat invisibly**. That is worth nothing until
+something can produce the receipt, so this states what a receipt is.
+
+### 4d.1 ⚠⚠ There are two forms, and the obvious one is the easy one
+
+| **same size, different roots** | two signed heads at one tree size. Trivial to spot |
+| ★ **an inconsistent history** | heads at DIFFERENT sizes where the smaller is not a prefix of the larger. **An operator avoiding the first form will do this instead** |
+
+⇒ A verifier that checks only same-size collisions **clears a clever operator completely.** Catching the
+second form requires a consistency proof (§5.3), which is what that proof is for.
+
+### 4d.2 ⚠⚠ Absence of a proof is EVIDENCE, NEVER GUILT
+
+A log that will not serve a consistency proof MUST NOT be treated as having equivocated. **You cannot
+prove the absence of a proof**, and a log may be offline, slow, or pruned.
+
+⇒ ★ A detector that convicts the unreachable is worse than none, because it makes every accusation
+worthless. Report it as suspicion and let a reader act on that as they choose.
+
+★ Likewise, a signature made by someone else in an operator's name proves nothing about the operator. A
+verifier MUST check the signature **before** it examines the content.
+
+### 4d.3 An author can convict themselves
+
+Two entries at one `(covenant, sequence)` signed by the same authorised key are **self-equivocation**
+— the evidence a rewind leaves (§8). ⚠ It needs no gossip protocol: **whoever was on the other side of
+that covenant already holds the later signature.**
+
+### 4d.4 ★★★ TESTED 24 Aug — eleven cases, none fooled it
+
+Convicted: two roots at one size · a history that is not a prefix · **a consistency proof borrowed from
+a different, genuine pair of trees** · an author rewinding.
+Cleared: an honest log growing normally · the same head twice · **a log offline with no proof offered**
+· **a head forged in the operator's name** · an author advancing normally · an author signing the same
+entry twice · an entry signed by someone else.
+
 ## 5. The tree
 
 ### 5.1 Construction — RFC 6962, NOT Bitcoin's tree
