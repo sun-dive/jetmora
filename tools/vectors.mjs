@@ -56,6 +56,13 @@ export const VECTORS = [
   // ── bitwise — BYTEWISE in 0.1.3 (`vch[i] = ~vch[i]`) ───────────────────────────────────────
   { id:'invert.bytes',    oracle:'bsv', script:S(push([0x0f,0xf0]), OP.OP_INVERT),    stack:['f00f'] },
   { id:'and.bytes',       oracle:'bsv', script:S(push([0xff,0x0f]), push([0x0f,0xff]), OP.OP_AND), stack:['0f0f'] },
+  // ★★★ FOUND BY DIFFERENTIAL FUZZING, 24 Aug. 0.1.3 calls MakeSameSize() and ZERO-PADS the shorter to
+  //     the longer (script.cpp:26); the result takes the LONGER length. ⚠ BSV REFUSES mismatched sizes,
+  //     so these are 013-only. Claude's first implementation truncated to the shorter — a THIRD
+  //     behaviour, matching neither. None of the curated vectors exercised unequal lengths.
+  { id:'and.padshort',    oracle:'013', script:S(push([0xff,0xff]), push([0x0f]), OP.OP_AND),      stack:['0f00'] },
+  { id:'or.padshort',     oracle:'013', script:S(push([0xf0]), push([0x00,0x0f]), OP.OP_OR),       stack:['f00f'] },
+  { id:'xor.padshort',    oracle:'013', script:S(push([0xff]), push([0xff,0xff]), OP.OP_XOR),      stack:['00ff'] },
   { id:'or.bytes',        oracle:'bsv', script:S(push([0xf0,0x00]), push([0x0f,0x00]), OP.OP_OR),  stack:['ff00'] },
   { id:'xor.bytes',       oracle:'bsv', script:S(push([0xff,0x00]), push([0x0f,0x00]), OP.OP_XOR), stack:['f000'] },
 
@@ -87,6 +94,11 @@ export const VECTORS = [
   { id:'if.nottaken',     oracle:'bsv', script:S(OP.OP_0, OP.OP_IF, OP.OP_7, OP.OP_ELSE, OP.OP_8, OP.OP_ENDIF), stack:['08'] },
   { id:'verify.pass',     oracle:'bsv', script:S(OP.OP_1, OP.OP_1, OP.OP_VERIFY),     stack:['01'] },
   { id:'verify.fail',     oracle:'bsv', script:S(OP.OP_0, OP.OP_VERIFY),              error:'VERIFY failed' },
+  // ★★★ ALSO FOUND BY FUZZING. 0.1.3's EvalScript does NOT check that OP_IF was balanced — it ends and
+  //     returns CastToBool(stack.back()). ⚠ Claude's interpreter failed here, having imported a modern
+  //     rule by habit. The unclosed branch simply never executes.
+  { id:'if.unbalanced',   oracle:'013', script:S(OP.OP_7, OP.OP_1, OP.OP_IF, OP.OP_8),   stack:['07','08'] },
+  { id:'if.unbalanced.f', oracle:'013', script:S(OP.OP_7, OP.OP_0, OP.OP_IF, OP.OP_8),   stack:['07'] },
 
   // ── ⚠ 0.1.3-ONLY: OP_VER pushes VERSION. Jetmora binds it to the ENTRY (§5.1). ──────────────
   { id:'ver.pushes',      oracle:'jetmora', script:S(OP.OP_VER),

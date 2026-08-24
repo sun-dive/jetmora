@@ -43,12 +43,31 @@ rather than from the source.
 ⚠ It says **what**; the reasoning lives elsewhere and is not normative. Seven items are marked ⏭ OPEN
 and an implementation must not claim conformance while any remain.
 
+## ⚠ Why fuzzing, when the vectors already pass
+
+The vectors were hand-written and the interpreter was written to satisfy them. **On its own that is
+circular.** The cross-check breaks the circle for the `bsv` subset; differential fuzzing breaks it far
+harder, by generating scripts nobody curated and comparing two independent implementations.
+
+It found two real defects on its first run, neither of which any curated vector reached:
+
+- **`OP_AND`/`OP_OR`/`OP_XOR` on unequal lengths.** 0.1.3 calls `MakeSameSize()` and **zero-pads the
+  shorter to the longer**; the result takes the longer length. BSV *refuses* unequal sizes. Our first
+  implementation *truncated to the shorter* — a third behaviour, matching neither.
+- **Unbalanced `OP_IF`.** 0.1.3 has no end-of-script balance check at all; it simply returns
+  `CastToBool(stack.back())`. Ours failed, having imported a modern rule by habit.
+
+⇒ **16,000 generated scripts across four seeds now diverge zero times** on the shared subset.
+
 ## Files
 
 | `tools/ops.mjs` | the 0.1.3 opcode table. ⚠ `0x7f`–`0x81` are `SUBSTR`/`LEFT`/`RIGHT`, **not** `SPLIT`/`NUM2BIN`/`BIN2NUM` |
 | `tools/scriptnum.mjs` | script-number codec — little-endian sign-magnitude, no size limit |
 | `tools/vectors.mjs` | the vectors, hand-derived from the MIT source |
 | `tools/hash.mjs` | the O(1) comparison hash |
+| `tools/interpreter.mjs` | **the interpreter.** 0.1.3 semantics, arbitrary-precision integers, no build step |
+| `tools/verify.mjs` | `node tools/verify.mjs` → runs the vectors against our interpreter |
+| `tools/fuzz.mjs` | `node tools/fuzz.mjs` → **differential fuzzing** against an independent BSV interpreter |
 | `tools/emit.mjs` | `node tools/emit.mjs` → writes `vectors/core.json` |
 | `tools/crosscheck.mjs` | `node tools/crosscheck.mjs` → differential check of the `bsv` subset. ⚠ Needs `@bsv/sdk` resolvable; set `BSV_SDK=/abs/path/to/@bsv/sdk/dist/esm/mod.js` if it is not installed alongside |
 

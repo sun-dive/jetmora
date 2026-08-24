@@ -245,6 +245,33 @@
       "result_hash": "d14e88dff626b1e40d9ab20cd0ee907e150824f2d25f4d750e295a9bb9750f79"
     },
     {
+      "id": "and.padshort",
+      "oracle": "013",
+      "script": "02ffff010f84",
+      "stack": [
+        "0f00"
+      ],
+      "result_hash": "8122b638d4b0e94ae693942a226387f9e335fb5fae181742208542c09f1d5f3c"
+    },
+    {
+      "id": "or.padshort",
+      "oracle": "013",
+      "script": "01f002000f85",
+      "stack": [
+        "f00f"
+      ],
+      "result_hash": "bb347593412cecc83a2cab48cb35dd811f9887fd47059f60b1ab811536626af4"
+    },
+    {
+      "id": "xor.padshort",
+      "oracle": "013",
+      "script": "01ff02ffff86",
+      "stack": [
+        "00ff"
+      ],
+      "result_hash": "2d86e7f954fcb148d0f1e8ec53e2d7f979553c43cc42a83004c79fdd13dba376"
+    },
+    {
       "id": "or.bytes",
       "oracle": "bsv",
       "script": "02f000020f0085",
@@ -459,6 +486,25 @@
       "oracle": "bsv",
       "script": "0069",
       "error": "VERIFY failed"
+    },
+    {
+      "id": "if.unbalanced",
+      "oracle": "013",
+      "script": "57516358",
+      "stack": [
+        "07",
+        "08"
+      ],
+      "result_hash": "83592c22ff983e25d535fbcfe44e21e1c0715e0e6b9920e8b0d755758e6726c4"
+    },
+    {
+      "id": "if.unbalanced.f",
+      "oracle": "013",
+      "script": "57006358",
+      "stack": [
+        "07"
+      ],
+      "result_hash": "ca6c6588fa01171b200740344d354e8548b7470061fb32a34f4feee470ec281f"
     },
     {
       "id": "ver.pushes",
