@@ -77,6 +77,27 @@ something else.** The mapping is therefore explicit, total, and refuses anything
 ★ Measured: a state-peeling program renumbers 8 opcodes and **the byte length does not change** —
 putting these in the free single-byte range rather than the two-byte space costs nothing.
 
+## ★★★ The acid test
+
+`node --experimental-strip-types tools/acid.mjs`
+
+A real covenant — 212 lines of BASIC, the physics of a slot car, **3,669 bytes and 2,179 opcodes** —
+compiled once and executed on **three independent implementations**:
+
+| an independent BSV Script interpreter | on BSV-numbered bytes |
+| ours | the same program transcoded to jetmora numbering, 44 opcodes renumbered |
+| ★ the JavaScript reference | **not a Script interpreter at all** |
+
+**15 of 15 agree. The reference agrees on all 10 that produced output.**
+
+★ The other five are lifted-throttle cases, where the covenant refuses — and **both interpreters refuse
+identically.** Agreement on a refusal is still agreement, and it is what identified a harness bug
+earlier rather than letting it look like a divergence between implementations.
+
+⇒ This is the claim executed against real work rather than a toy: **H(source) · H(input) → H(output)**,
+run anywhere, same answer. The three paths share nothing — different opcode numbers, different
+serializers, different interpreters, written years apart by different hands.
+
 ## Files
 
 | `tools/ops.mjs` | the 0.1.3 opcode table. ⚠ `0x7f`–`0x81` are `SUBSTR`/`LEFT`/`RIGHT`, **not** `SPLIT`/`NUM2BIN`/`BIN2NUM` |
@@ -88,6 +109,7 @@ putting these in the free single-byte range rather than the two-byte space costs
 | `tools/fuzz.mjs` | `node tools/fuzz.mjs` → **differential fuzzing** against an independent BSV interpreter |
 | `tools/serialize.mjs` | chunks ⇄ bytes, including the two-byte space. ⚠ `@bsv/sdk`'s `LockingScript` cannot represent a two-byte opcode, so this had to exist regardless of any licence question |
 | `tools/transcode.mjs` | **BSV numbering → jetmora numbering.** ⚠ Not optional — see below |
+| `tools/acid.mjs` | **the acid test** — a real covenant on three implementations |
 | `tools/crosscompile.mjs` | `node --experimental-strip-types tools/crosscompile.mjs` → compiles BASIC once, runs it both ways, requires one answer |
 | `tools/ecdsa.mjs` | secp256k1 verification, no dependencies. ⚠ Takes the **raw preimage** — see the contract note in the file |
 | `tools/entry.mjs` | the entry — canonical serialization, ⚠ refuses non-minimal varints and trailing bytes |
