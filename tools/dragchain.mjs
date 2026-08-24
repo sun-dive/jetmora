@@ -49,7 +49,12 @@ console.log(`  covenant   one tick, ${tickSrc.split('\n').length} lines of BASIC
 const all = []
 for (const [label, cfg] of RACES) {
   const g = await j('?op=register', { source_hash: hex(sha(Buffer.from(tickSrc))),
-    script: hex(sha(Buffer.from(JSON.stringify(cfg)))),        // ⏭ the compiled tick belongs here
+    // ⚠⚠ PACKED, NOT JSON. This hash goes into a genesis commitment, and a commitment is anchored.
+    //    `JSON.stringify` is not canonical — reorder the keys or add a space and the same car gets a
+    //    different identity. ⇒ ON CHAIN IS ALWAYS PACKED BYTES; JSON is for off-chain only.
+    //    ⏭ the compiled tick belongs here, packed the same way.
+    script: hex(sha([cfg.eng, cfg.tyr, cfg.th, cfg.slip & 0xff, (cfg.slip >> 8) & 0xff,
+                     ...Buffer.from(BigInt(cfg.tank).toString(16).padStart(8, '0'), 'hex')])),
     state: hex([cfg.eng, cfg.tyr, cfg.th, cfg.slip & 0xff]), authorised: [hex(pk)] })
   const genesis = g.body.genesis
 

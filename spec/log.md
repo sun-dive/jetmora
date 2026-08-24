@@ -80,6 +80,18 @@ from the same field values — across one output, several outputs, a zero-value 
 varint-sized script — differing **only** in the trailing type byte. ⇒ *An entry is a transaction* is
 demonstrated, not asserted. See `tools/preimage-check.mjs`.
 
+### 3.0b ⚠⚠ ON CHAIN IS PACKED BYTES. OFF CHAIN IS JSON.
+
+**Anything that reaches a chain, is hashed into a commitment, or is signed MUST be packed bytes.** JSON
+is for HTTP, tooling and local files, and MUST NOT appear anywhere a hash or a signature is taken.
+
+⚠ **The reason is not taste. `JSON.stringify` is not canonical** — reorder the keys or add a space and
+the same object hashes differently. ⇒ A commitment computed over JSON gives one thing two identities,
+which is precisely what §3.1 exists to forbid.
+
+★ It is also a rule that catches mistakes cheaply, because it can be checked by reading rather than by
+reasoning: **find the hash, look at what goes into it.**
+
 ### 3.1 Canonical serialization
 
 There MUST be exactly one byte string per entry.
