@@ -406,6 +406,28 @@ individually provable ticks, roughly 145 kB** — in 32 bytes on a proof-of-work
 
 ★ Anyone may now fetch that transaction and check any of those ticks against a root nobody can walk
 back, including the operator.
+
+#### ⚠ A note that is not normative, and is recorded because it is true
+
+The locking script is **88 bytes exactly**:
+
+```
+ 1 + 33  push + compressed pubkey   34
+ 1       OP_CHECKSIG                35
+ 1 +  8  push + "JETMORA1"          44
+ 1 + 32  push + root                77
+ 1 +  8  push + tree size           86
+ 1       OP_2DROP                   87
+ 1       OP_DROP                    88
+```
+
+⇒ Found while answering an unrelated question about whether the anchor was packed bytes or JSON, by
+decomposing the script off the chain. **Nobody was counting.**
+⚠ **And the mechanism, in the same breath:** the marker is 8 bytes because eight characters looked
+tidy — `JETMORA` gives 87, and an uncompressed key gives 120. **An accident of four choices, nothing
+planted, and it constrains nothing in this specification.**
+★ It is here because a number that turns up unlooked-for should be written down with its explanation
+attached, rather than remembered without one.
 ⚠ A first anchor spends no predecessor, which is why it is 29 sat rather than ~41. **It is also the one
 anchor whose position rests on its own timestamp alone** — every anchor after it is chained.
 
