@@ -257,6 +257,29 @@ An implementation MUST NOT change a 0.1.3 assignment to accommodate a later one.
 ★ The rule is general, not a list. Any future collision resolves the same way, and the map is the
 permanent expression of it rather than a one-off patch.
 
+### 5b.1a ★★ Why fidelity, and not for its own sake
+
+**So that historical script remains executable.**
+
+`OP_CAT`, `OP_SUBSTR`, `OP_LEFT`, `OP_RIGHT`, `OP_MUL` and the rest were live until mid-2010. Anything
+mined in that window using them exists in the early chain today, and:
+
+| **BTC** | disabled them ⇒ cannot execute such a script at all |
+| **BSV** | re-enabled, but **renumbered `0x7f`–`0x81`** ⇒ a 2009 `OP_SUBSTR` executes as `OP_SPLIT`. ⚠ **Not an error — a different answer** |
+| ★ **jetmora** | 0.1.3 positions intact ⇒ **executes it as written** |
+
+⇒ ★★★ **An implementation following this rule may be the only environment able to correctly execute
+early Bitcoin script.** That does not rest on any claim about Script's origins; it follows from the
+numbering alone, and it is checkable — find such an output and run it.
+
+★ It also completes the archival case: a record that can no longer be **executed** is only half
+preserved.
+
+⚠ Note, without weight: 0.1.3 ships an extension mechanism it never uses — `OP_SINGLEBYTE_END` and a
+whole two-byte address space, implemented and empty. Suggestive of a longer history than Bitcoin's, but
+suggestion is not evidence and this specification claims nothing about it. It is simply the reason the
+space exists for §5b.3 to use.
+
 ### 5b.2 ⚠⚠ Both sets are kept, and they are not redundant
 
 `OP_SUBSTR`/`LEFT`/`RIGHT` and `OP_SPLIT` are equivalent in power and **not in cost**. They optimise
