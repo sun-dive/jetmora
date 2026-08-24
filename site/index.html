@@ -68,6 +68,10 @@ program, the same inputs, and an interpreter that behaves identically.</p>
 
 <p><strong>jetmora makes the second option cheap, exact, and permanent.</strong></p>
 
+<p>That last word is doing more work than it looks. Keeping a <em>result</em> is easy. Keeping the
+ability to <em>check</em> it is the hard half, and it is the half that quietly gets lost.
+<strong>A record you can no longer execute is only half preserved.</strong></p>
+
 <div class="key">
 <p><strong>Verification by re-execution, not by proof.</strong> This matters, because
 &ldquo;verifiable computation&rdquo; usually means zero-knowledge proofs — verify the answer without
@@ -283,9 +287,9 @@ crashes, and never switched back on.</p>
 never used. The 2009 program runs <em>as written</em></td></tr>
 </table>
 
-<p>That is not fidelity for its own sake. <strong>A record you can no longer execute is only half
-preserved</strong> — and if a program is the thing being witnessed, then being able to run it in fifty
-years is the whole point.</p>
+<p>That is not fidelity for its own sake. It is the half-preserved record, arriving in concrete form:
+the programs are still there, still readable, and no longer runnable. <strong>If a program is the thing
+being witnessed, then being able to run it in fifty years is the whole point.</strong></p>
 
 <p class="note">We have not gone looking yet. The claim follows from the numbering rather than from
 evidence, and it is checkable by anyone: find an early output using one of those instructions, and run
