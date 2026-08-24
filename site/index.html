@@ -309,6 +309,35 @@ silently. A vector fails instead. An implementation that reproduces the vectors 
 one of which was an error in the vectors themselves — written from familiarity rather than from the
 source. It was caught immediately, which is the entire argument for building it this way.</p>
 
+<h3>The test that matters</h3>
+
+<p>A real covenant — the physics of a slot car, <strong>212 lines of program, 3,669 bytes, 2,179
+instructions</strong> — was compiled once and executed on three implementations that share no code:</p>
+
+<table class="tbl">
+<tr><td>one</td><td>an independent Bitcoin Script interpreter, written by other people, years ago</td></tr>
+<tr><td>two</td><td>ours — the same program with 44 instructions renumbered, its own serializer, written
+the same day</td></tr>
+<tr><td>three</td><td><strong>a plain JavaScript reference</strong>, which is not a Script interpreter at
+all</td></tr>
+</table>
+
+<p><strong>All fifteen cases agree.</strong> The JavaScript reference agrees on all ten that produced a
+result. The other five are lifted-throttle cases where the covenant refuses to advance — <em>and both
+interpreters refuse identically.</em></p>
+
+<div class="key">
+<p>That last part is worth more than it looks. <strong>Agreement on a failure is still agreement</strong>
+— and it is what tells you the disagreement is in your test rather than in the implementations. It
+happened twice while building this, and both times it pointed at the right thing.</p>
+<p>A test with only one implementation can never do that. It has nothing to disagree with.</p>
+</div>
+
+<p class="note">Three paths, no shared code: different instruction numbers, different serializers,
+different interpreters, written years apart by different hands. That is what makes the agreement
+evidence rather than a tautology — and it is the whole claim, executed against real work instead of a
+demonstration.</p>
+
 <table class="tbl">
 <tr><td>specification</td><td><a href="./spec/log.md">spec/log.md</a> — normative, with its open items
 listed</td></tr>
