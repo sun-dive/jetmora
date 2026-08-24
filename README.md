@@ -137,6 +137,28 @@ single locking script, and the covenant refuses the car if its physics disagree.
 pressed the pedal, the engine let go, and the log recorded exactly that. On a chain that race would have
 had to be foreseen and committed to before it existed.
 
+## Anchoring
+
+`tools/anchor.mjs` builds the anchor; `tools/broadcast.mjs` sends it.
+
+⚠⚠ **The key is never asked for, never stored, and never passed as an argument** — arguments appear in
+`ps`, the environment does not:
+
+```
+read -s JETMORA_WIF && export JETMORA_WIF
+node tools/broadcast.mjs address            # the address to fund
+node tools/broadcast.mjs status             # what it holds
+node tools/broadcast.mjs anchor <root> <n>  # build and show — add --send to broadcast
+```
+
+★ **Use a dedicated key.** The anchor chain's key becomes the log's identity: it signs every anchor,
+forever. Mixing that with a spending wallet is poor hygiene.
+
+⚠ **Dry run by default.** Nothing broadcasts without `--send`, and even then it refuses a fee below the
+100 sat/KB floor (it would not relay) or more than 3× above it (money thrown away). The fee is measured
+by serializing the **signed** transaction — never hand-counted, and never taken from the figure computed
+before signing.
+
 ## The log server
 
 `server/` is a complete log: signature-gated append, an incremental merkle tree held on disk, immutable
