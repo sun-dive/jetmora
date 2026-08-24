@@ -106,6 +106,29 @@ MUST NOT permit any integer encoding that admits more than one form.
 ⚠ This is not tidiness. `OP_PUSH_TX` is secure only because the verifier recomputes the preimage and
 compares; **two encodings would let a signer push a preimage that does not describe what they did.**
 
+### 3.1a ★★★ TESTED 25 Aug — the canonical invariant holds under fuzzing
+
+**The invariant, stated as something attackable:**
+
+> for every byte string *b* — either `parse(b)` **fails**, or `serialize(parse(b))` **is exactly *b***
+
+⚠ Anything else means the format admits two encodings of one entry, and then a signer can push a
+preimage that does not describe what they did.
+
+**80,000 cases, four seeds. Zero violations.**
+
+| pure noise | 5,000 refused, 0 parsed |
+| valid entries, untouched | 5,000 round-trip |
+| ★ **one bit flipped** | 415 refused, **4,585 round-trip** — ⇒ correct: a bit inside `prevEntry` or script data gives a *different but valid* entry |
+| truncated · extended | refused, always |
+
+★ Hand-built attacks all refused: a trailing zero byte · a non-minimal varint · truncation by one byte
+· **an input count claiming `0xffffffff`** (refused as truncated — ⚠ it does not attempt to allocate) ·
+a non-zero `nLocktime`.
+
+★ Payload sizes across every pushdata boundary — 0, 1, 74, 75, 76, 77, 254–257, 65535, 65536 — all
+round-trip.
+
 ### 3.2 Self-containment
 
 An entry MUST contain everything needed to replay it: the unlocking data, every input, and any value the
