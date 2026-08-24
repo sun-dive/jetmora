@@ -129,6 +129,34 @@ a non-zero `nLocktime`.
 ★ Payload sizes across every pushdata boundary — 0, 1, 74, 75, 76, 77, 254–257, 65535, 65536 — all
 round-trip.
 
+### 3.1b ⚠★ TESTED 25 Aug — concurrent appends, and the bug it found
+
+**⚠ An implementation MUST take the write lock BEFORE reading the log's size.**
+
+A sequence number is chosen by reading `size()` and then writing at that index. In SQLite, `BEGIN`
+is *deferred*: the write lock is not acquired until the first write, so two appenders can both read
+`size() = n`. Under WAL, the loser gets `SQLITE_BUSY_SNAPSHOT` — and ⚠ **`busy_timeout` cannot retry
+that one**, because retrying against a stale snapshot cannot help. The append is simply lost.
+
+★ Measured, 8 concurrent appenders: **183 of 200 appends lost.** With `BEGIN IMMEDIATE`: **0 lost.**
+
+| workers | appends | lost |
+| 4 · 16 · 24 · 32 | 100 · 400 · 600 · 800 | **0** |
+| 16, deeper | **1,600** | **0** |
+
+⇒ Every run: sequence numbers dense with no gaps and no duplicates · the stored tree's root equal to
+a from-scratch root over the bodies alone · **every** inclusion proof verifying.
+
+★★ **The integrity was never at risk, only the availability.** `seq` is a PRIMARY KEY, so a lost race
+could only ever *refuse* — never write a second entry at one index, and never fold a torn sibling set
+into an interior node. That is the property worth stating: **under contention this log fails closed.**
+The fix bought throughput, not correctness.
+
+⚠ A verifier's trap, found by the same test: `mt_verify_inclusion` takes the **entry body**, not its
+leaf hash — it hashes for you. Passing a hash double-hashes, and then *every* proof fails while the
+root still matches, which reads precisely like a corrupt tree. Same class as the ECDSA hash-contract
+bug. ⇒ The parameter is now named for what it holds.
+
 ### 3.2 Self-containment
 
 An entry MUST contain everything needed to replay it: the unlocking data, every input, and any value the

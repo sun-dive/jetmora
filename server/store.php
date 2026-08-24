@@ -82,13 +82,24 @@ final class LogStore
         return $h === false ? null : $h;
     }
 
+    /** BEGIN IMMEDIATE — see the note in append(). Every writing transaction must use this. */
+    private function begin(): void { $this->db->exec('BEGIN IMMEDIATE'); }
+
     /**
      * Append one entry. ⚠ Returns its sequence number.
      * Writes exactly the nodes that BECAME COMPLETE — at most log(n) of them.
      */
     public function append(string $body): int
     {
-        $this->db->beginTransaction();
+        // ⚠⚠ BEGIN IMMEDIATE, NOT beginTransaction(). PDO issues a plain BEGIN, which is DEFERRED:
+        //    the write lock is not taken until the first INSERT, but size() is READ before it. Under
+        //    WAL, if another appender commits in that gap, SQLite returns SQLITE_BUSY_SNAPSHOT — and
+        //    busy_timeout CANNOT retry that one, because retrying a stale snapshot cannot help.
+        //    ⇒ Measured 25 Aug: 8 concurrent appenders, 183 of 200 appends lost to 'database is
+        //    locked'. IMMEDIATE takes the write lock up front so busy_timeout can actually wait.
+        //    ★ The tree was never corrupted either way — seq is a PRIMARY KEY, so the race could only
+        //    ever refuse, not corrupt. This is an availability fix, not an integrity one.
+        $this->begin();
         try {
             $seq = $this->size();
             $leaf = mt_leaf_hash($body);
@@ -204,7 +215,7 @@ final class LogStore
     {
         if ($level < 1) throw new InvalidArgumentException('prune level must be >= 1');
         if ($upTo < 0 || $upTo > $this->size()) throw new InvalidArgumentException('upTo outside the log');
-        $this->db->beginTransaction();
+        $this->begin();
         try {
             $b = $this->db->prepare('UPDATE entries SET body = X\'\' WHERE seq < ? AND length(body) > 0');
             $b->execute([$upTo]);

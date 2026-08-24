@@ -50,11 +50,17 @@ function mt_inclusion_proof(int $m, array $entries): array {
  *    top-down agrees for particular tree sizes only — in the JS twin that scored 203 of 820, which
  *    reads as a working implementation with an edge case rather than as a wrong one.
  */
-function mt_verify_inclusion(int $m, int $n, string $leaf, array $path, string $expected): bool {
+/**
+ * ⚠⚠ $entry IS THE ENTRY BODY, NOT ITS LEAF HASH. This function hashes it for you.
+ *    Passing mt_leaf_hash($body) here double-hashes and every proof fails — which reads exactly like
+ *    a broken tree, because the root still matches. Same trap as the ECDSA hash contract: name the
+ *    parameter for what it holds.
+ */
+function mt_verify_inclusion(int $m, int $n, string $entry, array $path, string $expected): bool {
     if ($m < 0 || $m >= $n || $n < 1) return false;
     $pos = 0; $failed = false;
-    $walk = function (int $m, int $size) use (&$walk, &$pos, &$failed, $path, $leaf): ?string {
-        if ($size === 1) return mt_leaf_hash($leaf);
+    $walk = function (int $m, int $size) use (&$walk, &$pos, &$failed, $path, $entry): ?string {
+        if ($size === 1) return mt_leaf_hash($entry);
         $k = mt_split_point($size);
         $h = $m < $k ? $walk($m, $k) : $walk($m - $k, $size - $k);
         if ($h === null || $pos >= count($path)) { $failed = true; $pos++; return null; }
