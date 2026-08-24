@@ -112,6 +112,31 @@ draft compared against a hash written from memory, the hash was wrong, and the p
 as broken — a capability probe producing false negatives is worse than none, because you redesign around
 a limitation that isn't there.
 
+## ★★★ Bitcoin Racers on a test chain
+
+`node --experimental-strip-types tools/dragchain.mjs` (with a log running)
+
+The quarter mile, one tick per entry. Four races, four endings, **264 individually provable ticks**:
+
+| **finishes** | eng 8 tyr 4 | 78 entries · 410.0 m at 8.79 m/s |
+| **goes off** | tyr 2, grippy strip | 90 entries · 13.8 m — lost grip at speed |
+| **grenades** | tyr 2, throttle 14, greasy | **1 entry** — the motor ran away with itself off the line |
+| **runs dry** | tyr 2, greasy | 95 entries · 6.2 m — coasted to a stop |
+
+**264/264 inclusion proofs verified.**
+
+### ⚠ What this actually demonstrates, which is not what you'd guess
+
+**It is not that ticks are free.** On a proof-of-work chain a car is compiled *for one run and no other*:
+the race is simulated to its last tick **before anything is minted**, the whole run is unrolled into a
+single locking script, and the covenant refuses the car if its physics disagree.
+
+⇒ **So the race is PREDICTED at mint. The driver cannot change their mind at tick 40.**
+
+★ Here the throttle is a **decision per tick, not a plan**. The grenade above is one entry: the driver
+pressed the pedal, the engine let go, and the log recorded exactly that. On a chain that race would have
+had to be foreseen and committed to before it existed.
+
 ## The log server
 
 `server/` is a complete log: signature-gated append, an incremental merkle tree held on disk, immutable
