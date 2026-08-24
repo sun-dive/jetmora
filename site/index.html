@@ -267,6 +267,30 @@ industry. Git is a Merkle tree everyone uses without discussing.</p>
 <p><strong>The record-keeping here is a thirty-five-year-old tradition. Running programs inside the log
 is the part with no precedent.</strong></p>
 
+<h3>Which is also why the old instruction numbers are kept</h3>
+
+<p>Bitcoin's scripting language had more instructions in 2009 than it does now. Concatenate, multiply,
+substring, shift — all live until the middle of 2010, when a dozen of them were switched off after
+crashes, and never switched back on.</p>
+
+<p>So there are programs in the early blockchain written in a language nothing can read any more.</p>
+
+<table class="tbl">
+<tr><td>one chain</td><td>disabled those instructions and cannot execute such a script at all</td></tr>
+<tr><td>another</td><td>re-enabled them, but reassigned three of the numbers to newer instructions. A
+2009 program still runs — and <strong>quietly computes something different</strong></td></tr>
+<tr><td>jetmora</td><td>keeps the original assignments and puts its own instructions in space that was
+never used. The 2009 program runs <em>as written</em></td></tr>
+</table>
+
+<p>That is not fidelity for its own sake. <strong>A record you can no longer execute is only half
+preserved</strong> — and if a program is the thing being witnessed, then being able to run it in fifty
+years is the whole point.</p>
+
+<p class="note">We have not gone looking yet. The claim follows from the numbering rather than from
+evidence, and it is checkable by anyone: find an early output using one of those instructions, and run
+it three ways. If nothing was ever mined that used them, that is worth knowing too.</p>
+
 <hr>
 
 <h2>Status</h2>
