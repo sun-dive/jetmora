@@ -225,7 +225,7 @@ carrying chain's own tree for anchor inclusion proofs (§6.1, and BRC-113 for BS
 An operator MUST publish signed tree heads containing at least: tree size, root hash, and a signature by
 the operator's key. A head MUST NOT be modified once published.
 
-⏭ **PROPOSED and implemented — 89 bytes, canonical by construction:**
+⏭ **PROPOSED and implemented — 90 bytes, canonical by construction:**
 
 ```
 version      1 byte
@@ -234,6 +234,7 @@ root        32 bytes
 timestamp    8 bytes, big-endian, unix seconds
 anchor_root 32 bytes  — the last ANCHORED root, or 32 zero bytes if none
 anchor_size  8 bytes  — the tree size at that anchored root
+prune_level  1 byte   — retention granularity, K = 2^level. 0 = nothing pruned
 ```
 
 ⚠ **The timestamp is the operator's clock and is a CLAIM, not a fact.** Nothing depends on it being
@@ -304,9 +305,14 @@ cheap disk gives cost; a mirror gives both cheaply and neither permanently. ⇒ 
 ★ An operator that prunes SHOULD publish, alongside its retention policy, **where the discarded bodies
 can be obtained** — otherwise it has not pruned, it has deleted.
 
-⏭ **OPEN: whether *K* should be fixed by the specification or chosen per log.** Fixed makes a pruned
-proof's shape predictable to any client; per-log lets a small operator prune harder. ⇒ Leaning per-log,
-declared in the head, but nothing depends on it yet.
+★ **DECIDED: *K* is CHOSEN PER LOG** and declared in the head as `prune_level`, where K = 2^level and
+0 means nothing is pruned. ⇒ A small operator may prune harder than a large one, which is the point of
+a design a website can run.
+
+⚠ **It lives in the HEAD rather than in a policy document for a specific reason:** a client verifying an
+OLD proof needs the value that applied at THAT time, not the value today. Heads are immutable and are
+never discarded (§5c.1), so the answer is always recoverable. ⇒ A policy document can be edited; a
+signed head cannot.
 
 ## 6. Anchoring
 

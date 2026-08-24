@@ -29,18 +29,25 @@ final class SignedHead
      *                Anyone may compare it against the anchor; nothing depends on it being honest.
      *   anchor_root 32 bytes — the last ANCHORED root, or 32 zero bytes if none yet
      *   anchor_size  8 bytes big-endian — the tree size at that anchored root
+     *   prune_level  1 byte  — ⚠ PER LOG, his call. Retention granularity as a LEVEL: the operator
+     *                keeps subtree roots at this level for pruned regions, so K = 2^level.
+     *                0 means nothing is pruned. ⇒ Held in the HEAD rather than in a policy document
+     *                because a client verifying an OLD proof needs the value that applied THEN, and
+     *                heads are immutable and never discarded (§5c.1) — so the answer is always there.
      */
-    public static function bytes(int $size, string $root, int $ts, string $anchorRoot = '', int $anchorSize = 0): string
+    public static function bytes(int $size, string $root, int $ts, string $anchorRoot = '', int $anchorSize = 0, int $pruneLevel = 0): string
     {
         if (strlen($root) !== 32) throw new InvalidArgumentException('root must be 32 bytes');
         $anchorRoot = $anchorRoot === '' ? str_repeat("\x00", 32) : $anchorRoot;
         if (strlen($anchorRoot) !== 32) throw new InvalidArgumentException('anchor root must be 32 bytes');
-        return chr(self::VERSION) . pack('J', $size) . $root . pack('J', $ts) . $anchorRoot . pack('J', $anchorSize);
+        if ($pruneLevel < 0 || $pruneLevel > 63) throw new InvalidArgumentException('prune level out of range');
+        return chr(self::VERSION) . pack('J', $size) . $root . pack('J', $ts)
+             . $anchorRoot . pack('J', $anchorSize) . chr($pruneLevel);
     }
 
     public static function parse(string $b): array
     {
-        if (strlen($b) !== 89) throw new InvalidArgumentException('a head is exactly 89 bytes');
+        if (strlen($b) !== 90) throw new InvalidArgumentException('a head is exactly 90 bytes');
         $v = ord($b[0]);
         if ($v !== self::VERSION) throw new InvalidArgumentException("unknown head version $v");
         $anchorRoot = substr($b, 49, 32);
@@ -51,6 +58,8 @@ final class SignedHead
             'timestamp'   => unpack('J', substr($b, 41, 8))[1],
             'anchor_root' => $anchorRoot === str_repeat("\x00", 32) ? null : $anchorRoot,
             'anchor_size' => unpack('J', substr($b, 81, 8))[1],
+            'prune_level' => ord($b[89]),
+            'prune_k'     => ord($b[89]) === 0 ? 0 : 1 << ord($b[89]),
         ];
     }
 

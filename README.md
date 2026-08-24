@@ -112,6 +112,25 @@ draft compared against a hash written from memory, the hash was wrong, and the p
 as broken — a capability probe producing false negatives is worse than none, because you redesign around
 a limitation that isn't there.
 
+## The log server
+
+`server/` is a complete log: signature-gated append, an incremental merkle tree held on disk, immutable
+signed heads, and inclusion and consistency proofs over HTTP.
+
+| `merkle.php` | RFC 6962 |
+| `store.php` | the tree is **stored, never rebuilt** — appends touch log(n) nodes, proofs are read |
+| `genesis.php` | answers the one question the append rule asks: which key may advance covenant G |
+| `append.php` | ⚠ the whole rule: canonical, and signed by an authorised key. **Nothing else** |
+| `head.php` | 90-byte signed head. ⚠ Re-signing a size is impossible, not merely forbidden |
+| `log.php` | the HTTP endpoints |
+| `probe.php` | ⚠ host capability probe. Token-gated, delete after use |
+
+★ **Verified end to end by an independent implementation:** a JS client checked 200 inclusion proofs and
+8 consistency proofs served by the PHP log, and rejected a tampered proof and a false entry claim.
+
+⚠ **What it deliberately does not do:** execute Script, reject duplicates, or adjudicate. A log is a
+witness. Every temptation to make it cleverer is a step toward consensus.
+
 ## Files
 
 | `tools/ops.mjs` | the 0.1.3 opcode table. ⚠ `0x7f`–`0x81` are `SUBSTR`/`LEFT`/`RIGHT`, **not** `SPLIT`/`NUM2BIN`/`BIN2NUM` |
