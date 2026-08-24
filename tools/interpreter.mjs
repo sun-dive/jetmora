@@ -12,7 +12,7 @@
 //   · OP_RETURN does NOT fail — it jumps to the end and the stack survives
 //   · OP_VER pushes a version; here it is bound to the ENTRY, never to this software (spec §6b)
 import { createHash } from 'node:crypto'
-import { OP, NAME } from './ops.mjs'
+import { OP, JET, NAME } from './ops.mjs'
 import { toNum, fromNum } from './scriptnum.mjs'
 
 const sha1 = b => [...createHash('sha1').update(Buffer.from(b)).digest()]
@@ -45,6 +45,9 @@ export function evaluate(script, opts = {}) {
   const vfExec = []           // 0.1.3's conditional stack
   const version = opts.version ?? 103
   const maxOps = opts.maxOps ?? 1_000_000
+  // ⚠ OPERATOR POLICY, never a protocol constant (spec §4.5). A ceiling written into the protocol
+  //   becomes a number nobody can promise to hold — which is the problem this design exists to escape.
+  const maxItemSize = opts.maxItemSize ?? 1_000_000
   let pc = 0, ops = 0
 
   const need = (n, op) => { if (stack.length < n) fail(`stack underflow: need ${n}, have ${stack.length}`, op) }
@@ -162,6 +165,47 @@ export function evaluate(script, opts = {}) {
           stack.push(opcode === OP.OP_LEFT ? s.slice(0, n) : s.slice(n)); break
         }
         case OP.OP_SIZE: need(1, opcode); pushNum(BigInt(top(-1).length)); break
+
+        // ── JETMORA'S OWN DATA OPS (0xb0–0xb2) ──────────────────────────────────────────────
+        // ⚠ Semantics defined HERE, not inherited: these sit at our own numbers, so no external
+        //   implementation is an oracle for them. Vectors are marked `jetmora` accordingly.
+        //   0.1.3's SUBSTR/LEFT/RIGHT remain at 0x7f–0x81 and are kept: SPLIT is cheap for
+        //   SEQUENTIAL parsing, SUBSTR is cheap for RANDOM ACCESS. Different jobs, both used.
+        case JET.OP_SPLIT: {
+          // (data n -- left right)
+          need(2, opcode)
+          const n = Number(popNum(opcode)), d = stack.pop()
+          if (n < 0 || n > d.length) fail(`OP_SPLIT position ${n} outside 0..${d.length}`, opcode)
+          stack.push(d.slice(0, n), d.slice(n)); break
+        }
+        case JET.OP_BIN2NUM: {
+          // (bytes -- num) — reinterpret as a script number and re-encode minimally
+          need(1, opcode); pushNum(fromNum(stack.pop())); break
+        }
+        case JET.OP_NUM2BIN: {
+          // (num size -- bytes) — fixed-width little-endian, sign in the high bit of the LAST byte
+          // ⚠⚠ `size` COMES FROM THE STACK, so this opcode's OUTPUT SIZE DEPENDS ON A VALUE, not on
+          //    an input size. That is precisely the static-cost hazard (spec §4.5 / doc §5.2): a
+          //    verifier cannot bound the cost before running unless `size` is a script literal.
+          //    ⏭ The compiler must emit a literal here. Enforcing that is an OPEN spec item.
+          need(2, opcode)
+          const size = Number(popNum(opcode))
+          const n = fromNum(stack.pop())
+          if (size < 0) fail('OP_NUM2BIN negative size', opcode)
+          if (size > maxItemSize) fail(`OP_NUM2BIN size ${size} exceeds the operator's item limit`, opcode)
+          const min = toNum(n)
+          if (min.length > size) fail(`OP_NUM2BIN: ${n} needs ${min.length} bytes, asked for ${size}`, opcode)
+          const out = new Array(size).fill(0)
+          let neg = false
+          if (min.length) {
+            const body = [...min]
+            neg = (body[body.length - 1] & 0x80) !== 0
+            if (neg) body[body.length - 1] &= 0x7f
+            for (let i = 0; i < body.length; i++) out[i] = body[i]
+          }
+          if (size > 0 && neg) out[size - 1] |= 0x80
+          stack.push(out); break
+        }
 
         // ── bitwise. ⚠ BYTEWISE in 0.1.3 (`vch[i] = ~vch[i]`) ────────────────────────────────
         case OP.OP_INVERT: { need(1, opcode); const v = stack.pop(); stack.push(v.map(b => (~b) & 0xff)); break }

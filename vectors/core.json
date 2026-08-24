@@ -336,6 +336,111 @@
       "result_hash": "3577e1568ecea87c22db9c83fa640771c34dc1906345a621f2ba211128a1ddbb"
     },
     {
+      "id": "split.mid",
+      "oracle": "jetmora",
+      "script": "05010203040552b0",
+      "stack": [
+        "0102",
+        "030405"
+      ],
+      "result_hash": "afe9969ff7c251c535602ab6af1de4d5ab4581d5a855d7c976dbd98049883317"
+    },
+    {
+      "id": "split.zero",
+      "oracle": "jetmora",
+      "script": "0309080700b0",
+      "stack": [
+        "",
+        "090807"
+      ],
+      "result_hash": "9ae167dfb3469ccb72c10373483d00dd57f1d9ce6607ae5095d0357cdcc3f2ec"
+    },
+    {
+      "id": "split.end",
+      "oracle": "jetmora",
+      "script": "0309080753b0",
+      "stack": [
+        "090807",
+        ""
+      ],
+      "result_hash": "6ee759ce626d88d24c6ad6444f7dc8842782e7bcdd9f0f336638a45361d58db2"
+    },
+    {
+      "id": "split.past",
+      "oracle": "jetmora",
+      "script": "02090853b0",
+      "error": "position outside range"
+    },
+    {
+      "id": "num2bin.pos",
+      "oracle": "jetmora",
+      "script": "5554b1",
+      "stack": [
+        "05000000"
+      ],
+      "result_hash": "a1742a11951838aa1a46ea607709f57e6d68578bf6bba8abc2506b22c28f9e81"
+    },
+    {
+      "id": "num2bin.neg",
+      "oracle": "jetmora",
+      "script": "018554b1",
+      "stack": [
+        "05000080"
+      ],
+      "result_hash": "8cb064d1d839334bff4c47beb76d2f958fce745467b2ef420a1c2a7f05c5fc71"
+    },
+    {
+      "id": "num2bin.zero",
+      "oracle": "jetmora",
+      "script": "0054b1",
+      "stack": [
+        "00000000"
+      ],
+      "result_hash": "88420266dfd64d604627234a8a6c75cf6477c6fd5505df0d17c59959ae9ce234"
+    },
+    {
+      "id": "num2bin.toosmall",
+      "oracle": "jetmora",
+      "script": "02ff0051b1",
+      "error": "does not fit"
+    },
+    {
+      "id": "bin2num.strip",
+      "oracle": "jetmora",
+      "script": "0405000000b2",
+      "stack": [
+        "05"
+      ],
+      "result_hash": "bc5959f43bc6e47175374b6716e53c9a7d72c59424c821336995bad760d9aeb3"
+    },
+    {
+      "id": "bin2num.neg",
+      "oracle": "jetmora",
+      "script": "0405000080b2",
+      "stack": [
+        "85"
+      ],
+      "result_hash": "d02af1cbf0fb1d6ef9d5c489ba52c2d1f2034e7ffd4c94a4ff988e6dccfaf034"
+    },
+    {
+      "id": "bin2num.zero",
+      "oracle": "jetmora",
+      "script": "0400000000b2",
+      "stack": [
+        ""
+      ],
+      "result_hash": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+    },
+    {
+      "id": "num2bin.roundtrip",
+      "oracle": "jetmora",
+      "script": "02d20255b1b2",
+      "stack": [
+        "d202"
+      ],
+      "result_hash": "85309056a56638f8e12ca3805b7934e1ec604ad6b1672aa9c8d9efd9b97fec31"
+    },
+    {
       "id": "numequal.true",
       "oracle": "bsv",
       "script": "53539c",

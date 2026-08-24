@@ -6,7 +6,7 @@
 //   'bsv'    — 0.1.3 and BSV agree; @bsv/sdk can confirm it
 //   '013'    — ⚠ 0.1.3 ONLY. BSV differs. @bsv/sdk is NOT an oracle here.
 //   'jetmora'— our own decision, no external oracle exists
-import { OP, push } from './ops.mjs'
+import { OP, JET, push } from './ops.mjs'
 import { toNum } from './scriptnum.mjs'
 
 const N = n => push(toNum(n))
@@ -72,6 +72,27 @@ export const VECTORS = [
   { id:'left',            oracle:'013', script:S(push([1,2,3,4,5]), OP.OP_2, OP.OP_LEFT),  stack:['0102'] },
   { id:'right',           oracle:'013', script:S(push([1,2,3,4,5]), OP.OP_2, OP.OP_RIGHT), stack:['030405'] },
   { id:'size',            oracle:'bsv', script:S(push([1,2,3]), OP.OP_SIZE),           stack:['010203','03'] },
+
+  // ── JETMORA'S OWN DATA OPS at 0xb0–0xb2 ────────────────────────────────────────────────────
+  // ⚠ oracle:'jetmora' — these sit at OUR numbers, so no external implementation is an oracle.
+  //   BSV has the same NAMES at 0x7f–0x81, which is a different encoding of a similar idea.
+  //   ★ Kept ALONGSIDE 0.1.3's SUBSTR/LEFT/RIGHT, not instead of them: SPLIT is cheap for SEQUENTIAL
+  //   parsing, SUBSTR for RANDOM ACCESS to one field. Different access patterns, both used.
+  { id:'split.mid',       oracle:'jetmora', script:S(push([1,2,3,4,5]), OP.OP_2, JET.OP_SPLIT), stack:['0102','030405'] },
+  { id:'split.zero',      oracle:'jetmora', script:S(push([9,8,7]), OP.OP_0, JET.OP_SPLIT),     stack:['','090807'] },
+  { id:'split.end',       oracle:'jetmora', script:S(push([9,8,7]), OP.OP_3, JET.OP_SPLIT),     stack:['090807',''] },
+  { id:'split.past',      oracle:'jetmora', script:S(push([9,8]), OP.OP_3, JET.OP_SPLIT),       error:'position outside range' },
+  { id:'num2bin.pos',     oracle:'jetmora', script:S(OP.OP_5, OP.OP_4, JET.OP_NUM2BIN),         stack:['05000000'] },
+  // ⚠ sign lives in the high bit of the LAST byte, not the first — little-endian sign-magnitude
+  { id:'num2bin.neg',     oracle:'jetmora', script:S(push([0x85]), OP.OP_4, JET.OP_NUM2BIN),    stack:['05000080'] },
+  { id:'num2bin.zero',    oracle:'jetmora', script:S(OP.OP_0, OP.OP_4, JET.OP_NUM2BIN),         stack:['00000000'] },
+  { id:'num2bin.toosmall',oracle:'jetmora', script:S(push([0xff,0x00]), OP.OP_1, JET.OP_NUM2BIN), error:'does not fit' },
+  { id:'bin2num.strip',   oracle:'jetmora', script:S(push([5,0,0,0]), JET.OP_BIN2NUM),          stack:['05'] },
+  { id:'bin2num.neg',     oracle:'jetmora', script:S(push([5,0,0,0x80]), JET.OP_BIN2NUM),       stack:['85'] },
+  { id:'bin2num.zero',    oracle:'jetmora', script:S(push([0,0,0,0]), JET.OP_BIN2NUM),          stack:[''] },
+  // ★ round trip: a fixed-width field read back is the number it was written from
+  { id:'num2bin.roundtrip', oracle:'jetmora',
+    script:S(push([0xd2,0x02]), OP.OP_5, JET.OP_NUM2BIN, JET.OP_BIN2NUM),                       stack:['d202'] },
 
   // ── comparison ─────────────────────────────────────────────────────────────────────────────
   { id:'numequal.true',   oracle:'bsv', script:S(OP.OP_3, OP.OP_3, OP.OP_NUMEQUAL),   stack:['01'] },

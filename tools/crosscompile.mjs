@@ -79,6 +79,38 @@ console.log('\nCROSS-COMPILE — one program, two rails\n')
     console.log(`        ${diffs} opcode${diffs === 1 ? '' : 's'} renumbered; same length, so byte counts are unaffected`)
   }
 }
+
+// ★★★ AND NOW ACTUALLY RUN IT. The case above proves the MAPPING and nothing else — the transcoded
+// program was never executed, which is the same trap as five "identical bytes" passes proving nothing.
+// A state peel that cannot rebuild its own scriptCode byte-for-byte is broken, so that is the test.
+{
+  const HEADER = [0x01, 0x50, 0x01, 0x01]          // two small pushes, as a real lock begins
+  const SUFFIX = [0x51, 0x52, 0x93]                // pretend code after the state
+  const fieldOffset = HEADER.length + 1            // past field 0's own push opcode
+  const st = compileState('DIM phase%1\n DIM v%5\n DIM pos%5\n',
+    { fieldOffset, stack: ['scriptCode'] })
+  const fixed = (n, w) => {                        // fixed-width, same convention the peel expects
+    n = BigInt(n); const neg = n < 0n; let x = neg ? -n : n
+    const o = new Array(w).fill(0)
+    for (let i = 0; i < w && x > 0n; i++, x >>= 8n) o[i] = Number(x & 0xffn)
+    if (neg) o[w - 1] |= 0x80
+    return o
+  }
+  const values = { phase: 2, v: 1234567, pos: -98765 }
+  const scriptCode = [...HEADER]
+  for (const f of st.layout) scriptCode.push(f.width, ...fixed(values[f.name], f.width))
+  scriptCode.push(...SUFFIX)
+
+  const jetBytes = serialize(bsvToJetmora(st.ops))
+  const r = evaluate(jetBytes, { stack: [scriptCode] })
+  const rebuilt = r.ok && r.stack.length === 1 ? r.stack[0] : null
+  const same = rebuilt && hex(rebuilt) === hex(scriptCode)
+  console.log(`  ${same ? 'PASS' : 'FAIL'}  ${'state-run'.padEnd(12)} ${String(jetBytes.length).padStart(4)} B  ` +
+    (same ? `peeled ${st.layout.length} fields and rebuilt the scriptCode byte-for-byte`
+          : (r.ok ? `rebuilt ${rebuilt ? hex(rebuilt).slice(0,40) : '(stack depth ' + r.stack.length + ')'} ≠ ${hex(scriptCode).slice(0,40)}`
+                  : `failed: ${r.error}`)))
+  same ? pass++ : fail++
+}
 for (const [name, lines] of PROGRAMS) {
   const r = compileBasic(lines.join('\n'), { stack: ['v', 'w'] })
   const bsvBytes = serialize(r.ops)

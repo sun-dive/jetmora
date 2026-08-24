@@ -236,6 +236,52 @@ Anchor cadence is operator policy and SHOULD be published. It bounds, simultaneo
 
 ⇒ A log that stops anchoring SHOULD be treated as failing, whatever else it continues to serve.
 
+## 5b. Opcode assignment
+
+### 5b.1 ★ The governing rule
+
+**Bitcoin 0.1.3's assignments are authoritative in the single-byte space.** Where a later
+implementation reused one of those numbers for a different instruction, **the later meaning is
+REMAPPED and 0.1.3 keeps the position.**
+
+An implementation MUST NOT change a 0.1.3 assignment to accommodate a later one.
+
+⇒ Today this affects exactly three, all introduced by Bitcoin Cash in 2018 and inherited by BSV:
+
+| number | 0.1.3 — **kept** | later meaning — **remapped to** |
+|---|---|---|
+| `0x7f` | `OP_SUBSTR` | `OP_SPLIT` → `0xb0` |
+| `0x80` | `OP_LEFT` | `OP_NUM2BIN` → `0xb1` |
+| `0x81` | `OP_RIGHT` | `OP_BIN2NUM` → `0xb2` |
+
+★ The rule is general, not a list. Any future collision resolves the same way, and the map is the
+permanent expression of it rather than a one-off patch.
+
+### 5b.2 ⚠⚠ Both sets are kept, and they are not redundant
+
+`OP_SUBSTR`/`LEFT`/`RIGHT` and `OP_SPLIT` are equivalent in power and **not in cost**. They optimise
+different access patterns and a covenant uses both:
+
+| `OP_SPLIT` | **sequential parsing** — walk a structure front to back, keeping each piece. What state peeling does |
+| `OP_SUBSTR` | **random access** — extract one field from the middle and ignore the rest |
+
+⇒ A covenant needing only field 3 of 8 does **one `OP_SUBSTR`**, where `OP_SPLIT` must walk three
+fields and discard both ends. Expressed in the other's terms, each costs five to seven opcodes.
+
+⚠ The price of keeping both is real and is not bytes: **every implementation must get both right, and
+the vectors must cover both.**
+★ A covenant author SHOULD NOT choose between them. The compiler SHOULD.
+
+### 5b.3 The ranges
+
+| `0x00`–`0xaf` | **Bitcoin 0.1.3, unaltered** |
+| `0xb0`–`0xef` | **jetmora's own single-byte opcodes.** 0.1.3 leaves this empty ⚠ but BTC reused `0xb1`/`0xb2` for `CHECKLOCKTIMEVERIFY`/`CHECKSEQUENCEVERIFY`, which cannot exist here — there is no block height and no clock — so these numbers are NOT interchangeable with BTC's |
+| `0xf0` + one byte | the **two-byte space**. 0.1.3 declares `OP_SINGLEBYTE_END = 0xf0`; bounded loops and archive opcodes live here |
+
+⚠ Scripts carrying opcodes at `0xb0` or above cannot be executed on a proof-of-work chain and therefore
+cannot be appealed there (§10). An implementation SHOULD be able to report which opcodes make a given
+script jetmora-only.
+
 ## 6b. Protocol versioning — no activation height
 
 The protocol version in force for an entry is carried **in the entry** (`nVersion`, §3), and is the value
