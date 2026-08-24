@@ -17,7 +17,13 @@ import { anchorLock, pushDropUnlock, decodeAnchor, FEE_PER_KB } from './anchor.m
 const SDK = process.env.BSV_SDK ?? '@bsv/sdk'
 const { PrivateKey, P2PKH, Transaction, SatoshisPerKilobyte, Script } = await import(SDK)
 const WOC = 'https://api.whatsonchain.com/v1/bsv/main'
-const STATE = new URL('../server/data/anchors.json', import.meta.url)
+// ⚠⚠ THE ONLY DURABLE FACT IS THE FIRST ANCHOR'S TXID. Everything else is derived by WALKING THE
+//    CHAIN: anchor n+1 is whatever spent anchor n's output 0, and the tip is the one still unspent.
+//    ⇒ `computation-walk-tip-discovery` — the tip is the UNSPENT one; walk /spent until it 404s.
+//    So there is no state blob to keep in step with reality and nothing fragile to lose. A JSON file
+//    of anchor history would have been a second source of truth, and a second source of truth is a
+//    disagreement waiting to happen.
+const FIRST = new URL('../server/data/anchor0.txid', import.meta.url)
 
 const wif = process.env.JETMORA_WIF
 if (!wif) {
@@ -33,8 +39,30 @@ const address = pub.toAddress()
 const woc = async p => { const r = await fetch(WOC + p); if (!r.ok) throw new Error(`WoC ${r.status} on ${p}`); return r.json() }
 const utxos = async () => woc(`/address/${address}/unspent`)
 const hexOf = b => Buffer.from(b).toString('hex')
-const load = () => existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : { anchors: [] }
-const save = s => writeFileSync(STATE, JSON.stringify(s, null, 2) + '\n')
+const firstTxid = () => existsSync(FIRST) ? readFileSync(FIRST, 'utf8').trim() : (process.env.JETMORA_ANCHOR0 ?? null)
+const rememberFirst = t => { if (!existsSync(FIRST)) writeFileSync(FIRST, t + '\n') }
+
+/** ⇒ Follow the spends to the tip. Returns [] if no chain has been started. */
+async function walkChain() {
+  const first = firstTxid()
+  if (!first) return []
+  const chain = []
+  let txid = first
+  for (let i = 0; i < 10_000; i++) {
+    const tx = await woc(`/tx/hash/${txid}`)
+    const out = tx.vout[0]
+    const c = decodeAnchor(out.scriptPubKey.hex)
+    chain.push({ txid, vout: 0, root: c?.root ?? null, treeSize: c?.treeSize ?? null,
+                 confirmations: tx.confirmations ?? 0 })
+    const r = await fetch(`${WOC}/tx/${txid}/out/0/spent`)
+    if (r.status === 404) break                       // ★ unspent ⇒ this is the tip
+    if (!r.ok) throw new Error(`WoC ${r.status} walking from ${txid}`)
+    const spent = await r.json()
+    txid = spent.txid ?? spent.hash
+    if (!txid) break
+  }
+  return chain
+}
 
 const [cmd, ...rest] = process.argv.slice(2)
 const send = rest.includes('--send')
@@ -51,8 +79,11 @@ if (cmd === 'status') {
   console.log(`\n  ${address}`)
   console.log(`  ${u.length} utxo${u.length === 1 ? '' : 's'}, ${total} sat total`)
   for (const x of u.slice(0, 8)) console.log(`    ${x.tx_hash.slice(0,20)}…:${x.tx_pos}  ${x.value} sat`)
-  const st = load()
-  console.log(`  anchors so far: ${st.anchors.length}` + (st.anchors.length ? `  last ${st.anchors.at(-1).txid.slice(0,20)}…` : ''))
+  const chain = await walkChain()
+  console.log(`  anchor chain: ${chain.length}` + (chain.length ? '' : '  (none started)'))
+  for (const a of chain.slice(-4)) console.log(
+    `    ${a.txid.slice(0,20)}…  size ${String(a.treeSize).padStart(6)}  ${a.confirmations} conf` +
+    (a === chain.at(-1) ? '   ← tip, unspent' : ''))
   console.log()
   process.exit(0)
 }
@@ -68,8 +99,9 @@ if (!/^[0-9a-f]{64}$/i.test(rootHex ?? '') || !Number.isFinite(treeSize)) {
 }
 const root = [...Buffer.from(rootHex, 'hex')]
 
-const st = load()
-const prev = st.anchors.at(-1) ?? null
+// ⚠ derived from the chain, never from a local record of what we think we did
+const chain = await walkChain()
+const prev = chain.at(-1) ?? null
 const u = await utxos()
 if (!u.length) { console.error(`⚠ no funds at ${address} — run \`address\` and send a few thousand sat`); process.exit(1) }
 
@@ -103,10 +135,10 @@ const outSats = tx.outputs.reduce((s, o) => s + (o.satoshis ?? 0), 0)
 const fee = inSats - outSats
 const rate = fee / bytes * 1000
 
-console.log(`\n  ── anchor ${st.anchors.length} ──\n`)
+console.log(`\n  ── anchor ${chain.length} ──\n`)
 console.log(`  root        ${rootHex}`)
 console.log(`  tree size   ${treeSize}`)
-console.log(`  spends      ${prev ? `anchor ${st.anchors.length - 1} (${prev.txid.slice(0,20)}…)` : 'nothing — this is the first'}`)
+console.log(`  spends      ${prev ? `anchor ${chain.length - 1} (${prev.txid.slice(0,20)}…, ${prev.confirmations} conf)` : 'nothing — this is the first'}`)
 console.log(`  funding     ${fundUtxo.tx_hash.slice(0,20)}…:${fundUtxo.tx_pos}  ${fundUtxo.value} sat`)
 console.log(`  size        ${bytes} B`)
 console.log(`  fee         ${fee} sat  ⇒  ${rate.toFixed(1)} sat/KB`)
@@ -130,7 +162,6 @@ const r = await fetch(`${WOC}/tx/raw`, { method: 'POST', headers: { 'Content-Typ
 const body = (await r.text()).trim()
 if (!r.ok) { console.error(`\n  ⚠ BROADCAST REFUSED (${r.status}): ${body}\n`); process.exit(1) }
 const txid = body.replace(/^"|"$/g, '')
-st.anchors.push({ txid, vout: 0, root: rootHex, treeSize, at: new Date().toISOString(), fee, bytes })
-save(st)
+rememberFirst(chain.length === 0 ? txid : firstTxid())   // ⚠ the ONLY thing worth remembering
 console.log(`\n  ★ BROADCAST: ${txid}`)
 console.log(`    https://whatsonchain.com/tx/${txid}\n`)

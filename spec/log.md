@@ -397,6 +397,19 @@ back, including the operator.
 ⚠ A first anchor spends no predecessor, which is why it is 29 sat rather than ~41. **It is also the one
 anchor whose position rests on its own timestamp alone** — every anchor after it is chained.
 
+### 6.1c ★★ The chain is walkable, so an operator keeps no anchor history
+
+Anchor *n+1* is **whatever spent anchor *n*'s output 0**, and the tip is the one still unspent. ⇒ Given
+the first anchor's transaction id — the only fact that cannot be derived — the whole chain follows.
+
+⚠ **An implementation SHOULD NOT keep a local record of its anchor history.** It would be a second
+source of truth, and a second source of truth is a disagreement waiting to happen. **The chain already
+knows where it is.**
+
+★★ **And this is not merely tidier — it is necessary.** An anchor output is a bare public key and
+`OP_CHECKSIG`; it maps to no standard address, so an address index does not list it. ⇒ **The anchor is
+findable only by walking**, and as a happy consequence the funding logic cannot spend it by accident.
+
 ### 6.2a Offloading at the anchor point
 
 ★★ **The anchor is the correct trigger for the pruning §5c permits, and for a specific reason: it is
