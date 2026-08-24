@@ -262,6 +262,52 @@ A log MUST serve, for any entry it holds:
 ⚠ The consistency proof is the property a proof-of-work chain does not provide, and it is what makes an
 append-only claim checkable rather than trusted.
 
+## 5c. Retention — a log holds the TREE, not the history
+
+**His observation:** as a log grows it will exceed its host, *"however it should also be possible to
+offload the chain history, so the real limit is what happens within a 24 hour period."*
+
+★★ **This works because the log never needs the bodies to do its job.** MEASURED on 424-byte entries:
+**the tree is 15% of the stored data and the bodies are the other 85%.** An inclusion proof is built
+from tree nodes alone; the body is needed only by someone REPLAYING the entry, who must fetch it anyway.
+
+| one year at 1,000 players/day | bodies **51.3 GB** ⚠ · full tree **7.9 GB** ⚠ · ★ **one node per 1,024 entries: 3.87 MB** |
+| one day at that rate | full tree **22 MB** ✓ — comfortable on any host |
+
+### 5c.1 What an operator MAY discard
+
+After a root has been **anchored** (§6.2) and a head covering it published (§5.2), an operator MAY:
+
+- **discard entry bodies** below that point, and
+- **prune the tree** below a chosen level, keeping only subtree roots at a granularity *K*
+
+An operator MUST NOT discard anything **above** its last anchored root, and MUST NOT discard a signed
+head at any age. ⚠ A head is the evidence of its own commitments; discarding one destroys the
+equivocation proof that makes the whole model work.
+
+### 5c.2 What is lost, stated plainly
+
+A pruned log can still **prove** that an entry is included, given the entry. ⚠ **It can no longer
+PRODUCE that entry.** Serving an old inclusion proof requires fetching the *K* bodies under the retained
+subtree root and recomputing the lower path — roughly 434 KB at *K* = 1,024 with 424-byte entries.
+
+⇒ ★ This is §3.3 applied to the log's own storage, and it is the same promise the system makes about
+data generally: **identity is guaranteed forever, availability while someone values it.** A log that has
+pruned is not a broken log; it is a log that has stopped being a CDN for its own past.
+
+### 5c.3 Where the bodies go
+
+⚠ **This specification does not say.** A proof-of-work chain gives permanence and addressability; a
+cheap disk gives cost; a mirror gives both cheaply and neither permanently. ⇒ Same position as payment
+(§3.4-0b): **the protocol has no opinion, and an operator SHOULD publish what it does.**
+
+★ An operator that prunes SHOULD publish, alongside its retention policy, **where the discarded bodies
+can be obtained** — otherwise it has not pruned, it has deleted.
+
+⏭ **OPEN: whether *K* should be fixed by the specification or chosen per log.** Fixed makes a pruned
+proof's shape predictable to any client; per-log lets a small operator prune harder. ⇒ Leaning per-log,
+declared in the head, but nothing depends on it yet.
+
 ## 6. Anchoring
 
 ### 6.1 What an anchor is
