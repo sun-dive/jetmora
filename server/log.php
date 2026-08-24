@@ -90,6 +90,27 @@ case 'genesis':
          'script' => $hex($g['script']), 'state' => $hex($g['state']),
          'authorised' => json_decode($g['authorised'], true)]);
 
+// ── register a genesis (spec §2) ─────────────────────────────────────────────────────────────
+// ⚠ Idempotent and never overwriting: re-registering the same genesis returns the same id, and a
+//   different authorised key is a DIFFERENT covenant, not an edit. A genesis that could change who
+//   may advance it would not be a genesis.
+case 'register':
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
+    $in = json_decode(file_get_contents('php://input') ?: '', true);
+    if (!is_array($in)) out(['error' => 'body must be JSON'], 400);
+    foreach (['source_hash', 'script', 'state', 'authorised'] as $k)
+        if (!isset($in[$k])) out(['error' => "missing $k"], 400);
+    // `authorised` is a list of hex public keys, or the string "open" (spec §4.2)
+    $auth = $in['authorised'];
+    if ($auth !== 'open' && !is_array($auth)) out(['error' => 'authorised must be a list or "open"'], 400);
+    $id = $registry->register([
+        'source_hash' => $unhex($in['source_hash'], 32),
+        'script'      => $unhex($in['script']),
+        'state'       => $unhex($in['state']),
+        'authorised'  => json_encode($auth),
+    ]);
+    out(['genesis' => $hex($id)], 201);
+
 // ── the append rule: ONE signature check and nothing else (spec §4.1) ────────────────────────
 case 'append':
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
@@ -107,5 +128,5 @@ case 'append':
 
 default:
     out(['log' => 'jetmora', 'spec' => 'https://jetmora.org/spec/log.md',
-         'ops' => ['info', 'head', 'inclusion', 'consistency', 'entry', 'genesis', 'append']]);
+         'ops' => ['info', 'head', 'inclusion', 'consistency', 'entry', 'genesis', 'register', 'append']]);
 }

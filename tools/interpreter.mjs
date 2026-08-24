@@ -303,11 +303,24 @@ export function evaluate(script, opts = {}) {
           if (!context) fail('OP_CHECKSIG needs an entry context — pass { entry, inputIndex, value }', opcode)
           const pub = stack.pop(), sig = stack.pop()
           let ok = false
+          if (!context.preimage && !context.entry) fail('OP_CHECKSIG needs an entry, or a supplied preimage for replay', opcode)
           if (sig.length) {
             // ⚠ THE APPENDED BYTE SELECTS THE PREIMAGE. Read it, build that preimage, then verify the
             //   DER without it. The same value also sits in the preimage's last four bytes, so altering
             //   it here changes what we build and the signature stops matching.
             const { sighashType } = splitSignature(sig)
+            // ⚠⚠ VERIFICATION MODE — a SUPPLIED preimage, used to replay an execution that happened
+            //    ELSEWHERE: a covenant that ran on a proof-of-work chain, or an archival script whose
+            //    transaction we cannot reconstruct. ⇒ It answers "did this script accept these inputs",
+            //    which is a DIFFERENT and weaker question than "is this a valid jetmora entry".
+            //    ⚠ A LOG MUST NEVER USE THIS. There the verifier must RECOMPUTE the preimage from the
+            //    entry that actually happened — that recomputation IS the security of OP_PUSH_TX.
+            if (context.preimage) {
+              ok = ecdsaVerify(sig, pub, context.preimage)
+              if (opcode === OP.OP_CHECKSIGVERIFY) { if (!ok) fail('OP_CHECKSIGVERIFY failed', opcode) }
+              else stack.push(ok ? [1] : [])
+              break
+            }
             try {
               // ⚠ the RAW preimage, not a hash of it — ecdsa.verify hashes once and node hashes again,
               //   which together are Bitcoin's double SHA-256. See the contract note in ecdsa.mjs.
