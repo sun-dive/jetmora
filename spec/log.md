@@ -380,6 +380,23 @@ what a third party can later be made to accept about their ORDER, not whether th
 
 ⏭ **OPEN: recommended depth.**
 
+### 6.1b ★★★ THE FIRST ANCHOR — ON MAINNET, 24 AUGUST 2026
+
+```
+txid    4fc8460d8919400c9eac9584b54b6193fb8da24c57ef96ece6ebf446439ef615
+marker  JETMORA1
+root    9406cb5ecbea1b97579e385e737e6c7d19ec2c75093dc386527c7e933c5b27d4
+size    264
+```
+
+289 bytes, **29 satoshis**, 100.3 sat/KB. It commits to a log holding **four drag races — 264
+individually provable ticks, roughly 145 kB** — in 32 bytes on a proof-of-work chain.
+
+★ Anyone may now fetch that transaction and check any of those ticks against a root nobody can walk
+back, including the operator.
+⚠ A first anchor spends no predecessor, which is why it is 29 sat rather than ~41. **It is also the one
+anchor whose position rests on its own timestamp alone** — every anchor after it is chained.
+
 ### 6.2a Offloading at the anchor point
 
 ★★ **The anchor is the correct trigger for the pruning §5c permits, and for a specific reason: it is
