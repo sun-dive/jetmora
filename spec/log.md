@@ -188,6 +188,90 @@ limit, a proof of work, an allow-list. An operator SHOULD publish its policy.
 A log's limits — memory, execution time, entry size — are **operator policy and MUST NOT be protocol
 constants.** ⚠ A limit written into the protocol becomes a number nobody can promise to hold.
 
+## 4bis. ⏭ THE LOG GENESIS — proposed 25 Aug, not implemented
+
+⚠⚠ **A COVENANT HAS A GENESIS. A LOG DOES NOT, AND THREE SEPARATE REQUIREMENTS ALL NEED ONE.** Until it
+exists, a log is identified by its operator's key and its URL — both mutable, neither provable.
+
+### 4bis.1 Why it is needed — three arguments arriving independently
+
+1. ★ **Identity that cannot be forged.** If a log's first anchor is its genesis in the BRC-113 sense,
+   the log is a token whose identity is anchored in a **block header** (§6.0c). ⇒ Forging it costs
+   proof of work.
+   ⚠ **And it closes a hole in §8**: a port names its source log by PUBLIC KEY, so a hostile source can
+   **rotate keys and deny the port came from it.** An identity anchored at genesis cannot be rotated
+   away from.
+2. ★★ **Private logs.** Not every log should be publicly readable — proprietary data, formulas,
+   commercial terms. ⇒ See §4bis.3: the encryption question is answered at genesis and nowhere else.
+3. ★★★ **Forking.** A second operator continues a log from a common point (§4bis.4). Without a shared
+   genesis there is nothing for both branches to trace back to, and no way to tell a fork from a lie.
+
+### 4bis.2 ⚠ What goes in a genesis, and what does not
+
+**The rule this design has been using without stating it:**
+
+| **what may change over a log's life** | goes in the **HEAD** — `prune_level` is there for exactly this |
+| ★ **what must NEVER change** | goes in the **GENESIS** |
+
+⇒ `prune_level` changing is harmless: old heads record the old value. **A leaf-hash rule changing is
+not harmless — it invalidates every proof already issued** rather than describing it.
+
+⚠ Operator limits (§4.5) MUST NOT be in the genesis. They are policy, and policy changes.
+
+### 4bis.3 ★★ Private logs — encryption costs the design nothing
+
+**Everything that makes a log trustworthy runs on hashes.** Inclusion, consistency, anchoring and
+equivocation detection all work without reading a single entry. ⇒ **Only replay — "was the computation
+correct" — needs plaintext.**
+
+★★★ **So a log can prove it has not cheated without revealing what it holds.** And §4.1 already says a
+log does not validate; **an encrypted entry is bytes it understands slightly less.**
+
+★★ **And the property that falls out is better than privacy: SELECTIVE DISCLOSURE.** An inclusion proof
+runs on hashes, so one entry may be revealed with its proof — proving it was in the log at a given root
+— **without opening the log.** ⇒ A manufacturer proves *this test passed* without publishing the suite;
+a laboratory proves *this analysis ran as pre-registered* without publishing the data.
+
+⇒ **`leaf_hash_covers` is chosen at genesis, and BOTH are permitted:**
+
+| **plaintext** | ★ a decrypting verifier checks inclusion **end to end**, nothing taken on trust ⚠ the log cannot compute its own leaves; the appender supplies them |
+| **stored bytes** | ★ the log computes leaves itself, everything works unchanged ⚠ a verifier must trust that the ciphertext decrypts to what is claimed |
+
+★ For a public log the two are identical, so the field only bites where encryption is used.
+
+⚠ **The honest cost:** `OP_PUSH_TX` operates on the entry, so **only key-holders can verify a private
+log's COMPUTATION.** Its INTEGRITY stays publicly checkable. That is inherent, not a defect — but a
+private log's computational claims are checkable only by its own circle.
+
+### 4bis.4 ★★★ Forking — branches of one genesis, not new logs
+
+**A fork is a continuation on a new branch, sharing a common root.** ⇒ Not a new log.
+
+| **the genesis** | ★ **shared by every branch.** One origin, one identity |
+| **the common prefix** | **not copied — the same tree.** Both branches prove against it |
+| **a branch** | `(genesis, fork height, operator key)` ⇒ what a reader names to say WHICH history |
+
+★ This is git exactly: the repository is shared, a branch labels a divergence, every commit still
+traces to one root.
+
+⚠⚠ **AND IT SHARPENS §4d RATHER THAN MUDDYING IT.** Two heads are a **lie** if they are the same branch
+and incompatible. Two heads from **different branches of one genesis** are a **fork**.
+⇒ The detector therefore needs one input it does not have: **which branch.** It currently takes a
+public key and assumes that identifies the history. It must take `(genesis, fork height, key)`.
+
+⚠⚠⚠ **A FORK MUST BE DECLARED AT OR BEFORE THE DIVERGENCE, NEVER CLAIMED AFTERWARDS.** Otherwise an
+operator signs two incompatible histories, is caught, and says *"that was a fork."*
+⇒ **The declaration SHOULD live in an anchor**, so the claim costs proof of work and cannot be
+backdated. ★ Same shape as everything else here: the escape hatch is real, and it is safe only because
+it cannot be applied retrospectively.
+
+### 4bis.5 ⏭ Open
+
+· the genesis's serialization, and whether it is committed **in** the first anchor or in a transaction
+  the first anchor references
+· whether `anchor_policy` — which chains a log anchors to — is immutable or mutable. ⚠ Probably mutable
+· what else, if anything, is immutable enough to belong here
+
 ## 4c. ⚠⚠ Vocabulary — there is no such thing as an unconfirmed entry
 
 **This system has no pending state.** No mempool, no queue, no reorganisation. **An entry is appended or
