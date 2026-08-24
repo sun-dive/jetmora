@@ -98,6 +98,17 @@ present at the time could have replayed it.**
 
 ## 4. Appending
 
+### 4.0a ⚠⚠ TWO SIGNATURES EXIST, AND THEY ARE NOT THE SAME THING
+
+An entry carries signatures serving two unrelated purposes. **Conflating them puts an interpreter in
+the log, which §4.1 forbids.**
+
+| **the covenant's internal `CHECKSIG`** | via `OP_PUSH_TX`, over the entry's **preimage** ⇒ proves the STATE TRANSITION is what the program permits. **A verifier's concern. The log MUST NOT evaluate it** |
+| **the append authorisation** | over the **entry bytes** ⇒ proves WHO SUBMITTED this. **The log's only concern** |
+
+⇒ An operator checks the second and MUST NOT check the first. ★ That is the whole reason a log needs
+no Script interpreter, and therefore why it can be a few hundred lines of PHP.
+
 ### 4.1 What an operator checks
 
 On receiving an entry an operator MUST check, and MUST check only:
@@ -188,7 +199,11 @@ carrying chain's own tree for anchor inclusion proofs (§6.1, and BRC-113 for BS
 An operator MUST publish signed tree heads containing at least: tree size, root hash, and a signature by
 the operator's key. A head MUST NOT be modified once published.
 
-⏭ **OPEN: the signed-head serialization, and the signature scheme.**
+⏭ **OPEN: the signed-head serialization.**
+★ **Signature scheme — PROPOSED and implemented:** the **key length selects the scheme**, so a host
+without libsodium can still run a log. **32 bytes ⇒ Ed25519 · 33 or 65 bytes ⇒ secp256k1.**
+⚠ A malformed key or signature MUST be a failed check, never an error — a log that throws on bad input
+is a log anyone can stop.
 
 ### 5.3 Proofs
 
