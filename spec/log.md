@@ -57,6 +57,29 @@ BIP143 layout, so that `OP_PUSH_TX` reads identical bytes to those it reads on a
 | `nLocktime` | MUST be 0 in version 1 |
 | sighash type | MUST be `0x01` (`SIGHASH_ALL`). `FORKID` MUST NOT be set (§6.4) |
 
+### 3.0a ⚠⚠ The sighash type byte does NOT mean what it means on BSV
+
+**Jetmora has exactly ONE sighash algorithm: the BIP143 layout.** The type byte describes **scope only**
+and never selects an algorithm.
+
+⚠⚠ **This differs from BSV and the difference is silent.** There, BIP143 is *selected by* `FORKID`
+(`0x40`). Ask a BSV implementation for `0x01` and it returns the **legacy pre-BIP143 sighash** — the
+whole transaction serialized with the scriptCode substituted, no `hashPrevouts`, no `hashOutputs`, O(n²).
+
+| byte | on BSV | on jetmora |
+|---|---|---|
+| `0x01` | **legacy sighash** | ★ **BIP143 layout** |
+| `0x41` | BIP143 (`ALL｜FORKID`) | ⚠ **refused** — `FORKID` MUST NOT be set (§5.0c) |
+
+⇒ A covenant compiled for both rails therefore carries a **different constant on each**. That is the
+compiler's job and is invisible to the author, but an author reading *"SIGHASH_ALL is 0x01"* in both
+places would be wrong about what it selects.
+
+★ **Verified 24 Aug:** a jetmora entry's preimage is **byte-identical** to a transaction preimage built
+from the same field values — across one output, several outputs, a zero-value output and a
+varint-sized script — differing **only** in the trailing type byte. ⇒ *An entry is a transaction* is
+demonstrated, not asserted. See `tools/preimage-check.mjs`.
+
 ### 3.1 Canonical serialization
 
 There MUST be exactly one byte string per entry.
