@@ -370,6 +370,42 @@ what a third party can later be made to accept about their ORDER, not whether th
 
 ⏭ **OPEN: recommended depth.**
 
+### 6.2a Offloading at the anchor point
+
+★★ **The anchor is the correct trigger for the pruning §5c permits, and for a specific reason: it is
+the moment the log's claim stops depending on the log.** Before it, the log's word about a range rests
+on its own signature alone; after it, the root is fixed by proof of work.
+
+⚠⚠ **AN OPERATOR MUST NOT OFFLOAD AGAINST AN ANCHOR THAT IS ONLY BROADCAST.** Between broadcast and
+depth a reorganisation can remove it, and bodies discarded against a commitment that no longer exists
+cannot be recovered. ⇒ **Anchored, in the sense of §6.2. Not sent.**
+
+★★★ **No additional commitment is required.** The anchored root already commits to every entry through
+its leaf hash, so offloaded bodies can be checked against it by anyone who fetches them. ⇒ **The anchor
+does not need a field pointing at the bundle — it already proves what the bundle must contain.**
+
+**⇒ The operational cycle:**
+
+```
+append … append … ANCHOR … wait for depth … publish head … offload bodies … prune tree
+```
+
+#### ⚠ Where the bodies go — and why it is almost never a chain
+
+MEASURED at 100 sat/KB with 424-byte entries:
+
+| **anchoring the root** | one transaction a day ⇒ **44 sat**, at any volume |
+| writing the bodies to a chain | 1,000 players/day ⇒ 145.6 MB ⇒ **15,264,000 sat** |
+
+⇒ **Writing bodies to a chain costs roughly 350,000× what anchoring them does.**
+
+⚠ **This does not contradict putting user data on a chain.** A published work is written once and is
+valuable per byte. **A log's operational history is high-volume and low-value-per-byte** — the opposite
+economics, and therefore the opposite answer. ⇒ Anchor the root; put the bodies wherever is cheapest.
+
+★ §5c.3 still applies: an operator that prunes SHOULD publish **where the discarded bodies can be
+obtained**, or it has not pruned, it has deleted.
+
 ### 6.3 Cadence
 
 Anchor cadence is operator policy and SHOULD be published. It bounds, simultaneously:
