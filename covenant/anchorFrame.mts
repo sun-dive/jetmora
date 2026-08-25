@@ -47,16 +47,26 @@ export const ANCHOR_UNLOCK = [
 ] as const
 
 /**
- * ⚠ SIGHASH_ALL | FORKID. NOT ANYONECANPAY.
+ * ★★ SIGHASH_ANYONECANPAY | ALL | FORKID — BRC-226's own scope, and for BRC-226's own reason:
+ * **any funder may add their own input without invalidating the spend.**
  *
- * The anchor path binds every input, deliberately. ⚠ Under ANYONECANPAY `hashPrevouts` is zeroes, so a
- * signature would be replayable against a different funding set — and this signature is the ONLY thing
- * standing between the log and anyone anchoring anything.
- * ⏭ The FORK path will want ANYONECANPAY, because a forker must be able to add their own funding to
- *   somebody else's tip without invalidating anything. ⇒ Two paths, two scopes, and that is a real
- *   design consequence rather than an oversight.
+ * ⇒ PROVED, not assumed: the suite adds a LATE FUNDER after the covenant's unlocking data is fixed
+ * and requires it to be accepted here and REFUSED under 0x41. A suite that passes under both scopes
+ * says nothing about either.
+ *
+ * ⚠⚠⚠ THIS IS SAFE **ONLY BECAUSE TWINS ARE IMPOSSIBLE**, and that coupling must not be forgotten.
+ * Under ANYONECANPAY `hashPrevouts` is zeroed, so the covenant is not bound to a particular outpoint
+ * by the preimage — two instances identical in scriptCode AND value would be interchangeable, and one
+ * preimage would satisfy both. ⇒ The `branch` field closes that: it is HASH256 of the parent outpoint
+ * a fork consumed, an outpoint is spendable once, and a parent's tip moves with every fork.
+ * ★ IF THE BRANCH FIELD IS EVER REMOVED, THIS MUST GO BACK TO 0x41 IN THE SAME COMMIT.
+ *
+ * ⚠ And a correction worth carrying: `betaFrame.ts` says such a covenant *"cannot see which outpoint
+ * it is spending."* MEASURED 25 Aug — the BIP143 `outpoint` field at offset 68 survives ANYONECANPAY
+ * intact; only `hashPrevouts` and `hashSequence` are zeroed. ⇒ The warning describes a consequence of
+ * not LOOKING, not an inability to look. This covenant looks.
  */
-export const ANCHOR_SCOPE = 0x41
+export const ANCHOR_SCOPE = 0xc1
 
 export interface AnchorFrameParams {
   /** One entry per DIM, by name: genesis, depth, treesize, royalty, forkable, and the N payees. */
@@ -233,23 +243,39 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
  */
 function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, levels: number): any[] {
   const w = (n: string) => layout.find((f: any) => f.name === n).width
-  const HEAD = fieldOffset + w('genesis') + 1            // …through depth's own push opcode
+  const HEAD = fieldOffset + w('genesis') + 1            // …through BRANCH's own push opcode
   const MID = ['treesize', 'royalty', 'forkable'].reduce((a, n) => a + 1 + w(n), 0)
   const PAY = levels * (1 + w('pa'))
   const slots = Array.from({ length: levels }, (_, i) => 'child' + 'p' + 'abcdefgh'[i])
 
   const body: any[] = [
-    PN(d('preimageCopy')), op(OP.OP_PICK),               // +1  ⚠ a COPY — the first extraction ate it
-    ...extractScriptCodeFieldOps(),                      // +1  the parent's scriptCode, again
-    PN(HEAD), op(OP.OP_SPLIT),                           // +2  head ‖ rest
-    PN(w('depth')), op(OP.OP_SPLIT), op(OP.OP_NIP),      // +2  ⚠ the OLD depth dropped here
-    PN(MID), op(OP.OP_SPLIT),                            // +3  head, mid, rest
-    PN(PAY), op(OP.OP_SPLIT), op(OP.OP_NIP),             // +3  ⚠ the OLD payees dropped here
-    op(OP.OP_TOALTSTACK), op(OP.OP_TOALTSTACK),          // +1  alt: [.., suf, mid]
-    /* head ‖ depth+1 */
+    /* ★★★ THE CHILD'S BRANCH ID = HASH256(the parent outpoint this fork consumed).
+       ⚠⚠ The outpoint sits at a FIXED offset 68 — nVersion(4) ‖ hashPrevouts(32) ‖ hashSequence(32) —
+       and MEASURED 25 Aug: it survives ANYONECANPAY intact. Only hashPrevouts and hashSequence are
+       zeroed there. ⇒ `betaFrame`'s warning that such a covenant "cannot see which outpoint it is
+       spending" describes a consequence of not LOOKING, not an inability to look.
+       ★ An outpoint is spendable once, and a parent's tip moves with every fork, so no two forks ever
+       see the same one. **Two children can never be byte-identical.** */
+    PN(d('preimageCopy')), op(OP.OP_PICK),               // +1
+    PN(68), op(OP.OP_SPLIT), op(OP.OP_NIP),              // +1  drop version‖hashPrevouts‖hashSequence
+    PN(36), op(OP.OP_SPLIT), op(OP.OP_DROP),             // +1  the 36-byte outpoint
+    op(OP.OP_HASH256),                                   // +1  ★ the branch id
+
+    PN(d('preimageCopy') + 1), op(OP.OP_PICK),           // +2  ⚠ +1: the branch id is being held
+    ...extractScriptCodeFieldOps(),                      // +2  the parent's scriptCode, again
+    PN(HEAD), op(OP.OP_SPLIT),                           // +3  head ‖ rest (through branch's push op)
+    PN(w('branch')), op(OP.OP_SPLIT), op(OP.OP_NIP),     // +3  ⚠ the OLD branch id dropped
+    PN(1 + w('depth')), op(OP.OP_SPLIT), op(OP.OP_NIP),  // +3  ⚠ the OLD depth AND its push op dropped
+    PN(MID), op(OP.OP_SPLIT),                            // +4  head, mid, rest
+    PN(PAY), op(OP.OP_SPLIT), op(OP.OP_NIP),             // +4  ⚠ the OLD payees dropped
+    op(OP.OP_TOALTSTACK), op(OP.OP_TOALTSTACK),          // +2  alt: [.., suf, mid]
+    /* [branchId, head] ⇒ head ‖ branchId */
+    op(OP.OP_SWAP), op(OP.OP_CAT),                       // +1
+    /* ‖ depth's own push opcode, then depth + 1 */
+    pushData([w('depth')]), op(OP.OP_CAT),               // +1
     PN(d('childdepth') + 1), op(OP.OP_PICK),
-    PN(w('depth')), op(OP.OP_NUM2BIN), op(OP.OP_CAT),
-    op(OP.OP_FROMALTSTACK), op(OP.OP_CAT),               // ‖ mid, verbatim
+    PN(w('depth')), op(OP.OP_NUM2BIN), op(OP.OP_CAT),    // +1
+    op(OP.OP_FROMALTSTACK), op(OP.OP_CAT),               // +1  ‖ mid, verbatim
   ]
   for (const slot of slots) {
     body.push(

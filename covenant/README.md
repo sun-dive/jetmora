@@ -296,3 +296,45 @@ needs only a funding input, not a scope change. **Scope stays `0x41` until a bra
 its own** — which §4bis.4 already asks for and the covenant still lacks.
 
 **21/21.** 1,191 B at N=3. Nothing minted.
+
+---
+
+## 🆔 BRANCH IDENTITY — 26/26, and ANYONECANPAY unblocked
+
+**`branch` = HASH256 of the parent outpoint a fork consumed.** 1,261 B at N=3. ⚠ Nothing minted.
+
+★★★ **Twins are now impossible by construction.** An outpoint is spendable ONCE, and a parent's tip
+moves with every fork, so no two forks ever consume the same one. ⇒ Two children can never be
+byte-identical — **proved by forking the same parent state twice with the same forker and comparing
+the scripts.**
+
+| ★★★ the child's branch id **cannot be chosen** | it is derived; a supplied one is refused |
+| ★★★ two forks of one parent ⇒ **different bytes** | different branch ids, same length |
+| ★ the trunk's branch is **zeroes** | depth 0 has no parent outpoint to name |
+
+### ⚠⚠ A MEASURED CORRECTION TO `betaFrame.ts`
+
+> *"Under ANYONECANPAY `hashPrevouts` is ZEROES, so a covenant signing that way **cannot see which
+> outpoint it is spending**."*
+
+★★★ **Measured 25 Aug: the BIP143 `outpoint` field at offset 68 SURVIVES ANYONECANPAY INTACT.** Only
+`hashPrevouts` and `hashSequence` are zeroed:
+
+```
+0x41  hashPrevouts 0bbfaec4…   outpoint 77b0cc44…f7 01000000
+0xc1  hashPrevouts 00000000…   outpoint 77b0cc44…f7 01000000   ← unchanged
+```
+
+⇒ The warning describes a consequence of **not looking**, not an inability to look. ⚠ It is still right
+about the *hazard* — a covenant that ignores its outpoint has interchangeable twins — but the remedy is
+available, and this covenant takes it. **grafverse is not edited from here; that comment is his to
+amend.**
+
+### ★★ SCOPE IS NOW `0xc1`, AND THE COUPLING IS LOAD-BEARING
+
+⚠⚠⚠ **Safe ONLY because twins are impossible. If the `branch` field is ever removed, the scope must go
+back to `0x41` in the same commit.**
+
+⇒ And it is **proved rather than assumed**: the suite adds a **late funder** after the covenant's
+unlocking data is fixed, and requires it to be **accepted under `0xc1`** and **refused under `0x41`**.
+★ A suite that passes under both scopes says nothing about either — which is what it did an hour ago.

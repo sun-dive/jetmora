@@ -53,7 +53,7 @@ const payees = Object.fromEntries(
 
 /** The state a log's genesis starts in: depth 0, an empty tree, payees pre-filled with the creator. */
 const genesisState = {
-  genesis: Array(32).fill(0x9a), depth: 0, treesize: 0, royalty: 1, forkable: 1, ...payees,
+  genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, ...payees,
 }
 
 const lockFor = (st: any) =>
@@ -234,10 +234,17 @@ async function forkSpend(prevTx: any, prevState: any, opts: any = {}) {
   /* ★ out0 — THE PARENT, COMPLETELY UNCHANGED. Same state, and its value must come back WHOLE. */
   const parentBack = opts.drainParent ? V - 1 : V
   /* ★ out1 — the child: depth + 1, the forker shifted into slot 0, everything else carried across. */
+  /* ★★★ THE CHILD'S BRANCH ID, computed the way the covenant computes it: HASH256 of the 36-byte
+     outpoint this fork consumes. ⚠ Built here independently rather than read back out of the script,
+     so the two derivations have to AGREE — which is the point of computing it twice. */
+  const outpoint = [...Buffer.from(prevTx.id('hex'), 'hex').reverse(),
+                    ...(() => { const b = Buffer.alloc(4); b.writeUInt32LE(vout); return [...b] })()]
+  const childBranch = opts.badBranch ? Array(32).fill(0x5a) : [...Hash.hash256(outpoint)]
+
   const childState = opts.badChild
-    ? { ...prevState, depth: prevState.depth + 1, pa: forkerHash, pb: prevState.pa,
-        pc: prevState.pb, forkable: 0 }                                  // ⚠ relaxes the fork rule
-    : { ...prevState, depth: prevState.depth + 1,
+    ? { ...prevState, branch: childBranch, depth: prevState.depth + 1, pa: forkerHash,
+        pb: prevState.pa, pc: prevState.pb, forkable: 0 }                // ⚠ relaxes the fork rule
+    : { ...prevState, branch: childBranch, depth: prevState.depth + 1,
         pa: opts.childNotForker ? Array(20).fill(0xbb) : forkerHash,
         pb: prevState.pa, pc: prevState.pb }
 
@@ -313,6 +320,31 @@ const fNotForker = await forkSpend(mint, genesisState, { childNotForker: true })
 check(!fNotForker.ok, '⚠ the child must carry the lineage the covenant computed')
 
 
+const fBadBranch = await forkSpend(mint, genesisState, { badBranch: true })
+check(!fBadBranch.ok, '★★★ the child\'s BRANCH ID cannot be chosen — it is derived from the outpoint')
+
+// ════ ★★★ TWINS ARE IMPOSSIBLE ══════════════════════════════════════════════════════════════════
+// ⚠⚠ THE HAZARD THIS CLOSES. `betaFrame` warns that two instances identical in script, value and
+//    state are interchangeable — and under ANYONECANPAY one preimage would satisfy BOTH, letting a
+//    single successor output discharge two inputs. Jetmora could produce exactly those twins: one
+//    forker forking the same parent twice, giving two children with the same genesis, depth, register
+//    and one satoshi.
+// ★ An outpoint is spendable ONCE, so the parent's tip moves with every fork and no two forks can
+//   ever consume the same one. The children differ in their branch id, and therefore in their BYTES.
+console.log('\n  ── twins ──')
+
+const twinA = await forkSpend(mint, genesisState)
+/* the parent comes back as output 0 of that transaction — a DIFFERENT outpoint */
+const twinB = await forkSpend(twinA.tx, genesisState, { vout: 0 })
+check(twinA.ok && twinB.ok, 'the same parent state forked twice, by the same forker',
+      twinA.why || twinB.why)
+
+const sA = lockFor(twinA.childState).toHex()
+const sB = lockFor(twinB.childState).toHex()
+check(sA !== sB, '★★★ the two children are NOT byte-identical — twins cannot be built',
+      `branch ids ${hex(twinA.childState.branch).slice(0, 12)}… vs ${hex(twinB.childState.branch).slice(0, 12)}…`)
+check(sA.length === sB.length, '⚠ …and they differ only in content, not in length')
+
 // ════ ★★★ DEEPER THAN N — the test that would have caught the eviction ══════════════════════════
 // ⚠⚠ With N=3 the lineage register is full after three forks. If the creator lived in that register
 //    he would be shifted out at fork 3 and never paid again. He is a BAKED LITERAL instead, so this
@@ -340,6 +372,38 @@ check(!regHasCreator, '⚠ the creator has been shifted out of EVERY register sl
       `register: ${[...Array(LEVELS)].map((_, i) => hex(curState['p' + 'abcdefgh'[i]]).slice(0, 6)).join(' ')}`)
 check(f1.ok && forked === LEVELS + 2,
       '★★★ …and every one of those forks still PAID THE CREATOR, or none would have validated')
+
+
+// ════ ★★★ WHAT THE SCOPE IS ACTUALLY FOR ════════════════════════════════════════════════════════
+// ⚠⚠ The suite passing under both 0x41 and 0xc1 proves only that nothing BROKE. It never exercises
+//    what ANYONECANPAY exists to do: let a funder join AFTER the covenant's unlocking data is fixed.
+//    ⇒ A test that cannot reach the difference is not evidence about the difference.
+console.log('\n  ── the scope, exercised ──')
+{
+  const f = await forkSpend(mint, genesisState)
+  const tx = f.tx
+  /* a LATE funder — someone who turns up after the spend was assembled */
+  const late = new Transaction()
+  late.addOutput({ lockingScript: new P2PKH().lock(forkerHash), satoshis: 9_000 })
+  tx.addInput({ sourceTransaction: late, sourceOutputIndex: 0, sequence: 0xffffffff })
+  tx.inputs[2].unlockingScript = await new P2PKH().unlock(forkerKey).sign(tx, 2)
+
+  const spend = new Spend({
+    sourceTXID: mint.id('hex'), sourceOutputIndex: 0, sourceSatoshis: mint.outputs[0].satoshis,
+    lockingScript: mint.outputs[0].lockingScript, transactionVersion: tx.version,
+    otherInputs: [tx.inputs[1], tx.inputs[2]], outputs: tx.outputs, inputIndex: 0,
+    unlockingScript: tx.inputs[0].unlockingScript, inputSequence: 0xffffffff,
+    lockTime: tx.lockTime, verifyFlags: ['UTXO_AFTER_CHRONICLE'],
+  })
+  let ok = false
+  try { ok = spend.validate() } catch { ok = false }
+  const anyone = (ANCHOR_SCOPE & 0x80) !== 0
+  check(ok === anyone,
+    anyone
+      ? '★★★ 0xc1: a LATE FUNDER joins and the spend still stands'
+      : '⚠ 0x41: a late funder INVALIDATES the spend — the input set is committed',
+    `scope 0x${ANCHOR_SCOPE.toString(16)}, late funder ${ok ? 'accepted' : 'rejected'}`)
+}
 
 console.log(`\n  ${fail === 0 ? '✓' : '⚠'} ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

@@ -90,6 +90,17 @@ REM  from ONE OUTPUT with no walk back to the root. ⇒ And the BRC-113 split is
 REM  the quine's split exactly: immutableChunkBytes here, tokenAttributes in
 REM  the mutable fields below.
 DIM genesis$32
+
+REM ★★★ branch — WHICH HISTORY THIS IS, and why twins cannot exist.
+REM  §4bis.4 says a branch is named by (genesis, fork height, key). This is
+REM  that name, and it is not chosen — it is HASH256 of the PARENT OUTPOINT
+REM  the fork consumed, computed by the frame.
+REM  ⚠⚠ An outpoint can be spent ONCE. A parent's tip moves with every fork,
+REM  so two forks NEVER see the same outpoint ⇒ two children can never be
+REM  byte-identical. Twins are impossible by construction, not by rule.
+REM  ★ ZEROES ON THE TRUNK — depth 0 has no parent outpoint to name.
+REM  ⚠ The frame writes it; nothing here may. See anchorFrame.mts.
+DIM branch$32
 DIM depth%2
 DIM treesize%8
 DIM royalty%4
