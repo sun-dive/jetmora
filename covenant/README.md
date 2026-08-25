@@ -520,5 +520,22 @@ their royalty address. ⇒ **A buyer may put a COLD key in charge of the branch 
 hot one.** The covenant does not check it — the forker is the one spending, and nobody else has an
 interest in who controls their own replica.
 
+### 👁 And it reads back as one line
+
+```
+530 VERIFY SAMEBYTES(HASH160(pub0), t35) AND CHECKSIG(sig0, pub0)
+       AND (SAMEBYTES(HASH160(pub1), t39) AND CHECKSIG(sig1, pub1))
+       OR children - 1
+```
+
+⇒ **Both owners must match and sign — unless this is a fork, which needs nobody.**
+
+⚠ Two reader-stack corrections on the way, both mine: the listing's stack is **what the UNLOCKING
+SCRIPT PUSHES, and nothing else.** ⇒ NOT the compiler's model, which also carries `preimageCopy` and
+`scriptCode` — the lock creates those itself and the reader watches it happen. Feeding it either extra
+name relabels every line, and it printed `CHECKSIG(pub0, childowner0)` with total confidence.
+★ **A listing with confident wrong names is worse than one that stops**, which is the runbook's own
+lesson arriving for the second time.
+
 ⏭ **UNTESTED, and honestly so:** the OPERATIONAL side — splitting keys across devices, and the signing
 ceremony. Only the script half is proved here.
