@@ -415,7 +415,20 @@ and nothing that can be lost or disagreed with.
 
 **A fork COPIED the parent's suffix verbatim, and the owner literal lived there.**
 ⇒ Measured: byte **162**, with the state region ending at ~156. **The child inherited the seller's
-owner key**, so:
+ADDRESS**, so:
+
+⚠ **"Inherited the key" was my wording and it was wrong — corrected on his challenge.** What a script
+holds is a **hash160: a wallet address.** ★ **A PRIVATE KEY NEVER APPEARS IN ANY SCRIPT**, locking or
+unlocking. The spender supplies a public key and a signature at SPEND time, and the covenant checks
+`HASH160(pub) == owner` before `CHECKSIG`.
+
+⇒ **Audited, not asserted** — every data push in the lock: `20 B × 4` hash160 **addresses** ·
+`32 B × 3` hashes · `33 B × 4` which are **`OP_PUSH_TX`'s own public constants** (`Q = a·G`), all four
+matched against `pushTxConstants` and none of them anyone's key. **Public keys belonging to a person:
+zero. Private keys: zero.**
+
+⇒ The consequence was still real — only the holder of the private key behind that address could anchor
+the child, and that was the seller — but **nothing secret was ever exposed.**
 
 | ★★★ **a buyer could not anchor the branch they replicated** | the seller still owned it ⇒ *"a buyer replicates the log to themselves"* was false |
 | ⚠⚠ **a compromised owner could not be escaped by forking** | the child inherits the compromise ⇒ **there was NO recovery path at all** |
