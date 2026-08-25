@@ -258,3 +258,41 @@ count until the matching acceptance is green. That is now twice in one build.
 
 ⚠ `childdepth` is computed by the BASIC unconditionally and only used inside the fork branch — a few
 dead bytes on every anchor. Fixing it means touching the program, not the frame.
+
+---
+
+## ✂ `maxFee` REMOVED — his call, 25 Aug
+
+**There is no drain surface, so there is nothing to bound.**
+
+⇒ `maxFee` existed to cap how much of the covenant's OWN value a spend could hand a miner. ★ **That
+surface only exists if the covenant pays its own fee — and it never has to.** An anchorer and a forker
+both bring a funding input. ⚠ *"If the fee paid is too low the transaction can be rejected"* — the
+network already owns that rule, and the covenant was duplicating it **with a constant frozen at mint.**
+Same shape as the fee floor and `MAX_MEMORY`, and this project has now met it three times.
+
+| before | `newValue >= V - maxFee * (2 - children)` |
+| ★ after | **`VERIFY BIN2NUM(newValue) >= BIN2NUM(t3)`** |
+
+⇒ **The parent always comes out whole**, so *"the forker pays, the holder never does"* stops being a
+fork rule and becomes the only rule there is. **11 bytes smaller** — simpler and cheaper at once.
+
+### ⏸ ANYONECANPAY DEFERRED — and the reason is a real hazard
+
+The natural companion is scope `0xc1`, so any funder may add an input. ⚠⚠ But `betaFrame.ts` carries the
+warning that matters here:
+
+> *"Under ANYONECANPAY `hashPrevouts` is ZEROES, so a covenant signing that way cannot see which
+> outpoint it is spending. **Two instances identical in script AND value AND state would be
+> interchangeable.**"*
+
+★★★ **Jetmora can produce exactly those twins.** One forker forking the same parent twice yields two
+children with the same `genesis`, `depth`, register and 1 satoshi — **byte-identical covenants.** Under
+ANYONECANPAY one preimage satisfies both, so both could be spent in a single transaction against a
+single successor output.
+
+⇒ ⚠ **The two changes are INDEPENDENT**, which is why one shipped and one did not: removing `maxFee`
+needs only a funding input, not a scope change. **Scope stays `0x41` until a branch has an identity of
+its own** — which §4bis.4 already asks for and the covenant still lacks.
+
+**21/21.** 1,191 B at N=3. Nothing minted.

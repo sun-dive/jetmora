@@ -35,7 +35,6 @@ const NUM = (n: number): any => {
 }
 
 const LEVELS = 3
-const MAXFEE = 400
 const hex = (b: any) => Buffer.from(b).toString('hex')
 const u64le = (n: number | bigint) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return [...b] }
 
@@ -58,7 +57,7 @@ const genesisState = {
 }
 
 const lockFor = (st: any) =>
-  buildAnchorLock({ levels: LEVELS, owner: ownerHash, creator, maxFee: MAXFEE, state: st })
+  buildAnchorLock({ levels: LEVELS, owner: ownerHash, creator, state: st })
 
 /** N royalty outputs, one per ancestor slot. ⚠ 1 sat minimum, never 0 — dust is refused before the
  *  script is ever evaluated, so a 0-value royalty would be a covenant that can never be spent. */
@@ -83,7 +82,7 @@ mint.addOutput({ lockingScript: genesisLock, satoshis: 5000 })
  * ★ Build one anchor spending `prevTx`'s output 0, and run it through the interpreter.
  * @param mutate  ⚠ a saboteur — returns a broken variant so the refusals can be provoked.
  */
-function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any = {}) {
+async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any = {}) {
   const prevOut = prevTx.outputs[0]
   const nextState = { ...prevState, treesize: newTreeSize, royalty: opts.wantRoyalty ?? prevState.royalty }
   const nextLock = lockFor(opts.badSuccessor ? { ...nextState, treesize: newTreeSize + 99 } : nextState)
@@ -93,10 +92,16 @@ function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any
      "the forker pays, the holder never does", arriving on the anchor path. Here they come out of the
      maxFee headroom; a real anchor adds a funding input. ⇒ The covenant's own floor is V − maxFee and
      nothing else, which is what the frame enforces. */
-  const newValue = prevOut.satoshis - MAXFEE - (opts.drain ? 1 : 0)
+  /* ★★★ THE COVENANT COMES OUT WHOLE. There is no maxFee any more: the anchorer funds the fee and
+     the royalties from their own input, exactly as a forker does. ⇒ Zero drain surface. */
+  const newValue = prevOut.satoshis - (opts.drain ? 1 : 0)
+
+  const funder = new Transaction()
+  funder.addOutput({ lockingScript: new P2PKH().lock(ownerHash), satoshis: 20_000 })
 
   const tx = new Transaction()
   tx.addInput({ sourceTransaction: prevTx, sourceOutputIndex: 0, sequence: 0xffffffff })
+  tx.addInput({ sourceTransaction: funder, sourceOutputIndex: 0, sequence: 0xffffffff })
   tx.addOutput({ lockingScript: nextLock, satoshis: newValue })
   /* ★ THE CREATOR'S OUTPUT COMES FIRST — paid on every anchor of every branch, from a literal that
      no shift can evict. */
@@ -116,7 +121,7 @@ function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any
 
   const preimage = TransactionSignature.format({
     sourceTXID: prevTx.id('hex'), sourceOutputIndex: 0, sourceSatoshis: prevOut.satoshis,
-    transactionVersion: tx.version, otherInputs: [], inputIndex: 0, outputs: tx.outputs,
+    transactionVersion: tx.version, otherInputs: [tx.inputs[1]], inputIndex: 0, outputs: tx.outputs,
     inputSequence: 0xffffffff, subscript: prevOut.lockingScript,
     lockTime: tx.lockTime, scope: ANCHOR_SCOPE,
   })
@@ -144,10 +149,12 @@ function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any
     push([...preimage]),
   ])
   tx.inputs[0].unlockingScript = unlock
+  tx.inputs[1].unlockingScript = await new P2PKH().unlock(priv).sign(tx, 1)
 
   const spend = new Spend({
     sourceTXID: prevTx.id('hex'), sourceOutputIndex: 0, sourceSatoshis: prevOut.satoshis,
-    lockingScript: prevOut.lockingScript, transactionVersion: tx.version, otherInputs: [],
+    lockingScript: prevOut.lockingScript, transactionVersion: tx.version,
+    otherInputs: [tx.inputs[1]],
     outputs: tx.outputs, inputIndex: 0, unlockingScript: unlock,
     inputSequence: 0xffffffff, lockTime: tx.lockTime,
     /* ⚠⚠ MINIMALDATA IS DELIBERATELY NOT SET, and this is a finding rather than a workaround.
@@ -166,48 +173,48 @@ function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any
 }
 
 // ── ★★★ THE ACCEPTANCES ─────────────────────────────────────────────────────────────────────────
-const a1 = anchorSpend(mint, genesisState, 264)
+const a1 = await anchorSpend(mint, genesisState, 264)
 check(a1.ok, '★★★ anchor 1 SPENDS the genesis — full script evaluation', a1.why)
 
 if (a1.ok) {
-  const a2 = anchorSpend(a1.tx, a1.nextState, 1864)
+  const a2 = await anchorSpend(a1.tx, a1.nextState, 1864)
   check(a2.ok, '★★★ anchor 2 SPENDS anchor 1 — the chain continues', a2.why)
 }
 
 // ── ⚠ THE REFUSALS, which are the part that proves anything ─────────────────────────────────────
-const wrongKey = anchorSpend(mint, genesisState, 264, { wrongKey: true })
+const wrongKey = await anchorSpend(mint, genesisState, 264, { wrongKey: true })
 check(!wrongKey.ok, '⚠ a STRANGER cannot anchor — not just anyone may assert a root')
 
-const rewind = anchorSpend(mint, genesisState, 0)
+const rewind = await anchorSpend(mint, genesisState, 0)
 check(!rewind.ok, '⚠ the tree cannot STAND STILL on an anchor (no-op spend refused)')
 
-const noRoyalty = anchorSpend(mint, genesisState, 264, { omitRoyalties: true })
+const noRoyalty = await anchorSpend(mint, genesisState, 264, { omitRoyalties: true })
 check(!noRoyalty.ok, '★★ ROYALTIES CANNOT BE OMITTED — permissionless, enforced by PoW')
 
-const badSucc = anchorSpend(mint, genesisState, 264, { badSuccessor: true })
+const badSucc = await anchorSpend(mint, genesisState, 264, { badSuccessor: true })
 check(!badSucc.ok, '⚠ the successor must carry the state the program computed')
 
 /* ★★ THE ATTACKS THAT MATTER. Omitting the royalty is the naive move; paying the wrong person, or
    paying them less, is what someone would actually try. */
-const wrongPayee = anchorSpend(mint, genesisState, 264, { wrongPayee: true })
+const wrongPayee = await anchorSpend(mint, genesisState, 264, { wrongPayee: true })
 check(!wrongPayee.ok, '★★★ the royalty cannot be REDIRECTED to another address')
 
-const shortPay = anchorSpend(mint, genesisState, 264, { shortPay: true })
+const shortPay = await anchorSpend(mint, genesisState, 264, { shortPay: true })
 check(!shortPay.ok, '★★★ the royalty cannot be SHORT-PAID')
 
-const drained = anchorSpend(mint, genesisState, 264, { drain: true })
+const drained = await anchorSpend(mint, genesisState, 264, { drain: true })
 check(!drained.ok, '⚠ the covenant cannot be DRAINED past its value floor')
 
 /* ⚠ and a non-forkable log must refuse a fork outright */
-const noFork = anchorSpend(mint, { ...genesisState, forkable: 0 }, 264, { children: 2 })
+const noFork = await anchorSpend(mint, { ...genesisState, forkable: 0 }, 264, { children: 2 })
 check(!noFork.ok, '★★ a NON-FORKABLE log refuses a second covenant output')
 
 /* ★★★ THE CREATOR'S ROYALTY — the rule the whole design rests on, and the one the shift register
    silently broke. It is a baked literal now, so no shift can evict it. */
-const noCreator = anchorSpend(mint, genesisState, 264, { omitCreator: true })
+const noCreator = await anchorSpend(mint, genesisState, 264, { omitCreator: true })
 check(!noCreator.ok, '★★★ the CREATOR cannot be left unpaid')
 
-const badCreator = anchorSpend(mint, genesisState, 264, { wrongCreator: true })
+const badCreator = await anchorSpend(mint, genesisState, 264, { wrongCreator: true })
 check(!badCreator.ok, '★★★ the CREATOR\'s royalty cannot be redirected')
 
 

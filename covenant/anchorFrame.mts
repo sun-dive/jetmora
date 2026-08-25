@@ -76,8 +76,6 @@ export interface AnchorFrameParams {
    *   the edge and let the covenant stay simple.
    */
   creator: number[]
-  /** ⚠ The most an anchor may pay a miner. NO DEFAULT — the covenant's whole drain surface. */
-  maxFee: number
   fieldOffset?: number
 }
 
@@ -175,21 +173,16 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
     return a.length - 1 - i
   }
   ops.push(
-    /* ⚠ THE ANCHOR PATH pays its own fee out of the covenant, so the floor is V − maxFee.
-       ⏭ THE FORK PATH WILL NEED `>= V` INSTEAD: a forker must leave the parent WHOLE, because every
-         satoshi a fork costs comes from the buyer and none from the holder. ⇒ Two paths, two floors,
-         and this is the line that will branch when the fork path lands. */
     PN(d('newValue')), op(OP.OP_PICK), op(OP.OP_BIN2NUM),    // +1  what the spender claims
     op(OP.OP_FROMALTSTACK),                                  // +2  V, from the preimage
-    /* ★★★ THE FORKER PAYS, THE HOLDER NEVER DOES. On a fork the allowance is ZERO — the parent must
-       come out WHOLE — and on an anchor it is maxFee, which the covenant spends on its own miner fee.
-       ⇒ `maxFee × (1 − forking)`, written branch-free as `maxFee × (2 − children)`.
-       ⚠ Without this a forker could fund their own replication out of the holder's value, which would
-       make "the holder plays no active role" a description of a theft. */
-    PN(p.maxFee),                                            // +3
-    PN(d('children') + 3), op(OP.OP_PICK),                   // +4
-    op(OP.OP_2), op(OP.OP_SWAP), op(OP.OP_SUB),              // +4  (2 − children)
-    op(OP.OP_MUL), op(OP.OP_SUB),                            // +2  V − allowance
+    /* ★★★ THE SPENDER PAYS. ALWAYS. THERE IS NO DRAIN SURFACE AT ALL.
+       ⚠⚠ There was a `maxFee` here, bounding how much of the covenant's OWN value a spend could hand
+       a miner. ⇒ His call, 25 Aug: that bound only exists if the covenant pays its own fee, and it
+       never has to — an anchorer and a forker both bring a funding input. **If the fee is too low the
+       network simply refuses the transaction**, so the covenant was duplicating a rule it does not
+       own, using a constant frozen at mint. Same shape as the fee floor and MAX_MEMORY.
+       ⇒ `newValue >= V` on BOTH paths. The parent always comes out whole, so "the forker pays, the
+       holder never does" stops being a fork rule and becomes the only rule there is. */
     op(OP.OP_GREATERTHANOREQUAL), op(OP.OP_VERIFY),          //  0
 
     /* ── AND BIND IT ────────────────────────────────────────────────────────────────────────────
