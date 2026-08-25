@@ -463,6 +463,27 @@ every intermediate; only the payment list is capped.
 ⚠ ⇒ Therefore **`N` is POLICY, not security.** ★ And the creator is a baked literal precisely so that
 the window **can never slide off the origin.**
 
+### 4bis.4f ★★★ IDENTITY, CONTROL AND PAYMENT ARE THREE DIFFERENT THINGS
+
+⚠⚠ **They were conflated, including by me, and separating them is what makes a branch sellable.**
+
+| ★ **IDENTITY** | `branch` = HASH256(parent outpoint) ⇒ **DERIVED, and cannot be chosen** |
+| **CONTROL** | the owner slots, n-of-n ⇒ **chosen by the forker**, read only by the auth check |
+| **PAYMENT** | the payee register ⇒ **chosen by the forker**, read only when building royalty outputs |
+
+⇒ **A buyer may put a COLD key in charge of a branch while royalties flow to a HOT one** — or to a
+collaborator, a treasury, or nobody they control at all. **The covenant does not check either**, and
+should not: the forker is the one spending, and nobody else has an interest in who runs or is paid by
+their own replica.
+
+⚠⚠⚠ **THE MISREADING TO GUARD AGAINST.** The payee register is **NOT** a record of who forked. The
+stack field was called `forker` and that name invited exactly that inference; it is now `childpayee`.
+⇒ **Provenance is the BRANCH ID and the anchor chain — both unchooseable.** Anyone reading a fork's
+authorship out of the payee register is reading a nomination as a fact.
+
+★ ⇒ With §4bis.4e this completes the picture: **payment is a window, provenance is the chain, and
+control is neither.**
+
 ### 4bis.5 ⏭ Open
 
 ✅ **RESOLVED — "the genesis's serialization, and whether it is committed in the first anchor or in a

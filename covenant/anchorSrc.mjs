@@ -60,7 +60,7 @@ export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT, owners = 1) {
   //    selector arithmetic any more — this block only ever describes a child, and the frame binds it
   //    to out1 only when a fork is happening. Simpler, and it says exactly one thing.
   const shifts = Array.from({ length: levels }, (_, i) =>
-    i === 0 ? `child${slot(0)} = forker` : `child${slot(i)} = ${slot(i - 1)}`,
+    i === 0 ? `child${slot(0)} = childpayee` : `child${slot(i)} = ${slot(i - 1)}`,
   ).join('\n')
 
   /* ⚠⚠ THE SHIFT CONSUMES THE PARENT'S PAYEES. `coalesce` moves a re-assigned variable, so after
@@ -246,8 +246,13 @@ REM  claim to be a different log — which is the one thing identity must refuse
  *    wrong place builds, runs, and compares the wrong bytes hundreds of opcodes later.
  */
 export const ANCHOR_STACK = [
-  'forker',       // ★ hash160 of whoever is replicating. Enters the child's register at slot 0.
-                  //   ⚠ On a plain anchor nothing reads it — but the model must know it is there.
+  /* ★★ childpayee — the hash160 the FORKER NOMINATES to receive this branch's royalties. It enters
+     the child's register at slot 0.
+     ⚠⚠ IT WAS CALLED `forker`, AND THAT NAME INVITED A FALSE INFERENCE. It is NOT proof of who
+     forked — a forker may nominate a collaborator, a treasury, or a charity. ⇒ Provenance is the
+     BRANCH ID, derived from the parent outpoint and unchooseable. This register is PAYMENT only.
+     ⚠ On a plain anchor nothing reads it — but the model must know it is there. */
+  'childpayee',
   'wantroyalty',  // what the spender asks the royalty to become. ⚠ ignored unless this is the trunk
   'children',     // how many covenant outputs this spend creates — the frame counts them
   'newtreesize',  // the tree size being anchored (⚠ equal to treesize on a fork)
