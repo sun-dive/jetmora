@@ -252,10 +252,28 @@ exists, a log is identified by its operator's key and its URL — both mutable, 
 ### 4bis.0 ★★★ WHAT A GENESIS ACTUALLY IS — one field, and no document
 
 ```
-genesis = SHA256(genesisTxId ‖ outputIndex LE)
+genesis = HASH256(the OUTPOINT the mint transaction CONSUMED)
 ```
 
-**That is all of it.** BRC-113's derivation, minus its `immutableChunkBytes` term.
+**That is all of it.**
+
+⚠⚠ **IT WAS SPECIFIED AS `SHA256(genesisTxId ‖ outputIndex)` AND THAT IS IMPOSSIBLE — caught by a dry
+run, 25 Aug, before anything was minted.** The covenant's script CONTAINS `genesis`; the script
+determines the output; the output determines the txid. **A transaction cannot carry its own txid.**
+
+★ BRC-113 never had the problem: its Token ID is computed by OBSERVERS after the fact and is **never
+stored in the token.** Storing it in the script was the addition that broke it.
+
+★★★ **The fix was already in the covenant, one field along.** `branch` is HASH256 of the outpoint a
+FORK consumed; `genesis` is HASH256 of the outpoint the MINT consumed. ⇒ **The same rule at two
+moments** — knowable before signing, unique because an outpoint is spendable once, and unforgeable for
+the same reason.
+
+⚠ **One asymmetry, and it is inherent.** `branch` is ENFORCED — the covenant computes it in script from
+its own preimage. `genesis` at the trunk is only DECLARED, because at mint there is no covenant input
+to compute anything from. ⇒ **The trunk's genesis is checked by OBSERVERS**: fetch the mint
+transaction, hash its input's outpoint, compare. ★ Which is exactly BRC-113's model — prove the genesis
+transaction once, and everything after it is enforced by the spend chain.
 
 ★★ **The term is redundant HERE and only here.** It exists so that tampering with a token's immutable
 metadata breaks its id. ⇒ In a self-replicating covenant the metadata is a FIELD, peeled from the
