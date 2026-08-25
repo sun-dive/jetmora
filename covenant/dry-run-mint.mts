@@ -6,7 +6,7 @@
 //    become PERMANENT in one place, at real size, with a real fee — before any of it is unamendable.
 //
 // ⚠ Run it and read the OUTPUT, not this file. The point is the numbers.
-import { PrivateKey, Transaction, P2PKH, Hash }
+import { Transaction, P2PKH, Hash, Utils }
   from '../../grafverse/mint/node_modules/@bsv/sdk/dist/esm/mod.js'
 import { buildAnchorLock } from './anchorFrame.mts'
 
@@ -22,9 +22,35 @@ const ROYALTY = Number(process.env.ROYALTY ?? 1)
 const hx = (b: any) => Buffer.from(b).toString('hex')
 const u32le = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return [...b] }
 
-/* Stand-in addresses. ⚠ A real mint uses HIS addresses; none of these are keys anyone holds. */
+/* Stand-in addresses. ⚠ Nobody holds a key to any of these — they are hashes of a label. */
 const addr = (tag: number) => [...Hash.hash160([...Buffer.from(`dry-run-${tag}`)])] as number[]
-const creator = addr(0)
+
+/**
+ * ★ CREATOR — accepts a real BSV address, a raw hash160 hex, or nothing (a stand-in).
+ *
+ * ⚠⚠ NEVER A PRIVATE KEY. This wants the ADDRESS only; the creator key never needs to be online,
+ *    because the creator address only ever RECEIVES.
+ * ⚠ A test key makes this a TEST LOG PERMANENTLY — the creator literal can never change, so a mint
+ *   made with a throwaway can never become the real one.
+ */
+function parseCreator(v: string | undefined): { hash: number[]; kind: string } {
+  if (!v) return { hash: addr(0), kind: '⚠ STAND-IN — nobody holds this key' }
+  const t = v.trim()
+  if (/^[0-9a-fA-F]{40}$/.test(t)) return { hash: [...Buffer.from(t, 'hex')], kind: 'raw hash160' }
+  if (/^[5KL9c][1-9A-HJ-NP-Za-km-z]{50,}$/.test(t)) {
+    throw new Error('⚠⚠ THAT LOOKS LIKE A PRIVATE KEY (WIF). This wants the ADDRESS. Nothing was used.')
+  }
+  try {
+    const d = Utils.fromBase58Check(t)
+    const h = Array.isArray(d.data) ? d.data : [...d.data]
+    if (h.length !== 20) throw new Error(`decoded to ${h.length} bytes, expected 20`)
+    return { hash: h, kind: `address ${t.slice(0, 6)}…${t.slice(-4)}` }
+  } catch (e: any) {
+    throw new Error(`could not read CREATOR as an address or hash160: ${e.message}`)
+  }
+}
+const parsed = parseCreator(process.env.CREATOR)
+const creator = parsed.hash
 const owners = Object.fromEntries(
   Array.from({ length: OWNERS }, (_, i) => ['owner' + 'abcd'[i], addr(10 + i)]))
 const payees = Object.fromEntries(
@@ -66,8 +92,7 @@ const mint = new Transaction()
 mint.addInput({ sourceTransaction: funder, sourceOutputIndex: 0, sequence: 0xffffffff })
 mint.addOutput({ lockingScript: lock, satoshis: 1 })
 mint.addOutput({ lockingScript: new P2PKH().lock(addr(99)), satoshis: 48_000 })
-/* ⚠ unlocking scripts are absent, so add a realistic P2PKH unlock (~107 B) to the size. */
-const bytes = mint.toHex ? 0 : 0
+/* ⚠ unlocking scripts are absent, so a realistic P2PKH unlock (~148 B) is added to the size. */
 const size = lock.toBinary().length + 34 + 148 + 10
 const fee = Math.ceil(size / 1000 * FEE_PER_KB)
 
@@ -82,6 +107,7 @@ line('forkable', FORKABLE ? '1 — CAN be forked' : '0 — CANNOT EVER be forked
      FORKABLE ? 'sellable, replicable, backed up by its forks' : '⚠⚠ ONE CUSTODIAN, FOREVER')
 line('leafcovers', LEAFCOVERS ? '1 — plaintext' : '0 — stored bytes', 'only bites if encrypted')
 line('creator', hx(creator).slice(0, 20) + '…', '★ baked literal — paid by EVERY branch, forever')
+line('  ↳ source', parsed.kind, '')
 console.log()
 console.log('  ── mutable, but starting here ──\n')
 line('royalty', String(ROYALTY) + ' sat', 'per payee per anchor · trunk may change it')
