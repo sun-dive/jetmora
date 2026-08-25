@@ -129,3 +129,41 @@ the frame never pushes, and **every `OP_PICK` after them was wrong.**
 ⚠ **Three of my own errors on the way in, all the same shape** — a hand-rolled `{op: len, data}` where
 102 means `OP_IF`; `PN` where an unlocking script needs a truly minimal push; a **double** sha256 handed
 to `sign()` where one was wanted. ⇒ Each fails silently and far from its cause.
+
+---
+
+## 👁 READ BACK — what the decompiler confirmed, and what it exposed
+
+`npx tsx covenant/read-back.mts` ⇒ **the whole lock, frame included**, 640 chunks in ~49 lines.
+
+**Verified by reading, not by assertion:**
+
+| the signature gate | `VERIFY SAMEBYTES(HASH160(pub), &H7777…)` then `VERIFY CHECKSIG(sig, pub)` — ★ first, before any attacker byte is touched |
+| `OP_PUSH_TX` | `VERIFY PUSHTX(preimage)` |
+| ★ **the value floor** | `VERIFY BIN2NUM(newValue) >= BIN2NUM(t3) - 400` ⇒ `t3` is `V`, read 52 bytes from the end |
+| ★★★ **the successor** | `genesis` raw · **old** depth · **new** treesize · **new** royalty · **old** forkable · the **parent's** payees |
+| ★★★ **each royalty** | `NUM2BIN(paid,8) ‖ P2PKH_HEAD ‖ payee ‖ P2PKH_TAIL` — ⇒ Phar Lap's exact shape |
+| **`fieldOffset`** | `SPLIT(SCRIPTCODE(preimage), 4)` ⇒ **4**, visibly correct now |
+
+### ⚠⚠ And a finding about the READER, not the covenant
+
+The P2PKH template rendered as **`346650137`** and **`-11400`**. Both correct — `19 76 a9 14` and
+`88 ac` — and both **illegible**. ⇒ Nobody reads a royalty payment out of a decimal.
+
+★ **A correct rendering that cannot be read defeats the thing the reader was built to serve.** Same
+failure the runbook records for shape-matched idioms, from the other direction: there a **wrong name**,
+here **no name at all**.
+
+⇒ Fixed in `covenant/anchorIdioms.mts`. `unbasicListing` takes `idioms` as a PARAMETER, so this lives
+in jetmora — ⚠ **grafverse is not touched and no bundle is rebuilt.** Both are `exact`, never
+shape-matched, because a four-byte push of anything else must not be announced as a P2PKH template.
+
+### ⏭ Loose ends, recorded rather than smoothed over
+
+⚠ **`childdepth` is DEAD on the anchor path** — computed, left on the stack, never read. Costs a few
+bytes per anchor and becomes live on the fork path.
+
+⚠ **The listing renders the value rule (470) before `childdepth` (480)**, though the frame appends it
+after the compiled program. Both are independent, the spend test is 11/11, and nothing depends on the
+order — but **it is not yet explained**, and "it passes and I do not understand the listing" is exactly
+where a bug hides.
