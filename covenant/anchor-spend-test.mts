@@ -210,5 +210,129 @@ check(!noCreator.ok, '★★★ the CREATOR cannot be left unpaid')
 const badCreator = anchorSpend(mint, genesisState, 264, { wrongCreator: true })
 check(!badCreator.ok, '★★★ the CREATOR\'s royalty cannot be redirected')
 
+
+// ════ ★★★ THE FORK PATH — permissionless replication ════════════════════════════════════════════
+// ⚠⚠ NOTHING IN THIS SUITE FORKED UNTIL NOW, WHICH IS HOW THE CREATOR-EVICTION BUG HID.
+console.log('\n  ── forks ──')
+
+const forkerKey = PrivateKey.fromRandom()
+const forkerHash = forkerKey.toPublicKey().toHash() as number[]
+
+async function forkSpend(prevTx: any, prevState: any, opts: any = {}) {
+  /* ⚠ vout: forking a FORK spends the child, which is output 1 of the previous fork transaction. */
+  const vout = opts.vout ?? 0
+  const prevOut = prevTx.outputs[vout]
+  const V = prevOut.satoshis
+
+  /* ★ out0 — THE PARENT, COMPLETELY UNCHANGED. Same state, and its value must come back WHOLE. */
+  const parentBack = opts.drainParent ? V - 1 : V
+  /* ★ out1 — the child: depth + 1, the forker shifted into slot 0, everything else carried across. */
+  const childState = opts.badChild
+    ? { ...prevState, depth: prevState.depth + 1, pa: forkerHash, pb: prevState.pa,
+        pc: prevState.pb, forkable: 0 }                                  // ⚠ relaxes the fork rule
+    : { ...prevState, depth: prevState.depth + 1,
+        pa: opts.childNotForker ? Array(20).fill(0xbb) : forkerHash,
+        pb: prevState.pa, pc: prevState.pb }
+
+  const funder = new Transaction()
+  funder.addOutput({ lockingScript: new P2PKH().lock(forkerHash), satoshis: 20_000 })
+
+  const tx = new Transaction()
+  tx.addInput({ sourceTransaction: prevTx, sourceOutputIndex: vout, sequence: 0xffffffff })
+  tx.addInput({ sourceTransaction: funder, sourceOutputIndex: 0, sequence: 0xffffffff })
+  tx.addOutput({ lockingScript: lockFor(prevState), satoshis: parentBack })
+  if (!opts.omitChild) tx.addOutput({ lockingScript: lockFor(childState), satoshis: 1 })
+  tx.addOutput({ lockingScript: new P2PKH().lock(creator), satoshis: prevState.royalty })
+  for (let i = 0; i < LEVELS; i++) {
+    tx.addOutput({ lockingScript: new P2PKH().lock(prevState['p' + 'abcdefgh'[i]]),
+                   satoshis: prevState.royalty })
+  }
+  const change = new P2PKH().lock(forkerHash)
+  tx.addOutput({ lockingScript: change, satoshis: 15_000 })
+  const spenderOutputs = [...u64le(15_000), change.toBinary().length, ...change.toBinary()]
+
+  const preimage = TransactionSignature.format({
+    sourceTXID: prevTx.id('hex'), sourceOutputIndex: vout, sourceSatoshis: V,
+    transactionVersion: tx.version, otherInputs: [tx.inputs[1]], inputIndex: 0, outputs: tx.outputs,
+    inputSequence: 0xffffffff, subscript: prevOut.lockingScript, lockTime: tx.lockTime,
+    scope: ANCHOR_SCOPE,
+  })
+  /* ⚠⚠ A FORK NEEDS NO OWNER SIGNATURE. These are the FORKER's own key — a stranger's — and the
+     covenant must accept them, because "permissionless" is the claim being tested. */
+  const raw = forkerKey.sign(Hash.sha256(preimage))
+  const sig = new TransactionSignature(raw.r, raw.s, ANCHOR_SCOPE).toChecksigFormat()
+
+  const unlock = new UnlockingScript([
+    pushData([...sig]),
+    pushData([...(forkerKey.toPublicKey().encode(true) as number[])]),
+    pushData(forkerHash),                              // forker → the child's slot 0
+    NUM(prevState.royalty),                            // wantroyalty — unchanged on a fork
+    NUM(opts.children ?? 2),                           // ★ TWO covenant outputs
+    NUM(prevState.treesize),                           // ⚠ tree size does NOT move on a fork
+    pushData(spenderOutputs),
+    pushData(u64le(parentBack)),
+    pushData([...preimage]),
+  ])
+  tx.inputs[0].unlockingScript = unlock
+  /* ⚠ The FUNDING input must be signed too, or the transaction cannot serialize — which only bites
+     once a fork is forked, because `Spend` never serializes the whole thing.
+     ★ Safe to do after input 0: unlocking scripts are not part of the preimage. */
+  tx.inputs[1].unlockingScript = await new P2PKH().unlock(forkerKey).sign(tx, 1)
+
+  const spend = new Spend({
+    sourceTXID: prevTx.id('hex'), sourceOutputIndex: vout, sourceSatoshis: V,
+    lockingScript: prevOut.lockingScript, transactionVersion: tx.version,
+    otherInputs: [tx.inputs[1]], outputs: tx.outputs, inputIndex: 0, unlockingScript: unlock,
+    inputSequence: 0xffffffff, lockTime: tx.lockTime, verifyFlags: ['UTXO_AFTER_CHRONICLE'],
+  })
+  let ok = false, why = ''
+  try { ok = spend.validate() } catch (e: any) { why = (e.message ?? String(e)).slice(0, 90) }
+  return { ok, why, tx, childState }
+}
+
+const f1 = await forkSpend(mint, genesisState)
+check(f1.ok, '★★★ a STRANGER forks the log — no owner signature anywhere', f1.why)
+
+const fDrain = await forkSpend(mint, genesisState, { drainParent: true })
+check(!fDrain.ok, '★★★ a fork cannot take ONE SATOSHI from the holder')
+
+const fNoChild = await forkSpend(mint, genesisState, { omitChild: true })
+check(!fNoChild.ok, '⚠ claiming two children while creating one is refused')
+
+const fBadChild = await forkSpend(mint, genesisState, { badChild: true })
+check(!fBadChild.ok, '★★★ a fork CANNOT RELAX ITS OWN RULES (forkable flipped)')
+
+const fNotForker = await forkSpend(mint, genesisState, { childNotForker: true })
+check(!fNotForker.ok, '⚠ the child must carry the lineage the covenant computed')
+
+
+// ════ ★★★ DEEPER THAN N — the test that would have caught the eviction ══════════════════════════
+// ⚠⚠ With N=3 the lineage register is full after three forks. If the creator lived in that register
+//    he would be shifted out at fork 3 and never paid again. He is a BAKED LITERAL instead, so this
+//    walks past the point where that used to happen and demands he still be paid.
+console.log('\n  ── a lineage deeper than the register ──')
+
+let cur = mint, curState: any = genesisState, forked = 0, vout = 0
+for (let k = 1; k <= LEVELS + 2; k++) {
+  const r = await forkSpend(cur, curState, { vout })
+  if (!r.ok) { check(false, `fork ${k} from depth ${curState.depth}`, r.why); break }
+  forked++
+  cur = r.tx; curState = r.childState
+  vout = 1                     // ⚠ from here on, the thing being forked is the CHILD: output 1
+}
+check(forked === LEVELS + 2, `★★★ forked ${forked} deep — ${LEVELS + 2} levels, register is ${LEVELS}`,
+      `depth reached ${curState.depth}`)
+
+/* ⚠⚠ AND SAY WHAT THAT PROVES, rather than leaving it implied. At this depth the creator is NOT in
+   the lineage register any more — he has been shifted out of every slot — and the covenant still
+   demanded his output, because it comes from a baked literal instead. That is exactly the case the
+   old design got wrong, and no test could reach it until forking worked. */
+const regHasCreator = [...Array(LEVELS)].some(
+  (_, i) => hex(curState['p' + 'abcdefgh'[i]]) === hex(creator))
+check(!regHasCreator, '⚠ the creator has been shifted out of EVERY register slot by now',
+      `register: ${[...Array(LEVELS)].map((_, i) => hex(curState['p' + 'abcdefgh'[i]]).slice(0, 6)).join(' ')}`)
+check(f1.ok && forked === LEVELS + 2,
+      '★★★ …and every one of those forks still PAID THE CREATOR, or none would have validated')
+
 console.log(`\n  ${fail === 0 ? '✓' : '⚠'} ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

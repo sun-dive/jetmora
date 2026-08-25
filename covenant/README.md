@@ -207,3 +207,54 @@ rounding and no dust. The three `OP_MUL`s are 0/1 selector multiplications, whic
 
 **13/13** through the interpreter, now including: ★★★ *the creator cannot be left unpaid* and ★★★ *the
 creator's royalty cannot be redirected*.
+
+---
+
+## ✅ THE FORK PATH — 21/21, and the eviction is proved fixed
+
+**1,202 B at N=3. ⚠ Nothing minted.**
+
+★★★ **A stranger forks the log with no owner signature anywhere.** That is the claim the whole design
+rests on, now executing.
+
+| ★★★ a **stranger** forks — permissionless | no owner key involved at any point |
+| ★★★ a fork cannot take **one satoshi** from the holder | ⇒ *the forker pays, the holder never does* |
+| ★★★ a fork **cannot relax its own rules** | `forkable` flipped in the child ⇒ refused |
+| ⚠ claiming two children while creating one | refused |
+| ⚠ the child must carry the lineage the covenant computed | |
+| ★★★ **forked 5 deep with a register of 3** | ⇒ the creator is out of **every** slot and was still paid on all five |
+
+**Both rules read back in one line each:**
+
+```
+ 10 VERIFY SAMEBYTES(HASH160(pub), &H7777…) AND CHECKSIG(sig, pub) OR children - 1
+460 VERIFY BIN2NUM(newValue) >= BIN2NUM(t3) - 400 * (2 - children)
+```
+
+⇒ Line 460 *is* the rule: on an anchor the allowance is `maxFee`; on a fork `2 − children = 0`, so the
+parent comes out **whole**. ★ Both written as ARITHMETIC rather than branches — the same selector trick
+the BASIC uses, so there is nothing to balance.
+
+★★ **The child is COPIED, not rebuilt.** Four `SPLIT`s at offsets **derived from the compiler's layout**
+carve the parent's own scriptCode into head · depth · middle · payees · tail; only depth and the payees
+are replaced. ⇒ **`genesis`, `forkable` and the covenant code itself are never reconstructed, so there
+is nothing to reconstruct them wrongly.** That is why a fork cannot relax its own rules.
+
+### ⚠ Three bugs this path cost, all of them mine
+
+**1 · `extractScriptCodeFieldOps` CONSUMES the preimage.** The second call read the accumulator instead
+and produced garbage. ⇒ Fixed by keeping a copy the compiler is TOLD about — `'preimageCopy'` is in its
+stack model, so every depth after it is still measured **by name** rather than adjusted by hand.
+
+**2 · The funding input was never signed.** Invisible until a fork was forked, because `Spend` never
+serializes the whole transaction — only `prevTx.id()` does.
+
+**3 · The test hardcoded `depth: 1`** in the child, which is right exactly once.
+
+⚠⚠ **And for the second time, four refusals "passed" while the acceptance was broken.** They cannot
+count until the matching acceptance is green. That is now twice in one build.
+
+### ⏭ Still open
+
+⚠ `childdepth` is computed by the BASIC unconditionally and only used inside the fork branch — a few
+dead bytes on every anchor. Fixing it means touching the program, not the frame.

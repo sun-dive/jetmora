@@ -107,7 +107,14 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
   /* ⚠ The BASIC program's own stack contract, plus the two the frame's value rule and output binding
      reach for. Depths are read from the compiler's model BY NAME below — never counted by hand, which
      is what this project's predecessors did and it cost three bugs in one sitting. */
-  const probe: any = compileState(anchorSrc(p.levels), { fieldOffset, stack: [...ANCHOR_UNLOCK] })
+  /* ⚠⚠ 'preimageCopy' IS NAMED IN THE COMPILER'S MODEL, not left as an anonymous extra item.
+     `extractScriptCodeFieldOps` CONSUMES the preimage, and the fork path needs it a second time to
+     copy the parent's own script. ⇒ So a copy is kept — and because the compiler is told about it,
+     every depth after this point is still measured BY NAME rather than adjusted by hand.
+     ★ Naming it is the difference between a stack the model describes and one it merely tolerates. */
+  const probe: any = compileState(anchorSrc(p.levels), {
+    fieldOffset, stack: [...ANCHOR_UNLOCK, 'preimageCopy'],
+  })
 
   /* ⚠ THE STATE GOES IN FIRST as literal pushes — the only part of this script that differs between
      two instances of the same program. Everything after is identical, which is what makes a genesis
@@ -122,14 +129,28 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
   const ops: any[] = [
     ...head,
 
-    /* ── ★ AUTHORISE THE ANCHORER ───────────────────────────────────────────────────────────────
+    /* ── ★★ AUTHORISE THE ANCHORER — BUT ONLY ON THE ANCHOR PATH ────────────────────────────────
        ⚠⚠ FIRST, and adjacent to nothing else. *"Security state must not cross bytes you do not
-       control"* — so the signature check happens before any attacker-supplied byte has been touched,
-       and its result is consumed immediately rather than stashed. */
+       control"* — the check happens before any attacker-supplied byte has been touched and its
+       result is consumed immediately rather than stashed.
+
+       ★★★ AND IT IS CONDITIONAL, WHICH IS THE WHOLE POINT OF THE DESIGN.
+         ANCHOR  needs the owner's key, because SCRIPT CANNOT VALIDATE A ROOT — a root is asserted,
+                 not determined, so the covenant authorises the anchorer instead.
+         FORK    needs NOTHING. A buyer replicates to themselves, permissionlessly, and the holder
+                 plays no part because out0 comes back untouched.
+
+       ⚠ Expressed as ARITHMETIC, not a branch: `authOk OR forking`. Both paths leave one item, so
+         there is nothing to balance — the same trick the BASIC uses for its own selectors. */
     PN(depthOf(probe, 'pub')), op(OP.OP_PICK),
-    op(OP.OP_DUP), op(OP.OP_HASH160), pushData(p.owner), op(OP.OP_EQUALVERIFY),
-    PN(depthOf(probe, 'sig') + 1), op(OP.OP_PICK), op(OP.OP_SWAP),
-    op(OP.OP_CHECKSIG), op(OP.OP_VERIFY),
+    op(OP.OP_HASH160), pushData(p.owner), op(OP.OP_EQUAL),         // +1  ownerOk
+    PN(depthOf(probe, 'sig') + 1), op(OP.OP_PICK),                 // +2  sig
+    PN(depthOf(probe, 'pub') + 2), op(OP.OP_PICK),                 // +3  pub
+    op(OP.OP_CHECKSIG),                                            // +2  sigOk
+    op(OP.OP_BOOLAND),                                             // +1  authOk
+    PN(depthOf(probe, 'children') + 1), op(OP.OP_PICK),            // +2
+    op(OP.OP_1), op(OP.OP_SUB),                                    // +2  forking = children − 1
+    op(OP.OP_BOOLOR), op(OP.OP_VERIFY),                            //  0
 
     ...pushTxVerifyOps(c),                                   // the preimage is now genuine
 
@@ -140,6 +161,7 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
     op(OP.OP_SIZE), pushData([52]), op(OP.OP_SUB), op(OP.OP_SPLIT), op(OP.OP_NIP),
     pushData([8]), op(OP.OP_SPLIT), op(OP.OP_DROP), op(OP.OP_BIN2NUM), op(OP.OP_TOALTSTACK),  // alt: [HO, V]
 
+    op(OP.OP_DUP),                                           // ⚠ keep the preimage: the fork path re-reads it
     ...extractScriptCodeFieldOps(),                          // the scriptCode field, varint and all
     ...probe.ops,                                            // ← the BASIC: peel, run, rebuild
   ]
@@ -157,15 +179,31 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
        ⏭ THE FORK PATH WILL NEED `>= V` INSTEAD: a forker must leave the parent WHOLE, because every
          satoshi a fork costs comes from the buyer and none from the holder. ⇒ Two paths, two floors,
          and this is the line that will branch when the fork path lands. */
-    PN(d('newValue')), op(OP.OP_PICK), op(OP.OP_BIN2NUM),
-    op(OP.OP_FROMALTSTACK),                                  // V, from the preimage
-    PN(p.maxFee), op(OP.OP_SUB),
-    op(OP.OP_GREATERTHANOREQUAL), op(OP.OP_VERIFY),
+    PN(d('newValue')), op(OP.OP_PICK), op(OP.OP_BIN2NUM),    // +1  what the spender claims
+    op(OP.OP_FROMALTSTACK),                                  // +2  V, from the preimage
+    /* ★★★ THE FORKER PAYS, THE HOLDER NEVER DOES. On a fork the allowance is ZERO — the parent must
+       come out WHOLE — and on an anchor it is maxFee, which the covenant spends on its own miner fee.
+       ⇒ `maxFee × (1 − forking)`, written branch-free as `maxFee × (2 − children)`.
+       ⚠ Without this a forker could fund their own replication out of the holder's value, which would
+       make "the holder plays no active role" a description of a theft. */
+    PN(p.maxFee),                                            // +3
+    PN(d('children') + 3), op(OP.OP_PICK),                   // +4
+    op(OP.OP_2), op(OP.OP_SWAP), op(OP.OP_SUB),              // +4  (2 − children)
+    op(OP.OP_MUL), op(OP.OP_SUB),                            // +2  V − allowance
+    op(OP.OP_GREATERTHANOREQUAL), op(OP.OP_VERIFY),          //  0
 
     /* ── AND BIND IT ────────────────────────────────────────────────────────────────────────────
        out0 = value(8) ‖ varint(len) ‖ script. The rebuilt scriptCode FIELD already carries its own
        varint, which is why `extractScriptCodeFieldOps` hands back the field rather than the script. */
     PN(d('newValue')), op(OP.OP_PICK), op(OP.OP_SWAP), op(OP.OP_CAT),
+
+    /* ── ★★★ AND ON A FORK, THE CHILD ───────────────────────────────────────────────────────────
+       Built from the PARENT'S OWN scriptCode, re-extracted from the preimage, with exactly two
+       substitutions: depth + 1, and the shifted lineage register.
+       ⇒ Everything else — the genesis, the tree size, the royalty, the fork rule and the covenant
+       code itself — is carried across VERBATIM as byte slices. **A fork therefore cannot relax its
+       own rules**, because the rules are not rebuilt, they are copied. */
+    ...childOps(d, probe.layout, fieldOffset, p.levels),
 
     /* ── ★★★ THEN THE ROYALTIES — CONSTRUCTED HERE, NOT ACCEPTED FROM THE SPENDER ────────────────
        ⚠⚠ BINDING IS NOT ENFORCING, and the first version of this got it wrong. Taking the serialized
@@ -183,6 +221,63 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
     op(OP.OP_HASH256), op(OP.OP_FROMALTSTACK), op(OP.OP_EQUAL),
   )
   return { ops, state: probe, layout: probe.layout }
+}
+
+
+/**
+ * ★★★ THE CHILD OUTPUT, on a fork only.
+ *
+ * ⚠⚠ IT IS NOT REBUILT FROM FIELDS — it is the parent's own scriptCode with two slices replaced.
+ * Copying is what makes `forkable`, `genesis` and the covenant's code impossible to alter in a fork:
+ * they are never reconstructed, so there is nothing to reconstruct them wrongly.
+ *
+ * ⚠ Offsets are DERIVED FROM THE COMPILER'S LAYOUT, never counted by hand. Each field occupies
+ *   `1 + width` bytes (its push opcode, then its data).
+ *
+ * ⚠ The altstack is used for two of my own slices and nothing else. `hashOutputs` is already down
+ *   there; these are pushed and popped in strict pairs above it, and no attacker-supplied byte
+ *   crosses them. That is the condition the runbook sets, met deliberately rather than by luck.
+ */
+function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, levels: number): any[] {
+  const w = (n: string) => layout.find((f: any) => f.name === n).width
+  const HEAD = fieldOffset + w('genesis') + 1            // …through depth's own push opcode
+  const MID = ['treesize', 'royalty', 'forkable'].reduce((a, n) => a + 1 + w(n), 0)
+  const PAY = levels * (1 + w('pa'))
+  const slots = Array.from({ length: levels }, (_, i) => 'child' + 'p' + 'abcdefgh'[i])
+
+  const body: any[] = [
+    PN(d('preimageCopy')), op(OP.OP_PICK),               // +1  ⚠ a COPY — the first extraction ate it
+    ...extractScriptCodeFieldOps(),                      // +1  the parent's scriptCode, again
+    PN(HEAD), op(OP.OP_SPLIT),                           // +2  head ‖ rest
+    PN(w('depth')), op(OP.OP_SPLIT), op(OP.OP_NIP),      // +2  ⚠ the OLD depth dropped here
+    PN(MID), op(OP.OP_SPLIT),                            // +3  head, mid, rest
+    PN(PAY), op(OP.OP_SPLIT), op(OP.OP_NIP),             // +3  ⚠ the OLD payees dropped here
+    op(OP.OP_TOALTSTACK), op(OP.OP_TOALTSTACK),          // +1  alt: [.., suf, mid]
+    /* head ‖ depth+1 */
+    PN(d('childdepth') + 1), op(OP.OP_PICK),
+    PN(w('depth')), op(OP.OP_NUM2BIN), op(OP.OP_CAT),
+    op(OP.OP_FROMALTSTACK), op(OP.OP_CAT),               // ‖ mid, verbatim
+  ]
+  for (const slot of slots) {
+    body.push(
+      pushData([w('pa')]), op(OP.OP_CAT),                // the payee's push opcode
+      PN(d(slot) + 1), op(OP.OP_PICK), op(OP.OP_CAT),    // ⚠ +1 for the child being held
+    )
+  }
+  body.push(
+    op(OP.OP_FROMALTSTACK), op(OP.OP_CAT),               // ‖ suffix, verbatim
+    /* ⚠ The child carries ONE satoshi. A covenant value is never 0 — a 0-value output is refused as
+       dust before the script is evaluated at all — and the floor is a floor, so any later anchor may
+       top it up. The forker pays it. */
+    pushData([...Buffer.from('0100000000000000', 'hex')]), op(OP.OP_SWAP), op(OP.OP_CAT),
+    op(OP.OP_CAT),                                       //  0  onto the accumulator
+  )
+  /* ⚠ BALANCED BY CONSTRUCTION: the true arm nets zero — it builds the child and concatenates it
+     away — and the false arm does nothing at all. */
+  return [
+    PN(d('children')), op(OP.OP_PICK), op(OP.OP_1), op(OP.OP_SUB),
+    op(OP.OP_IF), ...body, op(OP.OP_ENDIF),
+  ]
 }
 
 /**
