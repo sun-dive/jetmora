@@ -51,7 +51,7 @@ export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT) {
   // ⚠ Identifiers take LETTERS ONLY — `p1` is refused, correctly (BASIC.md). Hence pa, pb, pc…
   const slot = i => 'p' + 'abcdefgh'[i]
 
-  const dims = Array.from({ length: levels }, (_, i) => `DIM ${slot(i)}%20`).join('\n')
+  const dims = Array.from({ length: levels }, (_, i) => `DIM ${slot(i)}$20`).join('\n')
 
   // ★★ The CHILD's payees: the forker enters at slot 0 and the oldest falls off the end. ⚠ Not
   //    selector arithmetic any more — this block only ever describes a child, and the frame binds it
@@ -63,6 +63,19 @@ export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT) {
   return `
 REM ═══ THE ANCHOR'S STATE ═════════════════════════════════════════════════
 REM  depth is the trunk/branch discriminator AND the shift register's index.
+REM  ★★★ genesis — the BRC-113 TOKEN ID of this log:
+REM    SHA256(genesisTxId ‖ outputIndex LE ‖ immutableChunkBytes)
+REM  ⚠⚠ A $ FIELD, NOT %. A hash is RAW BYTES, not a number — round-tripping
+REM  32 bytes through BIN2NUM/NUM2BIN is not identity: Script numbers are
+REM  sign-magnitude, so a high bit in the top byte reads NEGATIVE and leading
+REM  zeroes normalise away. It would have compiled clean and corrupted the
+REM  identity of any log whose token id happened to end in a byte >= 0x80.
+REM  ⚠ Same for the payee slots below: a hash160 is not a number either.
+REM  ⚠ Replicated unchanged into every branch forever, so a tip is recognisable
+REM  from ONE OUTPUT with no walk back to the root. ⇒ And the BRC-113 split is
+REM  the quine's split exactly: immutableChunkBytes here, tokenAttributes in
+REM  the mutable fields below.
+DIM genesis$32
 DIM depth%1
 DIM treesize%8
 DIM royalty%4
@@ -150,6 +163,8 @@ REM  ⚠ depth is NOT reassigned — out0 is the PARENT and keeps its depth. The
 REM  child descends, and childdepth above is what the frame binds to out1.
 REM  ⚠ forkable is never recomputed at all. It replicates unchanged into BOTH
 REM  outputs, which is the entire point: a fork cannot relax its own rules.
+REM  ⚠⚠ Nor is genesis. A covenant that could rewrite its own token id could
+REM  claim to be a different log — which is the one thing identity must refuse.
 `.trim()
 }
 
