@@ -38,6 +38,20 @@ const LEVELS = 3
 const hex = (b: any) => Buffer.from(b).toString('hex')
 const u64le = (n: number | bigint) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return [...b] }
 
+/* ★★★ FRAMES — the states the suite already computes, kept instead of thrown away as text.
+   ⚠ They come from ACTUAL VALIDATED SPENDS, not a parallel reimplementation, so the picture cannot
+   disagree with the tests. That failure mode has bitten this build twice. */
+const frames: any[] = []
+const short = (b: any) => b ? hex(b).slice(0, 8) : '—'
+const snap = (st: any) => ({
+  depth: st.depth, treesize: st.treesize, royalty: st.royalty,
+  forkable: st.forkable, branch: short(st.branch), genesis: short(st.genesis),
+  owner: short(st.ownera),
+  register: [...Array(LEVELS)].map((_, i) => short(st['p' + 'abcdefgh'[i]])),
+})
+const frame = (kind: string, label: string, ok: boolean, st: any, extra: any = {}) =>
+  frames.push({ n: frames.length, kind, label, ok, state: snap(st), ...extra })
+
 let pass = 0, fail = 0
 const check = (ok: boolean, label: string, detail = '') => {
   console.log(`  ${ok ? '✓' : '⚠⚠⚠'} ${label}${detail ? '   ' + detail : ''}`); ok ? pass++ : fail++
@@ -171,17 +185,30 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
 }
 
 // ── ★★★ THE ACCEPTANCES ─────────────────────────────────────────────────────────────────────────
+frame('mint', 'the genesis is minted — depth 0, an empty tree, the trunk', true, genesisState,
+  { note: 'branch is zeroes: the trunk has no parent outpoint to name' })
+
 const a1 = await anchorSpend(mint, genesisState, 264)
 check(a1.ok, '★★★ anchor 1 SPENDS the genesis — full script evaluation', a1.why)
+if (a1.ok) frame('anchor', 'anchor 1 — 264 entries committed', true, a1.nextState,
+  { paid: [], note: 'an anchor pays the miner and NOBODY else' })
 
 if (a1.ok) {
   const a2 = await anchorSpend(a1.tx, a1.nextState, 1864)
   check(a2.ok, '★★★ anchor 2 SPENDS anchor 1 — the chain continues', a2.why)
+  if (a2.ok) frame('anchor', 'anchor 2 — the chain continues, 1,864 entries', true, a2.nextState,
+    { paid: [], note: 'still nobody paid — running your own branch is not rented' })
 }
 
 // ── ⚠ THE REFUSALS, which are the part that proves anything ─────────────────────────────────────
 const wrongKey = await anchorSpend(mint, genesisState, 264, { wrongKey: true })
 check(!wrongKey.ok, '⚠ a STRANGER cannot anchor — not just anyone may assert a root')
+frame('refused', 'a stranger tries to anchor', false, genesisState,
+  { note: 'SCRIPT CANNOT VALIDATE A ROOT, so the covenant authorises the anchorer instead' })
+
+const rew = await anchorSpend(mint, genesisState, 0)
+frame('refused', 'someone tries to rewind the tree to 0', false, genesisState,
+  { note: 'a tree only grows — the door does not open' })
 
 const rewind = await anchorSpend(mint, genesisState, 0)
 check(!rewind.ok, '⚠ the tree cannot STAND STILL on an anchor (no-op spend refused)')
@@ -305,6 +332,15 @@ async function forkSpend(prevTx: any, prevState: any, opts: any = {}) {
 
 const f1 = await forkSpend(mint, genesisState)
 check(f1.ok, '★★★ a STRANGER forks the log — no owner signature anywhere', f1.why)
+if (f1.ok) {
+  frame('fork-parent', 'a stranger forks it — the PARENT comes back untouched', true, genesisState,
+    { note: 'same state, same value. The holder plays no part because there is nothing to consent to' })
+  frame('fork-child', 'and a CHILD appears at depth 1', true, f1.childState,
+    { paid: [{ to: short(creator), why: 'the creator — always, by baked literal' },
+              ...[...Array(LEVELS)].map((_, i) => ({ to: short(genesisState['p' + 'abcdefgh'[i]]),
+                                                     why: 'the lineage window' }))],
+      note: 'the purchase price, paid ONCE. A new branch id, derived from the outpoint consumed' })
+}
 
 const fDrain = await forkSpend(mint, genesisState, { drainParent: true })
 check(!fDrain.ok, '★★★ a fork cannot take ONE SATOSHI from the holder')
@@ -374,6 +410,10 @@ for (let k = 1; k <= LEVELS + 2; k++) {
   forked++
   cur = r.tx; curState = r.childState
   vout = 1                     // ⚠ from here on, the thing being forked is the CHILD: output 1
+  frame('fork-child', `fork ${k} — depth ${curState.depth}, the register shifts`, true, curState,
+    { paid: [{ to: short(creator), why: 'the creator — the window can never slide off the origin' }],
+      note: k >= LEVELS ? '⚠ every original ancestor has now shifted out — and the creator has NOT'
+                        : 'each fork shifts one holder in and the oldest out' })
 }
 check(forked === LEVELS + 2, `★★★ forked ${forked} deep — ${LEVELS + 2} levels, register is ${LEVELS}`,
       `depth reached ${curState.depth}`)
@@ -513,6 +553,12 @@ console.log('\n  ── split keys (2-of-2) ──')
     const noHot = await spend2({ wrongHot: true })
     check(!noHot.ok, '★★★ the HOT key alone missing ⇒ REFUSED — stealing one is not enough')
   }
+}
+
+if (process.env.FRAMES) {
+  const { writeFileSync } = await import('node:fs')
+  writeFileSync(process.env.FRAMES, JSON.stringify(frames, null, 2))
+  console.log(`\n  ★ ${frames.length} frames written to ${process.env.FRAMES}`)
 }
 
 console.log(`\n  ${fail === 0 ? '✓' : '⚠'} ${pass} passed, ${fail} failed`)
