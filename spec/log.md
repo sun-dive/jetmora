@@ -502,6 +502,37 @@ authorship out of the payee register is reading a nomination as a fact.
 ★ ⇒ With §4bis.4e this completes the picture: **payment is a window, provenance is the chain, and
 control is neither.**
 
+### 4bis.4f-ii ⚠★★ A FORK HAPPENS ON BSV, NOT ON JETMORA — and what it costs
+
+**His question: does a fork happen on jetmora at all?** ⇒ **No, and it cannot.**
+
+★★★ **Entries are free; IDENTITY is not.** A branch is named by `(genesis, branch)`, and `branch` is
+HASH256 of **the outpoint a fork consumed** — so creating one means **spending an outpoint**, which is
+a BSV transaction and carries a BSV miner fee.
+
+⚠ You *can* copy a tree to another host and keep appending (§4bis.4a). But both copies would carry the
+**same `log_id`**, so they would be indistinguishable and would read as **EQUIVOCATION, not as a fork**
+(§4d.5). ⇒ **A branch without a covenant is not a branch. It is a duplicate.**
+
+**⇒ HOSTING IS FREE AND PORTABLE. IDENTITY COSTS BSV.**
+
+**Measured at 100 sat/KB, N=3, 2-of-2 — a covenant script is 1,377 B:**
+
+| an **anchor** | 3,371 B ⇒ **338 sat** (~$0.20) |
+| a **fork** | 4,759 B ⇒ **476 sat** (~$0.29) ⚠ it carries **TWO** covenant scripts, parent and child |
+| royalties on top | 1 + N satoshis |
+
+⚠⚠ **THE COVENANT MADE ANCHORING ~12× MORE EXPENSIVE.** The first anchor's 88-byte PushDrop cost
+**29 sat**; this costs **338**. ⇒ That is the price of *enforcement* rather than *commitment*, and it
+is worth paying — but it is a real number and it changes the anchoring cadence calculation.
+★ The **preimage dominates**: `OP_PUSH_TX` must be handed the whole sighash preimage, which itself
+contains the 1,377-byte `scriptCode`.
+
+⚠ **And it is the founding fear, arriving where it can still reach:** jetmora escapes a fee floor for
+its own operations, **but not for its anchor layer, because that layer is BSV.** If BSV's fee policy
+moves, anchoring and forking move with it. ⇒ Nothing minted becomes unspendable — the covenant sets no
+fee bound (§6.1a-i) — but the CADENCE is a cost decision, permanently.
+
 ### 4bis.4g ✅ A FORK NEEDS NO FEE TO THE PARENT — and proposing one was a mistake
 
 **A fork takes NOTHING from the parent.** ⇒ out0 returns with identical state and identical value
@@ -521,8 +552,9 @@ replication permanently more expensive to prevent a problem that does not exist.
 transaction, at O(n) API calls. ⇒ The operator never walks — they know their own tip.
 
 ⚠ **RECORDED SO IT IS NOT RE-PROPOSED.** The reasoning that leads back to a fork fee is *"forking is
-nearly free, therefore it should cost more"* — and the premise is right while the conclusion does not
-follow. **Cheap replication is the design, not a leak in it.**
+nearly free, therefore it should cost more"* — and ⚠ **the premise is not even right**: a fork costs
+**~476 sat** in BSV miner fees (§4bis.4f-ii), because it is a BSV transaction carrying two covenant
+scripts. ⇒ It is CHEAP, not free, and cheap replication is the design rather than a leak in it.
 
 ### 4bis.5 ⏭ Open
 
