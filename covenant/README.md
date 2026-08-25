@@ -70,3 +70,37 @@ ended in a byte ≥ 0x80. ★ The fix is also **24 B smaller**: the bug was spen
 npx tsx covenant/compile.mts      # sizes
 npx tsx covenant/read-back.mts    # ⚠ the listing — read this before minting anything
 ```
+
+---
+
+## ⏳ THE FRAME — status, honestly
+
+**Built and executing. NOT yet validating.** `covenant/anchorFrame.mts` · `covenant/anchor-spend-test.mts`
+
+| the lock assembles | ✅ **1,004 B** at N=3 |
+| the script RUNS — every `VERIFY` passes | ✅ signature · no-rewind · fork rule · royalty rule · value floor |
+| ⏳ the final output binding | ⚠ `HASH256(out0 ‖ royalties ‖ spenderOutputs) ≠ hashOutputs` |
+| ⏭ the fork path | not started |
+
+⚠⚠ **The four "refusals" in the test are NOT YET EVIDENCE.** While the acceptance fails, they may all be
+failing for that same reason rather than for the reasons they name. ⇒ Bootcamp rule 2, and they stay
+provisional until anchor 1 validates.
+
+### ⚠ What the frame work turned up
+
+★★★ **@bsv/sdk's `Spend` is STRICTER THAN THE NETWORK on minimal push.** `compileState` and `PN` emit
+`{op:1,data:[n]}` for small numbers rather than `OP_1..OP_16`. ⇒ **Checked against the chain: the live
+battery genesis `18e31936…` carries 145 such pushes, values 0–16, mined 1,600+ blocks deep.**
+⚠ So the test sets `verifyFlags: ['UTXO_AFTER_CHRONICLE']` — matching consensus, not relaxing a real
+rule. The alternative was rewriting compiler output, which BASIC.md forbids outright.
+
+★ **`depth` and `forkable` are 2 bytes, not 1** — a fixed-width 1-byte field holding 0–16 serialises as
+a non-minimal push. Two bytes costs ~2 B and removes the dependency on a contested rule.
+
+⚠ **The value rule belongs to the FRAME, not to BASIC.** `V` is read from the preimage, which BASIC
+cannot see. Declaring `V`/`newv` on the program's stack made the compiler measure depths for two values
+the frame never pushes, and **every `OP_PICK` after them was wrong.**
+
+⚠ **Three of my own errors on the way in, all the same shape** — a hand-rolled `{op: len, data}` where
+102 means `OP_IF`; `PN` where an unlocking script needs a truly minimal push; a **double** sha256 handed
+to `sign()` where one was wanted. ⇒ Each fails silently and far from its cause.

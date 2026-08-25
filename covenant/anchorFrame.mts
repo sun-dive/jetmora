@@ -1,0 +1,195 @@
+// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+//
+// ★★★ THE ANCHOR COVENANT'S FRAME — the part BASIC cannot say.
+//
+// ⚠ LICENCE. An anchor IS a BSV transaction, so using the Open BSV v6 compiler and SDK here is use ON
+//   BSV. The compiler is USED, never edited, and no bundle any page loads is rebuilt from here.
+//
+// `basicCovenant.ts` is explicit that its own frame is a default rather than a law: *"the shell, the
+// depot and the battery each answer 'what must my output be?' differently."* ⇒ The anchor's answer is
+// its own, and it differs from the default in exactly two ways:
+//
+//   1 ★ IT NEEDS A SIGNATURE, and the reason is precise. A covenant can check anything it can COMPUTE,
+//     and it cannot compute a merkle root — the tree is not in the transaction. A root is ASSERTED,
+//     not determined. ⇒ So the covenant AUTHORISES the anchorer instead of validating the claim, which
+//     is the same shape as §4.1, where the log does not validate either.
+//     ⚠⚠ Without this, ANY passer-by could anchor ANY root, and a single vandal spending the tip would
+//     permanently kill a non-forkable log — its successor output is gone and cannot be recreated.
+//
+//   2 ★★ ROYALTY OUTPUTS. N ancestors are paid on every anchor, and `hashOutputs` is what makes that
+//     unavoidable rather than merely agreed. ⇒ Permissionless royalties enforced by proof of work.
+//
+// ── ⏭ WHAT THIS FILE DOES NOT YET DO ──────────────────────────────────────────────────────────────
+// The FORK path. ⇒ When it lands it will VERIFY the child the forker supplies rather than CONSTRUCT
+// it — the runbook's own closing lesson, *"branches can become assertions … it enforces the same thing
+// by refusing instead of choosing"*. A wrong child then produces NO FORK rather than a wrong one, and
+// it is far cheaper in script than a second rebuild.
+import {
+  compileState, stateChunks, scriptCodeVarIntSize,
+} from '../../grafverse/mint/src/basic.ts'
+import { pushTxConstants, pushTxVerifyOps, pushData } from '../../grafverse/mint/src/pushtx.ts'
+import { extractHashOutputsOps, extractScriptCodeFieldOps } from '../../grafverse/mint/src/covenant.ts'
+import { PN } from '../../grafverse/mint/src/covenantAsm.ts'
+import { OP, LockingScript } from '../../grafverse/mint/node_modules/@bsv/sdk/dist/esm/mod.js'
+import { anchorSrc, ANCHOR_STACK } from './anchorSrc.mjs'
+
+const op = (c: number) => ({ op: c })
+
+/**
+ * ⚠⚠ THE UNLOCKING CONTRACT, WRITTEN ONCE. Bottom first.
+ *
+ * Both the compiler's model and the pre-program signature check measure depths against this, so it
+ * MUST have exactly one definition. ⇒ Writing it twice is how the depot's predecessor got three bugs
+ * in one sitting: two lists that agree today and drift the moment a name is added.
+ */
+export const ANCHOR_UNLOCK = [
+  'sig', 'pub', 'royaltyOuts', ...ANCHOR_STACK, 'spenderOutputs', 'newValue',
+] as const
+
+/**
+ * ⚠ SIGHASH_ALL | FORKID. NOT ANYONECANPAY.
+ *
+ * The anchor path binds every input, deliberately. ⚠ Under ANYONECANPAY `hashPrevouts` is zeroes, so a
+ * signature would be replayable against a different funding set — and this signature is the ONLY thing
+ * standing between the log and anyone anchoring anything.
+ * ⏭ The FORK path will want ANYONECANPAY, because a forker must be able to add their own funding to
+ *   somebody else's tip without invalidating anything. ⇒ Two paths, two scopes, and that is a real
+ *   design consequence rather than an oversight.
+ */
+export const ANCHOR_SCOPE = 0x41
+
+export interface AnchorFrameParams {
+  /** One entry per DIM, by name: genesis, depth, treesize, royalty, forkable, and the N payees. */
+  state: Record<string, number | number[]>
+  /** N — lineage levels. ⚠ Fixed at genesis; it changes the script's SHAPE, not just its contents. */
+  levels: number
+  /** hash160 of the key that may anchor this branch. */
+  owner: number[]
+  /** ⚠ The most an anchor may pay a miner. NO DEFAULT — the covenant's whole drain surface. */
+  maxFee: number
+  fieldOffset?: number
+}
+
+/**
+ * The locking script, as ops.
+ *
+ * ── the stack the unlocking script must leave, bottom first ────────────────────────────────────────
+ * ```
+ *   sig            the owner's signature      ⚠ the anchor path's authorisation
+ *   pub            the owner's public key
+ *   royaltyOuts    the N serialized royalty outputs, already concatenated
+ *   forker         hash160 — unread on this path, but the model must know it is there
+ *   wantroyalty    what the spender asks the royalty to become (⚠ only the trunk may move it)
+ *   children       how many covenant outputs this spend creates. 1 on the anchor path
+ *   newtreesize    the tree size being anchored
+ *   spenderOutputs the outputs after ours — change, or nothing
+ *   newValue       8 bytes LE: what our own output will carry
+ *   preimage       the sighash preimage
+ * ```
+ */
+export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; layout: any[] } {
+  const c = pushTxConstants(ANCHOR_SCOPE)
+  const fieldOffset = p.fieldOffset ?? 1
+  if (p.owner.length !== 20) throw new Error(`the owner must be a 20-byte hash160, got ${p.owner.length}`)
+
+  /* ⚠ The BASIC program's own stack contract, plus the two the frame's value rule and output binding
+     reach for. Depths are read from the compiler's model BY NAME below — never counted by hand, which
+     is what this project's predecessors did and it cost three bugs in one sitting. */
+  const probe: any = compileState(anchorSrc(p.levels), { fieldOffset, stack: [...ANCHOR_UNLOCK] })
+
+  /* ⚠ THE STATE GOES IN FIRST as literal pushes — the only part of this script that differs between
+     two instances of the same program. Everything after is identical, which is what makes a genesis
+     and its successors THE SAME COVENANT. */
+  const head: any[] = [...stateChunks(probe.layout, p.state)]
+  /* …and is dropped immediately. The script does not READ its own literals; it reads its scriptCode
+     out of the preimage, which is the only copy a miner has verified. */
+  const pairs = Math.floor(probe.layout.length / 2)
+  for (let i = 0; i < pairs; i++) head.push(op(OP.OP_2DROP))
+  if (probe.layout.length % 2) head.push(op(OP.OP_DROP))
+
+  const ops: any[] = [
+    ...head,
+
+    /* ── ★ AUTHORISE THE ANCHORER ───────────────────────────────────────────────────────────────
+       ⚠⚠ FIRST, and adjacent to nothing else. *"Security state must not cross bytes you do not
+       control"* — so the signature check happens before any attacker-supplied byte has been touched,
+       and its result is consumed immediately rather than stashed. */
+    PN(depthOf(probe, 'pub')), op(OP.OP_PICK),
+    op(OP.OP_DUP), op(OP.OP_HASH160), pushData(p.owner), op(OP.OP_EQUALVERIFY),
+    PN(depthOf(probe, 'sig') + 1), op(OP.OP_PICK), op(OP.OP_SWAP),
+    op(OP.OP_CHECKSIG), op(OP.OP_VERIFY),
+
+    ...pushTxVerifyOps(c),                                   // the preimage is now genuine
+
+    op(OP.OP_DUP), ...extractHashOutputsOps(), op(OP.OP_TOALTSTACK),          // alt: [HO]
+    /* The value of the output being SPENT sits 52 bytes from the end of the preimage — the covenant's
+       current balance, and the only place it can be read from honestly. */
+    op(OP.OP_DUP),
+    op(OP.OP_SIZE), pushData([52]), op(OP.OP_SUB), op(OP.OP_SPLIT), op(OP.OP_NIP),
+    pushData([8]), op(OP.OP_SPLIT), op(OP.OP_DROP), op(OP.OP_BIN2NUM), op(OP.OP_TOALTSTACK),  // alt: [HO, V]
+
+    ...extractScriptCodeFieldOps(),                          // the scriptCode field, varint and all
+    ...probe.ops,                                            // ← the BASIC: peel, run, rebuild
+  ]
+
+  /* ── THE VALUE RULE ─────────────────────────────────────────────────────────────────────────────
+     The only thing standing between a covenant and being emptied one fee at a time. */
+  const a: string[] = probe.stack.slice()
+  const d = (name: string): number => {
+    const i = a.lastIndexOf(name)
+    if (i < 0) throw new Error(`anchorFrame: the compiler's model has no '${name}' — the contract drifted`)
+    return a.length - 1 - i
+  }
+  ops.push(
+    /* ⚠ THE ANCHOR PATH pays its own fee out of the covenant, so the floor is V − maxFee.
+       ⏭ THE FORK PATH WILL NEED `>= V` INSTEAD: a forker must leave the parent WHOLE, because every
+         satoshi a fork costs comes from the buyer and none from the holder. ⇒ Two paths, two floors,
+         and this is the line that will branch when the fork path lands. */
+    PN(d('newValue')), op(OP.OP_PICK), op(OP.OP_BIN2NUM),
+    op(OP.OP_FROMALTSTACK),                                  // V, from the preimage
+    PN(p.maxFee), op(OP.OP_SUB),
+    op(OP.OP_GREATERTHANOREQUAL), op(OP.OP_VERIFY),
+
+    /* ── AND BIND IT ────────────────────────────────────────────────────────────────────────────
+       out0 = value(8) ‖ varint(len) ‖ script. The rebuilt scriptCode FIELD already carries its own
+       varint, which is why `extractScriptCodeFieldOps` hands back the field rather than the script. */
+    PN(d('newValue')), op(OP.OP_PICK), op(OP.OP_SWAP), op(OP.OP_CAT),
+
+    /* ── ★★ THEN THE ROYALTIES, AND THEY ARE NOT OPTIONAL ───────────────────────────────────────
+       ⚠ They are concatenated INSIDE the hash that `hashOutputs` must equal, so a spend that omits
+       them does not fail a rule — IT CANNOT BE CONSTRUCTED. That is the whole claim: the script has
+       no branch that leaves them out.
+       ⚠ Their CONTENTS are checked separately (⏭ not yet — see the note at the head of this file);
+       binding them here is what makes that check load-bearing rather than advisory. */
+    PN(d('royaltyOuts')), op(OP.OP_PICK), op(OP.OP_CAT),
+
+    PN(d('spenderOutputs')), op(OP.OP_PICK), op(OP.OP_CAT),
+    op(OP.OP_HASH256), op(OP.OP_FROMALTSTACK), op(OP.OP_EQUAL),
+  )
+  return { ops, state: probe, layout: probe.layout }
+}
+
+/**
+ * Depth of a name BEFORE the program runs — measured against the one contract above, plus the preimage
+ * the unlocking script pushes last. ⚠ Never a hand-written number.
+ */
+function depthOf(_probe: any, name: string): number {
+  const pre: string[] = [...ANCHOR_UNLOCK, 'preimage']
+  const i = pre.lastIndexOf(name)
+  if (i < 0) throw new Error(`anchorFrame: no '${name}' in the unlocking contract`)
+  return pre.length - 1 - i
+}
+
+/**
+ * ⚠⚠ THE CIRCULAR OFFSET, resolved the only way it can be.
+ *
+ * `fieldOffset` is where field zero's DATA begins inside the scriptCode — and BIP143 puts the
+ * scriptCode's own varint LENGTH in front of it, so the offset depends on how long the finished script
+ * is, and the script is not finished while you are computing it. ⇒ Build once with a probe, measure,
+ * build again. `buildBasicLock` and `buildShellLock` do the same, for the same reason.
+ */
+export function buildAnchorLock(p: AnchorFrameParams): any {
+  const probeLen = new LockingScript(anchorLockOps({ ...p, fieldOffset: 1 }).ops).toBinary().length
+  const varInt = scriptCodeVarIntSize(probeLen)
+  return new LockingScript(anchorLockOps({ ...p, fieldOffset: varInt }).ops)
+}

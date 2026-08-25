@@ -62,6 +62,14 @@ export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT) {
 
   return `
 REM ═══ THE ANCHOR'S STATE ═════════════════════════════════════════════════
+REM  ⚠⚠ depth AND forkable ARE TWO BYTES WIDE, NOT ONE, AND THE REASON IS THE
+REM  PUSH ENCODING RATHER THAN THE RANGE. A fixed-width 1-byte field holding
+REM  0..16 serialises as a 1-byte push, which MINIMAL-PUSH says must be OP_0
+REM  or OP_1..OP_16 instead. @bsv/sdk's interpreter refuses it in a LOCKING
+REM  script; whether a real node does is UNTESTED — and this project already
+REM  knows that everything it believes about opcodes comes from a JavaScript
+REM  reimplementation. ⇒ Two bytes costs ~2 B and removes the dependency on
+REM  the answer, which is worth more than being right about a contested rule.
 REM  depth is the trunk/branch discriminator AND the shift register's index.
 REM  ★★★ genesis — the BRC-113 TOKEN ID of this log:
 REM    SHA256(genesisTxId ‖ outputIndex LE ‖ immutableChunkBytes)
@@ -76,10 +84,10 @@ REM  from ONE OUTPUT with no walk back to the root. ⇒ And the BRC-113 split is
 REM  the quine's split exactly: immutableChunkBytes here, tokenAttributes in
 REM  the mutable fields below.
 DIM genesis$32
-DIM depth%1
+DIM depth%2
 DIM treesize%8
 DIM royalty%4
-DIM forkable%1
+DIM forkable%2
 ${dims}
 
 REM ═══ TWO SPEND PATHS, AND ONLY ONE NEEDS A KEY ═════════════════════════
@@ -125,15 +133,13 @@ IF trunk = 1 THEN newroyalty = wantroyalty
 VERIFY newroyalty >= 1
 VERIFY forking * (newroyalty - royalty) = 0
 
-REM ═══ ⚠⚠ THE FORKER PAYS. THE HOLDER NEVER DOES. ════════════════════════
-REM  A fork costs real satoshis — the royalties, the child's own value and
-REM  the fee — and every one of them comes from the BUYER. So the parent must
-REM  come out WHOLE: out0 carries at least what it carried before.
-REM  ⇒ Without this line a forker could pay for their own replication out of
-REM  the holder's value, which would make "the holder plays no active role"
-REM  a description of a theft rather than of a courtesy.
-REM  ★ A FLOOR, not an equality — anyone may hand the parent back MORE.
-VERIFY newv >= V
+REM ═══ ⚠ THE FORKER PAYS — BUT NOT IN THIS FILE ═════════════════════════
+REM  A fork costs real satoshis and every one comes from the BUYER, so the
+REM  parent must come out WHOLE. ⚠⚠ THAT RULE LIVES IN THE FRAME, NOT HERE:
+REM  V is read out of the PREIMAGE, which BASIC cannot see. Declaring V and
+REM  newv on this program's stack made the compiler measure depths for two
+REM  values the frame never pushes, and every OP_PICK after them was wrong.
+REM  ⇒ Same split the depot uses. See anchorFrame.mts.
 
 REM ═══ DEPTH ══════════════════════════════════════════════════════════════
 REM  ⚠ The PARENT keeps its depth — out0 is unchanged. It is the CHILD that
@@ -174,8 +180,6 @@ REM  claim to be a different log — which is the one thing identity must refuse
  *    wrong place builds, runs, and compares the wrong bytes hundreds of opcodes later.
  */
 export const ANCHOR_STACK = [
-  'V',            // what this anchor holds now
-  'newv',         // what its successor at out0 will carry. ⚠ never less — see THE FORKER PAYS
   'forker',       // ★ hash160 of whoever is replicating. Enters the child's register at slot 0.
                   //   ⚠ On a plain anchor nothing reads it — but the model must know it is there.
   'wantroyalty',  // what the spender asks the royalty to become. ⚠ ignored unless this is the trunk
