@@ -239,10 +239,48 @@ limit, a proof of work, an allow-list. An operator SHOULD publish its policy.
 A log's limits — memory, execution time, entry size — are **operator policy and MUST NOT be protocol
 constants.** ⚠ A limit written into the protocol becomes a number nobody can promise to hold.
 
-## 4bis. ⏭ THE LOG GENESIS — proposed 25 Aug, not implemented
+## 4bis. THE LOG GENESIS — ✅ BUILT 25 Aug, and SMALLER than it was proposed
+
+⚠⚠ **THIS SECTION SHRANK WHEN IT WAS IMPLEMENTED. The separate genesis RECORD does not exist.**
+⇒ It was proposed as a document committed by hash, and building it showed there is nothing left for
+that document to hold: identity is one derived field, and every immutable setting is a field in the
+covenant. **See §4bis.0.**
 
 ⚠⚠ **A COVENANT HAS A GENESIS. A LOG DOES NOT, AND THREE SEPARATE REQUIREMENTS ALL NEED ONE.** Until it
 exists, a log is identified by its operator's key and its URL — both mutable, neither provable.
+
+### 4bis.0 ★★★ WHAT A GENESIS ACTUALLY IS — one field, and no document
+
+```
+genesis = SHA256(genesisTxId ‖ outputIndex LE)
+```
+
+**That is all of it.** BRC-113's derivation, minus its `immutableChunkBytes` term.
+
+★★ **The term is redundant HERE and only here.** It exists so that tampering with a token's immutable
+metadata breaks its id. ⇒ In a self-replicating covenant the metadata is a FIELD, peeled from the
+spending transaction's own `scriptCode` and rebuilt into the successor — **tampering is already
+impossible, so there is nothing left for the hash to protect.**
+
+⇒ ⚠ **No OP_RETURN. No published record. Nothing to fetch, lose, or disagree with.**
+
+### 4bis.0a ⚠⚠ CARRIED IS NOT ENFORCED — the distinction the whole section turns on
+
+The state travels as a **PushDrop**: literals pushed at the head of the locking script and dropped
+before anything runs. ⇒ **Anyone can READ it from a single output, with no lookup.** That much is free.
+
+⚠ But a PushDrop payload is inert. **Nothing stops a successor carrying something different**, because
+the script never looks at it.
+
+| **carried** | in the script, readable ⇒ ~3 bytes ⚠ **may drift** |
+| ★ **enforced** | ALSO peeled from the preimage and rebuilt ⇒ **~21 bytes more**, and it **cannot drift** |
+
+★★★ **An immutable setting MUST be enforced, not merely carried.** ⇒ *"A fork cannot relax its own
+rules"* is true only because `forkable` is REBUILT. Were it merely present, a fork could set it to
+anything and the covenant would not notice.
+
+⇒ **Three standards, each doing the part it is good at:** BRC-113 for identity across branches ·
+PushDrop for carriage · BRC-226 for enforcement.
 
 ### 4bis.1 Why it is needed — three arguments arriving independently
 
@@ -262,7 +300,11 @@ exists, a log is identified by its operator's key and its URL — both mutable, 
 **The rule this design has been using without stating it:**
 
 | **what may change over a log's life** | goes in the **HEAD** — `prune_level` is there for exactly this |
-| ★ **what must NEVER change** | goes in the **GENESIS** |
+| ★ **what must NEVER change** | goes in the **COVENANT, AS AN ENFORCED FIELD** (§4bis.0a) |
+
+⚠ *"Goes in the genesis"* was the original wording and it is now wrong — there is no genesis document
+to put anything in. **An immutable setting is a field the quine rebuilds**, which is what makes it
+immutable rather than merely stated.
 
 ⇒ `prune_level` changing is harmless: old heads record the old value. **A leaf-hash rule changing is
 not harmless — it invalidates every proof already issued** rather than describing it.
@@ -283,7 +325,7 @@ runs on hashes, so one entry may be revealed with its proof — proving it was i
 — **without opening the log.** ⇒ A manufacturer proves *this test passed* without publishing the suite;
 a laboratory proves *this analysis ran as pre-registered* without publishing the data.
 
-⇒ **`leaf_hash_covers` is chosen at genesis, and BOTH are permitted:**
+⇒ **✅ BUILT as the enforced field `leafcovers` (§4bis.0a). BOTH are permitted:**
 
 | **plaintext** | ★ a decrypting verifier checks inclusion **end to end**, nothing taken on trust ⚠ the log cannot compute its own leaves; the appender supplies them |
 | **stored bytes** | ★ the log computes leaves itself, everything works unchanged ⚠ a verifier must trust that the ciphertext decrypts to what is claimed |
@@ -300,7 +342,18 @@ private log's computational claims are checkable only by its own circle.
 
 | **the genesis** | ★ **shared by every branch.** One origin, one identity |
 | **the common prefix** | **not copied — the same tree.** Both branches prove against it |
-| **a branch** | `(genesis, fork height, operator key)` ⇒ what a reader names to say WHICH history |
+| ★ **a branch** | **`(genesis, branch)`** ⇒ what a reader names to say WHICH history |
+
+★★★ **`branch` = HASH256 of the PARENT OUTPOINT the fork consumed** — ✅ built 25 Aug, and it is
+DERIVED, never chosen. ⚠⚠ **An outpoint is spendable ONCE and a parent's tip moves with every fork, so
+no two forks ever consume the same one.** ⇒ **Two children can never be byte-identical.** The trunk's
+`branch` is zeroes: depth 0 has no parent outpoint to name.
+
+⚠ **That is a security property, not bookkeeping.** Under `SIGHASH_ANYONECANPAY` — which the anchor uses,
+so that any funder may join — `hashPrevouts` is zeroed, and two covenants identical in `scriptCode` and
+value would be **interchangeable**: one preimage would satisfy both, letting a single successor output
+discharge two inputs. **`branch` is what makes those twins impossible.**
+⇒ ⚠⚠⚠ **If `branch` is ever removed, the scope MUST return to `0x41` in the same change.**
 
 ★ This is git exactly: the repository is shared, a branch labels a divergence, every commit still
 traces to one root.
@@ -308,7 +361,8 @@ traces to one root.
 ⚠⚠ **AND IT SHARPENS §4d RATHER THAN MUDDYING IT.** Two heads are a **lie** if they are the same branch
 and incompatible. Two heads from **different branches of one genesis** are a **fork**.
 ⇒ The detector therefore needs one input it does not have: **which branch.** It currently takes a
-public key and assumes that identifies the history. It must take `(genesis, fork height, key)`.
+public key and assumes that identifies the history. **It must take `(genesis, branch, key)`** — and
+`branch` now exists (above), so this is no longer blocked on a design decision. ⏭ It remains unbuilt.
 
 ⚠⚠⚠ **A FORK MUST BE DECLARED AT OR BEFORE THE DIVERGENCE, NEVER CLAIMED AFTERWARDS.** Otherwise an
 operator signs two incompatible histories, is caught, and says *"that was a fork."*
@@ -391,10 +445,14 @@ buys — because it is the one decision that can never be revisited.
 
 ### 4bis.5 ⏭ Open
 
-· the genesis's serialization, and whether it is committed **in** the first anchor or in a transaction
-  the first anchor references
-· whether `anchor_policy` — which chains a log anchors to — is immutable or mutable. ⚠ Probably mutable
-· what else, if anything, is immutable enough to belong here
+✅ **RESOLVED — "the genesis's serialization, and whether it is committed in the first anchor or in a
+transaction the first anchor references."** ⇒ **NEITHER.** There is nothing to serialize: identity is
+one derived field and every immutable setting is a field in the covenant (§4bis.0).
+
+· whether `anchor_policy` — which chains a log anchors to — is immutable or mutable. ⚠ Probably mutable,
+  ⇒ in which case it belongs in the HEAD and not in the covenant at all
+· what else, if anything, is immutable enough to be worth **~21 bytes per anchor** (§4bis.0a). ⚠ That
+  price is the whole test now, and it is charged on every anchor of every branch, forever
 
 ## 4c. ⚠⚠ Vocabulary — there is no such thing as an unconfirmed entry
 
@@ -669,8 +727,8 @@ buys.
 
 ### 6.1a Anchors form a UTXO chain — PushDrop, not OP_RETURN
 
-⏭ **PROPOSED 24 Aug, not yet normative.** A modified BRC-113 carrying its commitment in a **PushDrop**
-output rather than `OP_RETURN`.
+✅ **BUILT 25 Aug as a COVENANT** (§6.1a-i). A modified BRC-113 carrying its commitment in a
+**PushDrop** output rather than `OP_RETURN`.
 
 ⚠ A commitment held in `OP_RETURN` data can be forged or omitted, and **two anchors may both CLAIM the
 same predecessor.** A PushDrop output is **spendable**, so anchor *n* does not cite anchor *n−1* — it
@@ -717,7 +775,28 @@ what a third party can later be made to accept about their ORDER, not whether th
 
 ⏭ **OPEN: recommended depth.**
 
-### 6.1a-i ★★★ TESTED 25 Aug — anchor 2 spends anchor 1, proved offline
+### 6.1a-i ✅ THE ANCHOR IS A COVENANT — built 25 Aug, 26/26, nothing minted
+
+**The first anchor's 88-byte PushDrop proved the chain. It could not enforce anything.**
+⇒ A PushDrop is inert: it CARRIES a commitment, and a spender may write whatever they like into the
+successor. The anchor is now a **BRC-226-style quine** — the state is peeled out of the spending
+transaction's own `scriptCode` and rebuilt into the successor, so it **cannot drift**. **1,285 bytes.**
+
+**What it enforces, every one of them tested through a script interpreter:**
+
+| ★ **anchoring needs the owner's key** | ⚠ because **SCRIPT CANNOT VALIDATE A ROOT** — a root is *asserted*, not determined. ⇒ The covenant AUTHORISES the anchorer instead, the same shape as §4.1 |
+| ★★★ **forking needs nothing at all** | a stranger replicates the log; out0 returns the parent **completely unchanged**, so there is nothing to consent to |
+| ★★★ **the forker pays, the holder never does** | `newValue >= V`. ⚠ There is no fee allowance: an anchorer and a forker both bring their own funding, and **an underpaying transaction is refused by the network anyway** — the covenant has no business duplicating a rule it does not own |
+| ★★★ **N ancestors + the creator are PAID** | not omittable, not redirectable, not short-payable. ⇒ **Permissionless royalties enforced by proof of work** |
+| ★★ **the creator is a BAKED LITERAL** | ⚠ he lived in the shifting register once, and was **evicted after N forks.** A literal cannot be shifted out |
+| ★★★ **a fork cannot relax its own rules** | the child is **COPIED** from the parent's own scriptCode with two substitutions ⇒ `genesis`, `forkable` and the covenant code are never *rebuilt*, so nothing can rebuild them wrongly |
+| **no rewind** | `treesize` only grows, and a fork must leave it unchanged |
+
+⚠ **Scope is `SIGHASH_ANYONECANPAY｜ALL｜FORKID`**, so any funder may join after the spend is assembled
+— proved by adding a late funder and requiring it **accepted** there and **refused** under `0x41`.
+⇒ ⚠⚠⚠ Safe **only** because `branch` makes twins impossible (§4bis.4).
+
+### 6.1a-ii ★★★ TESTED 25 Aug — anchor 2 spends anchor 1, proved offline
 
 ⚠ **A broadcast is not the test.** That a miner accepted a transaction says a node agreed; it does
 not say *why*. Running anchor 2's unlocking script **against anchor 1's locking script** says why,
@@ -758,6 +837,9 @@ individually provable ticks, roughly 145 kB** — in 32 bytes on a proof-of-work
 back, including the operator.
 
 #### ⚠ A note that is not normative, and is recorded because it is true
+
+⚠ **Superseded for future anchors by the covenant (§6.1a-i), which enforces rather than merely
+commits.** This records what was actually broadcast, and it remains true of that transaction.
 
 The locking script is **88 bytes exactly**:
 
@@ -1054,12 +1136,12 @@ not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
 
 ## 11. Version 1 summary of open items
 
-| §2 | genesis commitment serialization and on-chain envelope |
-
-| §6.1 | anchor transaction output format |
+| ~~§2~~ | ~~genesis commitment serialization and on-chain envelope~~ ⇒ ✅ **CLOSED 25 Aug: there is none.** Identity is one derived field and every immutable setting is an enforced field in the covenant (§4bis.0) |
+| ~~§6.1~~ | ~~anchor transaction output format~~ ⇒ ✅ **CLOSED 25 Aug**: a PushDrop covenant, 1,285 B, 26/26 (§6.1a-i) |
 | §6.2 | recommended anchor depth |
 | §7 | AST node encoding |
 | §9 | the `ERROR` statement's spelling in BASIC — the encoding is settled (§9.1–9.2) |
 | §4b | `OP_CHECKMULTISIG`, and `OP_CODESEPARATOR`'s effect on `scriptCode` |
+| §4d | the equivocation detector takes a key where it needs **`(genesis, branch, key)`**. ⚠ No longer blocked — `branch` exists (§4bis.4) — but still unbuilt |
 
 An implementation MUST NOT claim conformance to version 1 while any of these remain open.
