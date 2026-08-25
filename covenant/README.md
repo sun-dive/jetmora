@@ -167,3 +167,43 @@ bytes per anchor and becomes live on the fork path.
 after the compiled program. Both are independent, the spend test is 11/11, and nothing depends on the
 order — but **it is not yet explained**, and "it passes and I do not understand the listing" is exactly
 where a bug hides.
+
+---
+
+## ⚠⚠ THE CREATOR WAS BEING EVICTED — found 25 Aug, by his Phar Lap remark
+
+**A shift register drops its oldest entry. Mine was dropping the creator.**
+
+```
+genesis  [C, C, C]        C = the log's creator
+fork 1   [f1, C, C]
+fork 2   [f2, f1, C]
+fork 3   [f3, f2, f1]     ⚠⚠ THE CREATOR IS GONE, PERMANENTLY
+```
+
+⇒ **After N forks the original creator stopped being paid, forever** — silently contradicting the one
+rule the whole design rests on. The tests were 11/11 at the time, because none of them forked.
+
+★★★ **The fix is structural rather than logical: the creator's payee is a BAKED LITERAL.** It cannot
+be shifted out because it is not in the register. ⚠ The VALUE is still computed — the trunk may change
+the royalty, and baking that would freeze the price at mint — so **the amount is computed and the payee
+is not.**
+
+★ His pattern, from Phar Lap: **convert what cannot change into an absolute at the edge, and let the
+covenant stay simple.** ⇒ One push instead of a reconstruction, and it reads better too:
+
+```
+CAT(NUM2BIN(paid, 8), &H1976a914 c1c1…c1c1 88ac)      ← the whole payee, visible
+```
+
+### ⚠ Correcting the record on Phar Lap's two covenants
+
+`replicateTailV2Ops` computes `⌊P × pBps / 10000⌋` in script with `OP_MUL`/`OP_DIV` and notes that the
+*"reseller absorbs integer-division dust."* ⇒ **v2 NEVER WENT INTO PRODUCTION — v1's approach made it
+obsolete** (his words). So it is dead code, not a newer generation, and must not be used as a reference.
+
+★★ **This covenant reached the same answer independently: `OP_DIV` count is ZERO.** No division, so no
+rounding and no dust. The three `OP_MUL`s are 0/1 selector multiplications, which are exact.
+
+**13/13** through the interpreter, now including: ★★★ *the creator cannot be left unpaid* and ★★★ *the
+creator's royalty cannot be redirected*.

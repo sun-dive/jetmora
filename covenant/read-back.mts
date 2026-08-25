@@ -14,7 +14,7 @@ const payees = Object.fromEntries(
   Array.from({ length: LEVELS }, (_, i) => ['p' + 'abcdefgh'[i], creator]))
 
 const lock: any = buildAnchorLock({
-  levels: LEVELS, owner: Array(20).fill(0x77), maxFee: 400,
+  levels: LEVELS, owner: Array(20).fill(0x77), creator, maxFee: 400,
   state: { genesis: Array(32).fill(0x9a), depth: 0, treesize: 0, royalty: 1, forkable: 1, ...payees },
 })
 console.log(`  ── the anchor covenant · N=${LEVELS} · ${lock.toBinary().length} B · ${lock.chunks.length} chunks ──\n`)

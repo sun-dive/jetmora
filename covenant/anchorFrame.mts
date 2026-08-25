@@ -65,6 +65,17 @@ export interface AnchorFrameParams {
   levels: number
   /** hash160 of the key that may anchor this branch. */
   owner: number[]
+  /**
+   * ★★★ hash160 of the log's ORIGINAL CREATOR — paid on every anchor of every branch, forever.
+   *
+   * ⚠⚠ A BAKED LITERAL, DELIBERATELY, AND NOT A REGISTER SLOT. The lineage register shifts, and a
+   *    shift EVICTS its oldest entry: with N=3 the creator fell out at fork 3 and was never paid
+   *    again. That was a silent bug in a rule the whole design rests on. ⇒ A literal cannot be
+   *    shifted out, because it is not in the register. Structural, not logical.
+   * ★ His pattern, from Phar Lap's `bundleCovenant`: convert what cannot change into an absolute at
+   *   the edge and let the covenant stay simple.
+   */
+  creator: number[]
   /** ⚠ The most an anchor may pay a miner. NO DEFAULT — the covenant's whole drain surface. */
   maxFee: number
   fieldOffset?: number
@@ -91,6 +102,7 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
   const c = pushTxConstants(ANCHOR_SCOPE)
   const fieldOffset = p.fieldOffset ?? 1
   if (p.owner.length !== 20) throw new Error(`the owner must be a 20-byte hash160, got ${p.owner.length}`)
+  if (p.creator.length !== 20) throw new Error(`the creator must be a 20-byte hash160, got ${p.creator.length}`)
 
   /* ⚠ The BASIC program's own stack contract, plus the two the frame's value rule and output binding
      reach for. Depths are read from the compiler's model BY NAME below — never counted by hand, which
@@ -165,7 +177,7 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
        ★ So the covenant BUILDS them, from its own payee fields and its own royalty, and `hashOutputs`
        then makes them unavoidable. THAT is what "permissionless royalties enforced by proof of work"
        has to mean: the script has no branch that leaves them out. */
-    ...royaltyOps(d, p.levels),
+    ...royaltyOps(d, p.levels, p.creator),
 
     PN(d('spenderOutputs')), op(OP.OP_PICK), op(OP.OP_CAT),
     op(OP.OP_HASH256), op(OP.OP_FROMALTSTACK), op(OP.OP_EQUAL),
@@ -183,8 +195,19 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
  * ⚠⚠ Depths come from the compiler's model BY NAME, adjusted by exactly the number of items this code
  *   has itself pushed. Every CAT returns to the accumulator depth, so the adjustment stays local.
  */
-function royaltyOps(d: (n: string) => number, levels: number): any[] {
+function royaltyOps(d: (n: string) => number, levels: number, creator: number[]): any[] {
   const out: any[] = []
+  /* ★★★ THE CREATOR FIRST, AND FROM A LITERAL. Everything after the value is immutable — the varint,
+     the P2PKH template and the creator's own hash — so it is ONE push, not a reconstruction.
+     ⚠ The VALUE cannot be a literal: the trunk may change the royalty, and baking it would freeze the
+     price at mint. So the amount is computed and the payee is not. */
+  out.push(
+    PN(d('paid')), op(OP.OP_PICK),
+    op(OP.OP_8), op(OP.OP_NUM2BIN),
+    pushData([0x19, 0x76, 0xa9, 0x14, ...creator, 0x88, 0xac]),
+    op(OP.OP_CAT),
+    op(OP.OP_CAT),
+  )
   for (let i = 0; i < levels; i++) {
     const slot = 'pay' + 'p' + 'abcdefgh'[i]
     out.push(

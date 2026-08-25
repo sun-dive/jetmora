@@ -58,7 +58,7 @@ const genesisState = {
 }
 
 const lockFor = (st: any) =>
-  buildAnchorLock({ levels: LEVELS, owner: ownerHash, maxFee: MAXFEE, state: st })
+  buildAnchorLock({ levels: LEVELS, owner: ownerHash, creator, maxFee: MAXFEE, state: st })
 
 /** N royalty outputs, one per ancestor slot. ⚠ 1 sat minimum, never 0 — dust is refused before the
  *  script is ever evaluated, so a 0-value royalty would be a covenant that can never be spent. */
@@ -98,7 +98,13 @@ function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any
   const tx = new Transaction()
   tx.addInput({ sourceTransaction: prevTx, sourceOutputIndex: 0, sequence: 0xffffffff })
   tx.addOutput({ lockingScript: nextLock, satoshis: newValue })
-  // the royalties, and then nothing else — spenderOutputs is empty here
+  /* ★ THE CREATOR'S OUTPUT COMES FIRST — paid on every anchor of every branch, from a literal that
+     no shift can evict. */
+  if (!opts.omitCreator) {
+    tx.addOutput({ lockingScript: new P2PKH().lock(opts.wrongCreator ? Array(20).fill(0xdd) : creator),
+                   satoshis: prevState.royalty })
+  }
+  // then the lineage, and nothing else — spenderOutputs is empty here
   for (let i = 0; i < (opts.omitRoyalties ? 0 : LEVELS); i++) {
     /* ⚠ the saboteurs: pay somebody else, or pay them less. These are the ACTUAL attacks on a
        royalty — omitting it outright is the naive one. */
@@ -195,6 +201,14 @@ check(!drained.ok, '⚠ the covenant cannot be DRAINED past its value floor')
 /* ⚠ and a non-forkable log must refuse a fork outright */
 const noFork = anchorSpend(mint, { ...genesisState, forkable: 0 }, 264, { children: 2 })
 check(!noFork.ok, '★★ a NON-FORKABLE log refuses a second covenant output')
+
+/* ★★★ THE CREATOR'S ROYALTY — the rule the whole design rests on, and the one the shift register
+   silently broke. It is a baked literal now, so no shift can evict it. */
+const noCreator = anchorSpend(mint, genesisState, 264, { omitCreator: true })
+check(!noCreator.ok, '★★★ the CREATOR cannot be left unpaid')
+
+const badCreator = anchorSpend(mint, genesisState, 264, { wrongCreator: true })
+check(!badCreator.ok, '★★★ the CREATOR\'s royalty cannot be redirected')
 
 console.log(`\n  ${fail === 0 ? '✓' : '⚠'} ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
