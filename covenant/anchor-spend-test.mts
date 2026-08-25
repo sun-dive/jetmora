@@ -93,15 +93,19 @@ function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any
      "the forker pays, the holder never does", arriving on the anchor path. Here they come out of the
      maxFee headroom; a real anchor adds a funding input. ⇒ The covenant's own floor is V − maxFee and
      nothing else, which is what the frame enforces. */
-  const newValue = prevOut.satoshis - MAXFEE
+  const newValue = prevOut.satoshis - MAXFEE - (opts.drain ? 1 : 0)
 
   const tx = new Transaction()
   tx.addInput({ sourceTransaction: prevTx, sourceOutputIndex: 0, sequence: 0xffffffff })
   tx.addOutput({ lockingScript: nextLock, satoshis: newValue })
   // the royalties, and then nothing else — spenderOutputs is empty here
   for (let i = 0; i < (opts.omitRoyalties ? 0 : LEVELS); i++) {
-    tx.addOutput({ lockingScript: new P2PKH().lock(prevState['p' + 'abcdefgh'[i]]),
-                   satoshis: prevState.royalty })
+    /* ⚠ the saboteurs: pay somebody else, or pay them less. These are the ACTUAL attacks on a
+       royalty — omitting it outright is the naive one. */
+    const to = (opts.wrongPayee && i === 0) ? Array(20).fill(0xee) : prevState['p' + 'abcdefgh'[i]]
+    const sats = (opts.shortPay && i === 0) ? 0 : prevState.royalty
+    if (sats === 0) continue                                  // a 0-sat output is simply not created
+    tx.addOutput({ lockingScript: new P2PKH().lock(to), satoshis: sats })
   }
 
   const preimage = TransactionSignature.format({
@@ -125,10 +129,9 @@ function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any
     push([...(opts.wrongKey ? sig2 : sig)]),
     push([...(opts.wrongKey ? PrivateKey.fromRandom().toPublicKey().encode(true) as number[]
                             : pub.encode(true) as number[])]),
-    push(royalties),                                   // royaltyOuts
     push(Array(20).fill(0xf0)),                        // forker — unread on this path
     NUM(opts.wantRoyalty ?? prevState.royalty),        // wantroyalty  ⚠ a number: minimal push
-    NUM(1),                                            // children — one covenant output
+    NUM(opts.children ?? 1),                           // children — covenant outputs created
     NUM(newTreeSize),                                  // newtreesize  ⚠ the program subtracts it
     push([]),                                          // spenderOutputs — none
     push(u64le(newValue)),                             // newValue
@@ -177,6 +180,21 @@ check(!noRoyalty.ok, '★★ ROYALTIES CANNOT BE OMITTED — permissionless, enf
 
 const badSucc = anchorSpend(mint, genesisState, 264, { badSuccessor: true })
 check(!badSucc.ok, '⚠ the successor must carry the state the program computed')
+
+/* ★★ THE ATTACKS THAT MATTER. Omitting the royalty is the naive move; paying the wrong person, or
+   paying them less, is what someone would actually try. */
+const wrongPayee = anchorSpend(mint, genesisState, 264, { wrongPayee: true })
+check(!wrongPayee.ok, '★★★ the royalty cannot be REDIRECTED to another address')
+
+const shortPay = anchorSpend(mint, genesisState, 264, { shortPay: true })
+check(!shortPay.ok, '★★★ the royalty cannot be SHORT-PAID')
+
+const drained = anchorSpend(mint, genesisState, 264, { drain: true })
+check(!drained.ok, '⚠ the covenant cannot be DRAINED past its value floor')
+
+/* ⚠ and a non-forkable log must refuse a fork outright */
+const noFork = anchorSpend(mint, { ...genesisState, forkable: 0 }, 264, { children: 2 })
+check(!noFork.ok, '★★ a NON-FORKABLE log refuses a second covenant output')
 
 console.log(`\n  ${fail === 0 ? '✓' : '⚠'} ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

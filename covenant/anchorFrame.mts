@@ -43,7 +43,7 @@ const op = (c: number) => ({ op: c })
  * in one sitting: two lists that agree today and drift the moment a name is added.
  */
 export const ANCHOR_UNLOCK = [
-  'sig', 'pub', 'royaltyOuts', ...ANCHOR_STACK, 'spenderOutputs', 'newValue',
+  'sig', 'pub', ...ANCHOR_STACK, 'spenderOutputs', 'newValue',
 ] as const
 
 /**
@@ -155,18 +155,51 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
        varint, which is why `extractScriptCodeFieldOps` hands back the field rather than the script. */
     PN(d('newValue')), op(OP.OP_PICK), op(OP.OP_SWAP), op(OP.OP_CAT),
 
-    /* ── ★★ THEN THE ROYALTIES, AND THEY ARE NOT OPTIONAL ───────────────────────────────────────
-       ⚠ They are concatenated INSIDE the hash that `hashOutputs` must equal, so a spend that omits
-       them does not fail a rule — IT CANNOT BE CONSTRUCTED. That is the whole claim: the script has
-       no branch that leaves them out.
-       ⚠ Their CONTENTS are checked separately (⏭ not yet — see the note at the head of this file);
-       binding them here is what makes that check load-bearing rather than advisory. */
-    PN(d('royaltyOuts')), op(OP.OP_PICK), op(OP.OP_CAT),
+    /* ── ★★★ THEN THE ROYALTIES — CONSTRUCTED HERE, NOT ACCEPTED FROM THE SPENDER ────────────────
+       ⚠⚠ BINDING IS NOT ENFORCING, and the first version of this got it wrong. Taking the serialized
+       royalty outputs from the unlocking script and folding them into the hash means they cannot be
+       ALTERED — but nothing requires them to be PRESENT. A spender who pushes nothing and builds a
+       transaction with no royalty outputs satisfies it perfectly.
+       ⇒ Caught the moment the acceptance case started working, by a refusal that had been "passing"
+       for the wrong reason all along.
+       ★ So the covenant BUILDS them, from its own payee fields and its own royalty, and `hashOutputs`
+       then makes them unavoidable. THAT is what "permissionless royalties enforced by proof of work"
+       has to mean: the script has no branch that leaves them out. */
+    ...royaltyOps(d, p.levels),
 
     PN(d('spenderOutputs')), op(OP.OP_PICK), op(OP.OP_CAT),
     op(OP.OP_HASH256), op(OP.OP_FROMALTSTACK), op(OP.OP_EQUAL),
   )
   return { ops, state: probe, layout: probe.layout }
+}
+
+/**
+ * ★★ Build the N royalty outputs from the covenant's OWN state, and concatenate them onto the
+ * accumulator already holding out0.
+ *
+ * Each is a standard P2PKH output: `value(8) ‖ 0x19 ‖ OP_DUP OP_HASH160 <20> ‖ 0x88 0xac`.
+ * ⚠ The value is `paid` — the royalty in force for THIS anchor, not the one being set — converted at
+ *   runtime with OP_NUM2BIN, because a trunk may change it and a literal would freeze it.
+ * ⚠⚠ Depths come from the compiler's model BY NAME, adjusted by exactly the number of items this code
+ *   has itself pushed. Every CAT returns to the accumulator depth, so the adjustment stays local.
+ */
+function royaltyOps(d: (n: string) => number, levels: number): any[] {
+  const out: any[] = []
+  for (let i = 0; i < levels; i++) {
+    const slot = 'pay' + 'p' + 'abcdefgh'[i]
+    out.push(
+      PN(d('paid')), op(OP.OP_PICK),                       // +1: the royalty in force
+      op(OP.OP_8), op(OP.OP_NUM2BIN),                      // +1: as 8 little-endian bytes
+      pushData([0x19, 0x76, 0xa9, 0x14]),                  // +2: varint(25) ‖ DUP HASH160 PUSH20
+      op(OP.OP_CAT),                                       // +1
+      PN(d(slot) + 1), op(OP.OP_PICK),                     // +2: ⚠ +1 for the item being held
+      op(OP.OP_CAT),                                       // +1
+      pushData([0x88, 0xac]),                              // +2: EQUALVERIFY CHECKSIG
+      op(OP.OP_CAT),                                       // +1: the finished output
+      op(OP.OP_CAT),                                       // +0: onto the accumulator
+    )
+  }
+  return out
 }
 
 /**
@@ -191,5 +224,5 @@ function depthOf(_probe: any, name: string): number {
 export function buildAnchorLock(p: AnchorFrameParams): any {
   const probeLen = new LockingScript(anchorLockOps({ ...p, fieldOffset: 1 }).ops).toBinary().length
   const varInt = scriptCodeVarIntSize(probeLen)
-  return new LockingScript(anchorLockOps({ ...p, fieldOffset: varInt }).ops)
+  return new LockingScript(anchorLockOps({ ...p, fieldOffset: varInt + 1 }).ops)
 }

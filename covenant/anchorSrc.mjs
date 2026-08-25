@@ -60,6 +60,12 @@ export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT) {
     i === 0 ? `child${slot(0)} = forker` : `child${slot(i)} = ${slot(i - 1)}`,
   ).join('\n')
 
+  /* ⚠⚠ THE SHIFT CONSUMES THE PARENT'S PAYEES. `coalesce` moves a re-assigned variable, so after
+     `childpb = pa` the name `pa` is gone from the model — and `pc`, having nothing shift into it,
+     falls off the end entirely. ⇒ The frame pays the PARENT's payees, so it needs them under names
+     nothing reassigns. One alias each, taken BEFORE the shift. */
+  const keeps = Array.from({ length: levels }, (_, i) => `pay${slot(i)} = ${slot(i)}`).join('\n')
+
   return `
 REM ═══ THE ANCHOR'S STATE ═════════════════════════════════════════════════
 REM  ⚠⚠ depth AND forkable ARE TWO BYTES WIDE, NOT ONE, AND THE REASON IS THE
@@ -150,6 +156,8 @@ REM ═══ THE LINEAGE SHIFT REGISTER ═════════════
 REM  N slots, pre-filled with the creator at genesis, so the payee count is
 REM  CONSTANT at every depth and hashOutputs pins one shape.
 REM  ⚠ These are the CHILD's payees. The parent's are untouched.
+REM  ⚠⚠ The aliases come FIRST: the shift consumes the names it reads.
+${keeps}
 ${shifts}
 
 REM ═══ ⚠⚠ WHAT THE SUCCESSOR ACTUALLY CARRIES ════════════════════════════
@@ -162,6 +170,12 @@ REM
 REM  ★ And one assignment covers both paths: on a fork the VERIFY above has
 REM  already forced newtreesize = treesize, so this is a no-op there and an
 REM  advance on an anchor. No branch, no second program.
+REM  ★ paid — the royalty IN FORCE FOR THIS ANCHOR, kept before the field is
+REM  reassigned. ⚠⚠ It is the OLD value on purpose: a price change applies from
+REM  the NEXT anchor, so a trunk cannot raise the price and charge it in the
+REM  same spend. The frame builds the payee outputs from this.
+paid = royalty
+
 treesize = newtreesize
 royalty  = newroyalty
 

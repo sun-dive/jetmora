@@ -73,18 +73,43 @@ npx tsx covenant/read-back.mts    # ⚠ the listing — read this before minting
 
 ---
 
-## ⏳ THE FRAME — status, honestly
+## ✅ THE FRAME — WORKING, 11/11 through the script interpreter
 
-**Built and executing. NOT yet validating.** `covenant/anchorFrame.mts` · `covenant/anchor-spend-test.mts`
+**`covenant/anchorFrame.mts` · `covenant/anchor-spend-test.mts` · 1,072 B at N=3. ⚠ Nothing minted.**
 
-| the lock assembles | ✅ **1,004 B** at N=3 |
-| the script RUNS — every `VERIFY` passes | ✅ signature · no-rewind · fork rule · royalty rule · value floor |
-| ⏳ the final output binding | ⚠ `HASH256(out0 ‖ royalties ‖ spenderOutputs) ≠ hashOutputs` |
-| ⏭ the fork path | not started |
+| ★★★ anchor 1 spends the genesis · anchor 2 spends anchor 1 | the chain runs |
+| ⚠ a **stranger** cannot anchor | not just anyone may assert a root |
+| ⚠ the tree cannot **stand still** on an anchor | no no-op spends |
+| ★★ royalties cannot be **omitted** | |
+| ★★★ the royalty cannot be **REDIRECTED** | ⇒ the attack someone would actually try |
+| ★★★ the royalty cannot be **SHORT-PAID** | |
+| ⚠ the covenant cannot be **drained** past its floor | |
+| ★★ a **non-forkable** log refuses a second covenant output | |
 
-⚠⚠ **The four "refusals" in the test are NOT YET EVIDENCE.** While the acceptance fails, they may all be
-failing for that same reason rather than for the reasons they name. ⇒ Bootcamp rule 2, and they stay
-provisional until anchor 1 validates.
+### ⚠⚠ Two bugs the working acceptance case exposed
+
+**1 · `fieldOffset` was `varInt`, not `varInt + 1`.** I copied `buildBasicLock`'s first two lines **and
+its comment** but not its answer — the field's own one-byte push opcode. ⇒ Costs nothing at build time
+and everything at the LAST opcode: the peel reads a byte early, every field shifts, and the only symptom
+is the final `OP_EQUAL` returning false. ★ The depot's hardcoded `fieldOffset: 4` is exactly
+`varint(3) + 1`, which is how it was found.
+
+**2 · ★★★ BINDING IS NOT ENFORCING.** The first version took the serialized royalty outputs from the
+UNLOCKING SCRIPT and folded them into the hash. They could not be *altered* — and nothing required them
+to be *present*. A spender pushing nothing, with no royalty outputs, satisfied it perfectly.
+⇒ **The covenant now BUILDS them** from its own payee fields and its own royalty.
+⚠⚠ **It was invisible until the acceptance case passed**, because the refusal had been "passing" for
+the wrong reason all along — the unlocking script never parsed. ⇒ Bootcamp rule 2, from the inside.
+
+★ `paid` and `paypa…` exist because of the compiler's coalescing: the shift consumes the names it
+reads, so after `childpb = pa` the name `pa` is gone and `pc` falls off the end. **The frame pays the
+PARENT's payees, so it needs aliases taken before the shift.**
+
+★★ The output shape follows Phar Lap's proven `replicateTailV2Ops` — `value8 ‖ 0x19 76 a9 14 ‖ hash160
+‖ 88 ac`, with `OP_8 OP_NUM2BIN` for the value — rather than a fresh invention. His call: *"we already
+have this function working in Phar Lap."*
+
+---
 
 ### ⚠ What the frame work turned up
 
