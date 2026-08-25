@@ -353,6 +353,28 @@ different branch id. **"The script is the identity" names a BRANCH, not a LOG.**
 ⇒ BRC-226 has no answer because the question does not arise on a single line. **BRC-113 does**: a
 stable name every branch shares.
 
+### ⚠⚠ CORRECTION — the OP_RETURN comparison was a STRAWMAN (his, same day)
+
+*"If we use BRC-113 we're replacing the OP_RETURN with PushDrop."*
+
+⇒ BRC-113 as written uses OP_RETURN for metadata. **He never would**, and this covenant already does
+not — **it is a PushDrop already**: nine pushes then `OP_2DROP` × 4, the state readable by anyone from
+the output alone.
+
+★★★ So *"fetching a transaction to learn one bit is absurd"* was aimed at something nobody proposed.
+**With PushDrop there is no fetch either way**, and the whole in-the-script-versus-behind-a-hash framing
+collapses. ⇒ **The real question is not WHERE the data lives. It is whether the script ENFORCES it:**
+
+| **PushDrop alone** | pushed, dropped, never read ⇒ readable by anyone, ⚠ **but a successor may carry something different and nothing notices** |
+| ★ **PushDrop + quine** | the same bytes, PLUS peeled from the preimage and rebuilt into the successor ⇒ **cannot drift** |
+
+**Measured:** `leafcovers` cost **24 B**, of which the push itself is **3 B**.
+⇒ **Enforcement costs ~21 bytes per field**, and for an immutable rule it is not optional — *"a fork
+cannot relax its own rules"* holds **only because `forkable` is rebuilt**, not merely present.
+
+★ ⇒ **The anchor is three standards, each doing the part it is good at:** BRC-113's identity model ·
+PushDrop carriage · BRC-226 enforcement.
+
 ### ★★ Why BRC-113 should NOT carry the settings
 
 ⚠ The immutable set is about **two bits** — `leaf_hash_covers` and encryption. `N` and `forkable` are
@@ -365,12 +387,12 @@ the hash costs ZERO extra script bytes.
 | **BRC-113** | 0 extra script bytes · one OP_RETURN at genesis (~40 B once) · ⚠ **a transaction fetch + merkle proof to read one bit** |
 | ★ **BRC-226** (taken) | **+24 B on every anchor of every branch** · ✅ **no lookup, ever** |
 
-⇒ **On bytes alone BRC-113 wins after roughly two anchors.** The decision is NOT a cost decision.
-★ It turns on this: **fetching a transaction and verifying a merkle proof against a block header, to
-learn one bit, is absurd.** A verifier holding any tip should already know how to read it.
+⚠⚠ **BOTH OF THESE ROWS ARE SUPERSEDED BY THE CORRECTION ABOVE** — they assume an OP_RETURN, and this
+design uses PushDrop, so the metadata sits in the locking script under either standard. Kept because
+the wrong reasoning is worth seeing next to the right.
 
-⇒ **The rule, stated so it generalises:** in the script if it is SMALL and read OFTEN; behind a hash if
-it is LARGE or read RARELY. One bit, read on every verification ⇒ the script.
+⇒ **The rule that actually generalises:** an immutable setting must be **ENFORCED**, not merely
+**CARRIED**. Where it lives is settled by PushDrop; whether it can drift is settled by the quine.
 
 ### ★★★ And the hybrid dissolves the genesis record
 
