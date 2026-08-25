@@ -316,6 +316,40 @@ operator signs two incompatible histories, is caught, and says *"that was a fork
 backdated. ★ Same shape as everything else here: the escape hatch is real, and it is safe only because
 it cannot be applied retrospectively.
 
+### 4bis.4a ★★★ A BRANCH MAY GROW ON ANY HOST — the chain holds identity, not location
+
+**The genesis and the anchors live on BSV. The tree may grow anywhere.**
+
+⇒ §8 already states the principle for covenants — *"a covenant's script MUST NOT reference the log it
+runs in"*. ⚠ **It extends by one word: an ANCHOR's script MUST NOT reference the HOST.** A covenant that
+named its host would hand whoever runs that host a veto, which is the same freeze §8 exists to prevent.
+
+★★ **Three things already in this spec compose into cross-host forking. None of them is new:**
+
+| ★ **the tree is not the history** (§5c) | a fork carries the **TREE**, not the bodies ⇒ a year at 1,000 players/day is 51 GB of bodies but **3.87 MB of tree**. The retention design made this cheap before anyone asked for it |
+| ★★ **a pruned entry answers 410** (§5c.2) | a new host holds the tree, so it can still **prove**; it may not hold the body. ⇒ *"It existed and is still provable; it is simply no longer held here."* **That is the cross-host case exactly** |
+| ★★★ **port** (§8.1) | already tested against a hostile operator. A fork onto a new host is the same move made **voluntarily** — and ⚠ *a port from an ANCHORED root is FINAL*, so an anchored fork is too |
+
+⇒ ⚠ **So a branch on another host is not a new mechanism.** It is a port whose source did not object.
+
+### 4bis.4b ⚠ Where a host hint may live — and where it MUST NOT
+
+A reader must still find the branch. §4bis.2's own rule settles it without a new argument:
+
+| **what may change** | ⇒ the **HEAD**, where `prune_level` already lives |
+| ★ **what must never change** | ⇒ the **GENESIS** |
+
+**A host is the most mutable thing in the system.** ⇒ A host hint MAY appear in a signed head. It MUST
+NOT appear in the genesis, and MUST NOT appear in an anchor's script.
+
+⚠ **And a hint is a convenience, never an authority.** A branch is named by `(genesis, branch)` — both
+anchored by proof of work — so a wrong or stale hint costs a lookup, never an identity. ★ Discovery is a
+git remote: **someone hands it to you.**
+
+⚠⚠ **The honest gap.** If a branch's host disappears, its anchors still prove **what its roots were** —
+they cannot prove **what its entries said**. ⇒ That is the last-copy problem, not a defect in forking,
+and it is open.
+
 ### 4bis.5 ⏭ Open
 
 · the genesis's serialization, and whether it is committed **in** the first anchor or in a transaction
