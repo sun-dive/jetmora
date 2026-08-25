@@ -486,3 +486,39 @@ intermediate, but **it can never slide off the origin.**
   ⇒ *"Making the attack much more difficult"* is free here.
 · **A dry-run genesis mint** — build the real transaction locally, read it back, and look at every
   value that is about to become permanent. ⚠ No key needed, nothing broadcast.
+
+---
+
+## 🔑 SPLIT KEYS — n-of-n owners, 35/35
+
+**His call: *"split keys or multikeys, making the attack much more difficult."*** ⇒ Harden the key
+rather than make it easier to REPLACE, because a rotation path is itself an attack vector.
+
+⚠ **A correction first — I had conflated two things:**
+
+| **split keys** (threshold / aggregated signing) | the chain sees ONE pubkey and one signature ⇒ genuinely **zero covenant change** ⚠ but needs MuSig/FROST-style signing, absent from `@bsv/sdk` |
+| ★ **multisig** (n distinct keys) | **DOES** need a covenant change — the auth path did exactly one `HASH160` and one `CHECKSIG`. ⇒ And it is the one **testable today**, so it is what was built |
+
+**n-of-n, all required.** `owners: 1` is the plain case and compiles to what a single owner always did.
+
+| 1-of-1 | **1,314 B** |
+| ★ 2-of-2 | **1,377 B** ⇒ a second key costs **63 bytes** |
+
+⇒ **Tested through the interpreter, not merely assembled** — ⚠⚠ *"it assembles"* is the exact trap that
+bit twice today, and this is the AUTH path:
+
+| ★★★ both keys sign | the anchor stands |
+| ★★★ the **cold** key missing | **REFUSED** |
+| ★★★ the **hot** key missing | **REFUSED** — stealing one is not enough |
+
+⚠ `n` is frozen at genesis: it changes the script's SHAPE, not its values.
+
+### ★ And a property that fell out: CONTROL and PAYMENT are separable
+
+The forker now supplies the child's owner hashes **explicitly**, rather than the covenant substituting
+their royalty address. ⇒ **A buyer may put a COLD key in charge of the branch while royalties flow to a
+hot one.** The covenant does not check it — the forker is the one spending, and nobody else has an
+interest in who controls their own replica.
+
+⏭ **UNTESTED, and honestly so:** the OPERATIONAL side — splitting keys across devices, and the signing
+ceremony. Only the script half is proved here.

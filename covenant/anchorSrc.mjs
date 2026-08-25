@@ -44,7 +44,10 @@ export const ANCHOR_LEVELS_DEFAULT = 3
  *
  * @param levels  N — how many ancestors an anchor pays, besides being fixed forever at genesis.
  */
-export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT) {
+export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT, owners = 1) {
+  if (!Number.isInteger(owners) || owners < 1 || owners > 4) {
+    throw new Error(`owners must be 1..4, got ${owners}`)
+  }
   if (!Number.isInteger(levels) || levels < 1 || levels > 8) {
     throw new Error(`levels must be 1..8, got ${levels}`)
   }
@@ -64,7 +67,9 @@ export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT) {
      `childpb = pa` the name `pa` is gone from the model — and `pc`, having nothing shift into it,
      falls off the end entirely. ⇒ The frame pays the PARENT's payees, so it needs them under names
      nothing reassigns. One alias each, taken BEFORE the shift. */
-  const keeps = ['payowner = owner',
+  const own = i => 'owner' + 'abcd'[i]
+  const owndims = Array.from({ length: owners }, (_, i) => `DIM ${own(i)}$20`).join('\n')
+  const keeps = [...Array.from({ length: owners }, (_, i) => `pay${own(i)} = ${own(i)}`),
     ...Array.from({ length: levels }, (_, i) => `pay${slot(i)} = ${slot(i)}`)].join('\n')
 
   return `
@@ -121,7 +126,7 @@ REM  ★★★ And it makes BRC-113's immutableChunkBytes term REDUNDANT: that t
 REM  exists so tampering breaks the id, and the quine already makes tampering
 REM  impossible. ⇒ genesis = SHA256(genesisTxId ‖ outputIndex), nothing more.
 DIM leafcovers%2
-REM ★★★ owner — WHO MAY ANCHOR THIS BRANCH. hash160.
+REM ★★★ ownera… — WHO MAY ANCHOR THIS BRANCH. hash160 each.
 REM  ⚠⚠ A STATE FIELD, NOT A SCRIPT LITERAL, AND THE REASON IS THE SALE.
 REM  A fork COPIES the parent's suffix verbatim, so an owner baked there is
 REM  inherited by the child — and a buyer who replicated the log could not
@@ -133,7 +138,14 @@ REM  an attack vector — steal the key, rotate first, and the real owner is
 REM  locked out for good. Without one, both can anchor, which is survivable:
 REM  ★ THE OWNER FORKS AWAY. Forking IS the recovery, and it costs the
 REM  attacker the branch's lineage.
-DIM owner$20
+REM  ⚠⚠ N-OF-N, ALL REQUIRED — this is "split keys" as a covenant sees them.
+REM  ⇒ ONE of these is the plain case and compiles to what a single owner
+REM  always did. TWO is the classic split: a cold key and a hot one, and an
+REM  attacker needs BOTH. ⚠ His point: make the attack harder, rather than
+REM  making the key easier to REPLACE — because a rotation path is itself an
+REM  attack vector.
+REM  ⚠ n is frozen at genesis: it changes the script's SHAPE, not its values.
+${owndims}
 ${dims}
 
 REM ═══ TWO SPEND PATHS, AND ONLY ONE NEEDS A KEY ═════════════════════════

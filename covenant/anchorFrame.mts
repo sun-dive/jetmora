@@ -42,9 +42,21 @@ const op = (c: number) => ({ op: c })
  * MUST have exactly one definition. ⇒ Writing it twice is how the depot's predecessor got three bugs
  * in one sitting: two lists that agree today and drift the moment a name is added.
  */
-export const ANCHOR_UNLOCK = [
-  'sig', 'pub', ...ANCHOR_STACK, 'spenderOutputs', 'newValue',
-] as const
+export const ANCHOR_UNLOCK_BASE = [...ANCHOR_STACK, 'spenderOutputs', 'newValue'] as const
+
+/**
+ * ⚠ The unlocking contract for `owners` keys. Bottom first: every (sig, pub) pair, then the child's
+ * OWN owner hashes — which the FORKER chooses and the covenant does not check, exactly as it does not
+ * check who the root's owner was.
+ */
+export const anchorUnlock = (owners: number) => [
+  ...Array.from({ length: owners }, (_, i) => [`sig${i}`, `pub${i}`]).flat(),
+  ...Array.from({ length: owners }, (_, i) => `childowner${i}`),
+  ...ANCHOR_UNLOCK_BASE,
+]
+
+/** ⚠ Kept for the single-owner default, which is what every existing caller means. */
+export const ANCHOR_UNLOCK = anchorUnlock(1)
 
 /**
  * ★★ SIGHASH_ANYONECANPAY | ALL | FORKID — BRC-226's own scope, and for BRC-226's own reason:
@@ -73,6 +85,8 @@ export interface AnchorFrameParams {
   state: Record<string, number | number[]>
   /** N — lineage levels. ⚠ Fixed at genesis; it changes the script's SHAPE, not just its contents. */
   levels: number
+  /** ⚠ n-of-n. 1 is the plain case; 2 is a cold key plus a hot one. Frozen at genesis. */
+  owners?: number
   /**
    * ★★★ hash160 of the log's ORIGINAL CREATOR — paid on every anchor of every branch, forever.
    *
@@ -117,8 +131,9 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
      copy the parent's own script. ⇒ So a copy is kept — and because the compiler is told about it,
      every depth after this point is still measured BY NAME rather than adjusted by hand.
      ★ Naming it is the difference between a stack the model describes and one it merely tolerates. */
-  const probe: any = compileState(anchorSrc(p.levels), {
-    fieldOffset, stack: [...ANCHOR_UNLOCK, 'preimageCopy'],
+  const owners = p.owners ?? 1
+  const probe: any = compileState(anchorSrc(p.levels, owners), {
+    fieldOffset, stack: [...anchorUnlock(owners), 'preimageCopy'],
   })
 
   /* ⚠ THE STATE GOES IN FIRST as literal pushes — the only part of this script that differs between
@@ -165,12 +180,17 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
                  the anchorer instead.
          FORK    needs nothing: out0 returns the parent untouched, so there is nothing to consent to.
        ⇒ Arithmetic, not a branch: `authOk OR forking`. */
-    PN(d('pub')), op(OP.OP_PICK), op(OP.OP_HASH160),         // +1
-    PN(d('payowner') + 1), op(OP.OP_PICK), op(OP.OP_EQUAL),  // +1  ownerOk
-    PN(d('sig') + 1), op(OP.OP_PICK),                        // +2
-    PN(d('pub') + 2), op(OP.OP_PICK),                        // +3
-    op(OP.OP_CHECKSIG),                                      // +2  sigOk
-    op(OP.OP_BOOLAND),                                       // +1  authOk
+    /* ⚠⚠ N-OF-N: EVERY owner slot must match AND sign. Folded with BOOLAND so one missing share
+       fails the whole check — which is the point of splitting a key at all. */
+    ...Array.from({ length: owners }, (_, i) => [
+      PN(d(`pub${i}`) + i), op(OP.OP_PICK), op(OP.OP_HASH160),          // +1  (+i already held)
+      PN(d(`payowner${'abcd'[i]}`) + i + 1), op(OP.OP_PICK), op(OP.OP_EQUAL),
+      PN(d(`sig${i}`) + i + 1), op(OP.OP_PICK),
+      PN(d(`pub${i}`) + i + 2), op(OP.OP_PICK),
+      op(OP.OP_CHECKSIG),
+      op(OP.OP_BOOLAND),                                               // +1  this owner is good
+      ...(i > 0 ? [op(OP.OP_BOOLAND)] : []),                           // fold into the running AND
+    ]).flat(),
     PN(d('children') + 1), op(OP.OP_PICK),                   // +2
     op(OP.OP_1), op(OP.OP_SUB),                              // +2  forking
     op(OP.OP_BOOLOR), op(OP.OP_VERIFY),                      //  0
@@ -198,7 +218,7 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
        ⇒ Everything else — the genesis, the tree size, the royalty, the fork rule and the covenant
        code itself — is carried across VERBATIM as byte slices. **A fork therefore cannot relax its
        own rules**, because the rules are not rebuilt, they are copied. */
-    ...childOps(d, probe.layout, fieldOffset, p.levels),
+    ...childOps(d, probe.layout, fieldOffset, p.levels, owners),
 
     /* ── ★★★ THEN THE ROYALTIES — CONSTRUCTED HERE, NOT ACCEPTED FROM THE SPENDER ────────────────
        ⚠⚠ BINDING IS NOT ENFORCING, and the first version of this got it wrong. Taking the serialized
@@ -233,7 +253,8 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
  *   there; these are pushed and popped in strict pairs above it, and no attacker-supplied byte
  *   crosses them. That is the condition the runbook sets, met deliberately rather than by luck.
  */
-function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, levels: number): any[] {
+function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, levels: number,
+                  owners: number): any[] {
   const w = (n: string) => layout.find((f: any) => f.name === n).width
   const HEAD = fieldOffset + w('genesis') + 1            // …through BRANCH's own push opcode
   /* ⚠ Everything between depth and the payees is copied VERBATIM — tree size, royalty, the fork rule
@@ -241,8 +262,9 @@ function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, 
   const MID = ['treesize', 'royalty', 'forkable', 'leafcovers'].reduce((a, n) => a + 1 + w(n), 0)
   /* ⚠ owner sits immediately before the register and is substituted with it — the FORKER becomes the
      child's owner, which is what makes a replica usable by the person who made it. */
-  const PAY = (1 + w('owner')) + levels * (1 + w('pa'))
-  const slots = ['forker', ...Array.from({ length: levels }, (_, i) => 'child' + 'p' + 'abcdefgh'[i])]
+  const PAY = owners * (1 + w('ownera')) + levels * (1 + w('pa'))
+  const slots = [...Array.from({ length: owners }, (_, i) => `childowner${i}`),
+                 ...Array.from({ length: levels }, (_, i) => 'child' + 'p' + 'abcdefgh'[i])]
 
   const body: any[] = [
     /* ★★★ THE CHILD'S BRANCH ID = HASH256(the parent outpoint this fork consumed).

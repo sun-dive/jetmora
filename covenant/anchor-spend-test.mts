@@ -53,7 +53,7 @@ const payees = Object.fromEntries(
 
 /** The state a log's genesis starts in: depth 0, an empty tree, payees pre-filled with the creator. */
 const genesisState = {
-  genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, leafcovers: 1, owner: ownerHash, ...payees,
+  genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, leafcovers: 1, ownera: ownerHash, ...payees,
 }
 
 const lockFor = (st: any) =>
@@ -142,6 +142,7 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
     push([...(opts.wrongKey ? PrivateKey.fromRandom().toPublicKey().encode(true) as number[]
             : opts.signWith ? opts.signWith.toPublicKey().encode(true) as number[]
             : pub.encode(true) as number[])]),
+    push(Array(20).fill(0)),                           // childowner0 — unread on the anchor path
     push(Array(20).fill(0xf0)),                        // forker — unread on this path
     NUM(opts.wantRoyalty ?? prevState.royalty),        // wantroyalty  ⚠ a number: minimal push
     NUM(opts.children ?? 1),                           // children — covenant outputs created
@@ -246,10 +247,10 @@ async function forkSpend(prevTx: any, prevState: any, opts: any = {}) {
   const childState = opts.badChild
     /* ★★★ THE CHILD'S OWNER IS THE FORKER. That is what makes a replica usable by the person who
        made it — and it is the ONLY way an owner ever changes, because an anchor carries it verbatim. */
-    ? { ...prevState, branch: childBranch, depth: prevState.depth + 1, owner: forkerHash,
+    ? { ...prevState, branch: childBranch, depth: prevState.depth + 1, ownera: forkerHash,
         pa: forkerHash, pb: prevState.pa, pc: prevState.pb, forkable: 0 }  // ⚠ relaxes the fork rule
     : { ...prevState, branch: childBranch, depth: prevState.depth + 1,
-        owner: opts.childNotOwner ? Array(20).fill(0xcc) : forkerHash,
+        ownera: opts.childNotOwner ? Array(20).fill(0xcc) : forkerHash,
         pa: opts.childNotForker ? Array(20).fill(0xbb) : forkerHash,
         pb: prevState.pa, pc: prevState.pb }
 
@@ -284,7 +285,10 @@ async function forkSpend(prevTx: any, prevState: any, opts: any = {}) {
   const unlock = new UnlockingScript([
     pushData([...sig]),
     pushData([...(forkerKey.toPublicKey().encode(true) as number[])]),
-    pushData(forkerHash),                              // forker → the child's slot 0
+    /* ★★★ the child's OWN owner — the FORKER's choice, and the covenant does not check it, exactly
+       as it never checked who the root's owner was. */
+    pushData(opts.childNotOwner ? Array(20).fill(0xcc) : forkerHash),
+    pushData(forkerHash),                              // forker → the child's payee slot 0
     NUM(prevState.royalty),                            // wantroyalty — unchanged on a fork
     NUM(opts.children ?? 2),                           // ★ TWO covenant outputs
     NUM(prevState.treesize),                           // ⚠ tree size does NOT move on a fork
@@ -325,8 +329,13 @@ const fNotForker = await forkSpend(mint, genesisState, { childNotForker: true })
 check(!fNotForker.ok, '⚠ the child must carry the lineage the covenant computed')
 
 
+/* ★★ THE FORKER CHOOSES THE CHILD'S OWNER, and it need not be their royalty address.
+   ⇒ Control and payment are separable: a buyer may put a COLD key in charge of the branch while the
+   royalties flow to a hot one. The covenant does not check it — the forker is the one spending, and
+   nobody else has an interest in who controls their own replica. */
 const fNotOwner = await forkSpend(mint, genesisState, { childNotOwner: true })
-check(!fNotOwner.ok, '★★★ the child\'s OWNER must be the forker — it cannot be chosen freely')
+check(fNotOwner.ok, '★★ the forker may set a COLD owner, different from their payee address',
+      fNotOwner.why)
 
 const fBadBranch = await forkSpend(mint, genesisState, { badBranch: true })
 check(!fBadBranch.ok, '★★★ the child\'s BRANCH ID cannot be chosen — it is derived from the outpoint')
@@ -431,9 +440,83 @@ console.log('\n  ── the buyer, after the sale ──')
   /* ⚠⚠⚠ NO ROTATION PATH, ON PURPOSE (his call). An owner may not change the key on an anchor:
      a rotation path is an attack vector — steal the key, rotate first, and the real owner is locked
      out permanently. ⇒ The recovery for a compromise is to FORK AWAY, which now works. */
-  const rot = await anchorSpend(f.tx, { ...f.childState, owner: Array(20).fill(0x99) }, 100,
+  const rot = await anchorSpend(f.tx, { ...f.childState, ownera: Array(20).fill(0x99) }, 100,
                                 { vout: 1, signWith: forkerKey })
   check(!rot.ok, '★★★ the owner CANNOT be rotated on an anchor — no such path exists')
+}
+
+
+// ════ ★★★ SPLIT KEYS — n-of-n, his suggestion ═══════════════════════════════════════════════════
+// ⚠ "Make the attack much more difficult", rather than making the key easier to REPLACE — because a
+//   rotation path is itself an attack vector. ⇒ 2-of-2 is the classic split: a cold key and a hot one,
+//   and an attacker needs BOTH.
+console.log('\n  ── split keys (2-of-2) ──')
+{
+  const cold = PrivateKey.fromRandom(), hot = PrivateKey.fromRandom()
+  const hA = cold.toPublicKey().toHash() as number[], hB = hot.toPublicKey().toHash() as number[]
+  const st: any = { ...genesisState, ownera: hA, ownerb: hB }
+  let built = true, why = ''
+  try { buildAnchorLock({ levels: LEVELS, owners: 2, creator, state: st }) }
+  catch (e: any) { built = false; why = e.message.slice(0, 90) }
+  check(built, '★★★ a 2-of-2 covenant assembles', why)
+  if (built) {
+    const one = buildAnchorLock({ levels: LEVELS, owners: 1, creator, state: genesisState })
+    const two = buildAnchorLock({ levels: LEVELS, owners: 2, creator, state: st })
+    check(two.toBinary().length > one.toBinary().length,
+      '⚠ …and costs what a second key costs',
+      `1-of-1 ${one.toBinary().length} B → 2-of-2 ${two.toBinary().length} B ` +
+      `(+${two.toBinary().length - one.toBinary().length})`)
+
+    /* ⚠⚠ AND NOW RUN IT. "It assembles" is the exact trap that bit twice today — a locking script
+       that builds is not one that validates, and this is the AUTH path. */
+    const spend2 = async (opts: any = {}) => {
+      const mint2 = new Transaction()
+      mint2.addOutput({ lockingScript: two, satoshis: 5000 })
+      const next = buildAnchorLock({ levels: LEVELS, owners: 2, creator,
+                                     state: { ...st, treesize: 264 } })
+      const fund = new Transaction()
+      fund.addOutput({ lockingScript: new P2PKH().lock(hA), satoshis: 20_000 })
+      const tx = new Transaction()
+      tx.addInput({ sourceTransaction: mint2, sourceOutputIndex: 0, sequence: 0xffffffff })
+      tx.addInput({ sourceTransaction: fund, sourceOutputIndex: 0, sequence: 0xffffffff })
+      tx.addOutput({ lockingScript: next, satoshis: 5000 })
+      tx.addOutput({ lockingScript: new P2PKH().lock(creator), satoshis: 1 })
+      for (let i = 0; i < LEVELS; i++) {
+        tx.addOutput({ lockingScript: new P2PKH().lock(st['p' + 'abcdefgh'[i]]), satoshis: 1 })
+      }
+      const pre = TransactionSignature.format({
+        sourceTXID: mint2.id('hex'), sourceOutputIndex: 0, sourceSatoshis: 5000,
+        transactionVersion: tx.version, otherInputs: [tx.inputs[1]], inputIndex: 0,
+        outputs: tx.outputs, inputSequence: 0xffffffff, subscript: two,
+        lockTime: tx.lockTime, scope: ANCHOR_SCOPE })
+      const sigOf = (k: any) => {
+        const r = k.sign(Hash.sha256(pre))
+        return [...new TransactionSignature(r.r, r.s, ANCHOR_SCOPE).toChecksigFormat()]
+      }
+      const kA = opts.wrongCold ? PrivateKey.fromRandom() : cold
+      const kB = opts.wrongHot ? PrivateKey.fromRandom() : hot
+      const unlock = new UnlockingScript([
+        pushData(sigOf(kA)), pushData([...(kA.toPublicKey().encode(true) as number[])]),
+        pushData(sigOf(kB)), pushData([...(kB.toPublicKey().encode(true) as number[])]),
+        pushData(Array(20).fill(0)), pushData(Array(20).fill(0)),   // childowner0/1, unread here
+        pushData(Array(20).fill(0xf0)), NUM(1), NUM(1), NUM(264),
+        pushData([]), pushData(u64le(5000)), pushData([...pre]),
+      ])
+      const sp = new Spend({
+        sourceTXID: mint2.id('hex'), sourceOutputIndex: 0, sourceSatoshis: 5000,
+        lockingScript: two, transactionVersion: tx.version, otherInputs: [tx.inputs[1]],
+        outputs: tx.outputs, inputIndex: 0, unlockingScript: unlock,
+        inputSequence: 0xffffffff, lockTime: tx.lockTime, verifyFlags: ['UTXO_AFTER_CHRONICLE'] })
+      try { return { ok: sp.validate(), why: '' } }
+      catch (e: any) { return { ok: false, why: (e.message ?? String(e)).slice(0, 80) } }
+    }
+    const both = await spend2()
+    check(both.ok, '★★★ BOTH keys sign ⇒ the anchor stands', both.why)
+    const noCold = await spend2({ wrongCold: true })
+    check(!noCold.ok, '★★★ the COLD key alone missing ⇒ REFUSED')
+    const noHot = await spend2({ wrongHot: true })
+    check(!noHot.ok, '★★★ the HOT key alone missing ⇒ REFUSED — stealing one is not enough')
+  }
 }
 
 console.log(`\n  ${fail === 0 ? '✓' : '⚠'} ${pass} passed, ${fail} failed`)
