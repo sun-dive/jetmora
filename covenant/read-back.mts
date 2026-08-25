@@ -14,8 +14,8 @@ const payees = Object.fromEntries(
   Array.from({ length: LEVELS }, (_, i) => ['p' + 'abcdefgh'[i], creator]))
 
 const lock: any = buildAnchorLock({
-  levels: LEVELS, owner: Array(20).fill(0x77), creator,
-  state: { genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, leafcovers: 1, ...payees },
+  levels: LEVELS, creator,
+  state: { genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, leafcovers: 1, owner: Array(20).fill(0x77), ...payees },
 })
 console.log(`  ── the anchor covenant · N=${LEVELS} · ${lock.toBinary().length} B · ${lock.chunks.length} chunks ──\n`)
 /* ⚠ THE READER'S STACK IS THE UNLOCKING CONTRACT, not the compiler's model — they are different

@@ -53,11 +53,11 @@ const payees = Object.fromEntries(
 
 /** The state a log's genesis starts in: depth 0, an empty tree, payees pre-filled with the creator. */
 const genesisState = {
-  genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, leafcovers: 1, ...payees,
+  genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, leafcovers: 1, owner: ownerHash, ...payees,
 }
 
 const lockFor = (st: any) =>
-  buildAnchorLock({ levels: LEVELS, owner: ownerHash, creator, state: st })
+  buildAnchorLock({ levels: LEVELS, creator, state: st })
 
 /** N royalty outputs, one per ancestor slot. ⚠ 1 sat minimum, never 0 — dust is refused before the
  *  script is ever evaluated, so a 0-value royalty would be a covenant that can never be spent. */
@@ -83,7 +83,7 @@ mint.addOutput({ lockingScript: genesisLock, satoshis: 5000 })
  * @param mutate  ⚠ a saboteur — returns a broken variant so the refusals can be provoked.
  */
 async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opts: any = {}) {
-  const prevOut = prevTx.outputs[0]
+  const prevOut = prevTx.outputs[opts.vout ?? 0]
   const nextState = { ...prevState, treesize: newTreeSize, royalty: opts.wantRoyalty ?? prevState.royalty }
   const nextLock = lockFor(opts.badSuccessor ? { ...nextState, treesize: newTreeSize + 99 } : nextState)
 
@@ -97,10 +97,11 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
   const newValue = prevOut.satoshis - (opts.drain ? 1 : 0)
 
   const funder = new Transaction()
-  funder.addOutput({ lockingScript: new P2PKH().lock(ownerHash), satoshis: 20_000 })
+  funder.addOutput({ lockingScript: new P2PKH().lock(
+    (opts.signWith ?? priv).toPublicKey().toHash() as number[]), satoshis: 20_000 })
 
   const tx = new Transaction()
-  tx.addInput({ sourceTransaction: prevTx, sourceOutputIndex: 0, sequence: 0xffffffff })
+  tx.addInput({ sourceTransaction: prevTx, sourceOutputIndex: opts.vout ?? 0, sequence: 0xffffffff })
   tx.addInput({ sourceTransaction: funder, sourceOutputIndex: 0, sequence: 0xffffffff })
   tx.addOutput({ lockingScript: nextLock, satoshis: newValue })
   /* ★ THE CREATOR'S OUTPUT COMES FIRST — paid on every anchor of every branch, from a literal that
@@ -120,7 +121,7 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
   }
 
   const preimage = TransactionSignature.format({
-    sourceTXID: prevTx.id('hex'), sourceOutputIndex: 0, sourceSatoshis: prevOut.satoshis,
+    sourceTXID: prevTx.id('hex'), sourceOutputIndex: opts.vout ?? 0, sourceSatoshis: prevOut.satoshis,
     transactionVersion: tx.version, otherInputs: [tx.inputs[1]], inputIndex: 0, outputs: tx.outputs,
     inputSequence: 0xffffffff, subscript: prevOut.lockingScript,
     lockTime: tx.lockTime, scope: ANCHOR_SCOPE,
@@ -131,15 +132,16 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
      says "wrong digest", only "OP_VERIFY requires the top stack value to be true". */
   const raw = priv.sign(Hash.sha256(preimage))
   const sig = new TransactionSignature(raw.r, raw.s, ANCHOR_SCOPE).toChecksigFormat()
-  const signer = opts.wrongKey ? PrivateKey.fromRandom() : priv
+  const signer = opts.wrongKey ? PrivateKey.fromRandom() : (opts.signWith ?? priv)
   const raw2 = signer.sign(Hash.sha256(preimage))
   const sig2 = new TransactionSignature(raw2.r, raw2.s, ANCHOR_SCOPE).toChecksigFormat()
 
   const push = (d: number[]) => pushData(d)
   const unlock = new UnlockingScript([
-    push([...(opts.wrongKey ? sig2 : sig)]),
+    push([...(opts.wrongKey || opts.signWith ? sig2 : sig)]),
     push([...(opts.wrongKey ? PrivateKey.fromRandom().toPublicKey().encode(true) as number[]
-                            : pub.encode(true) as number[])]),
+            : opts.signWith ? opts.signWith.toPublicKey().encode(true) as number[]
+            : pub.encode(true) as number[])]),
     push(Array(20).fill(0xf0)),                        // forker — unread on this path
     NUM(opts.wantRoyalty ?? prevState.royalty),        // wantroyalty  ⚠ a number: minimal push
     NUM(opts.children ?? 1),                           // children — covenant outputs created
@@ -149,10 +151,10 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
     push([...preimage]),
   ])
   tx.inputs[0].unlockingScript = unlock
-  tx.inputs[1].unlockingScript = await new P2PKH().unlock(priv).sign(tx, 1)
+  tx.inputs[1].unlockingScript = await new P2PKH().unlock(opts.signWith ?? priv).sign(tx, 1)
 
   const spend = new Spend({
-    sourceTXID: prevTx.id('hex'), sourceOutputIndex: 0, sourceSatoshis: prevOut.satoshis,
+    sourceTXID: prevTx.id('hex'), sourceOutputIndex: opts.vout ?? 0, sourceSatoshis: prevOut.satoshis,
     lockingScript: prevOut.lockingScript, transactionVersion: tx.version,
     otherInputs: [tx.inputs[1]],
     outputs: tx.outputs, inputIndex: 0, unlockingScript: unlock,
@@ -242,9 +244,12 @@ async function forkSpend(prevTx: any, prevState: any, opts: any = {}) {
   const childBranch = opts.badBranch ? Array(32).fill(0x5a) : [...Hash.hash256(outpoint)]
 
   const childState = opts.badChild
-    ? { ...prevState, branch: childBranch, depth: prevState.depth + 1, pa: forkerHash,
-        pb: prevState.pa, pc: prevState.pb, forkable: 0 }                // ⚠ relaxes the fork rule
+    /* ★★★ THE CHILD'S OWNER IS THE FORKER. That is what makes a replica usable by the person who
+       made it — and it is the ONLY way an owner ever changes, because an anchor carries it verbatim. */
+    ? { ...prevState, branch: childBranch, depth: prevState.depth + 1, owner: forkerHash,
+        pa: forkerHash, pb: prevState.pa, pc: prevState.pb, forkable: 0 }  // ⚠ relaxes the fork rule
     : { ...prevState, branch: childBranch, depth: prevState.depth + 1,
+        owner: opts.childNotOwner ? Array(20).fill(0xcc) : forkerHash,
         pa: opts.childNotForker ? Array(20).fill(0xbb) : forkerHash,
         pb: prevState.pa, pc: prevState.pb }
 
@@ -319,6 +324,9 @@ check(!fBadChild.ok, '★★★ a fork CANNOT RELAX ITS OWN RULES (forkable flip
 const fNotForker = await forkSpend(mint, genesisState, { childNotForker: true })
 check(!fNotForker.ok, '⚠ the child must carry the lineage the covenant computed')
 
+
+const fNotOwner = await forkSpend(mint, genesisState, { childNotOwner: true })
+check(!fNotOwner.ok, '★★★ the child\'s OWNER must be the forker — it cannot be chosen freely')
 
 const fBadBranch = await forkSpend(mint, genesisState, { badBranch: true })
 check(!fBadBranch.ok, '★★★ the child\'s BRANCH ID cannot be chosen — it is derived from the outpoint')
@@ -403,6 +411,29 @@ console.log('\n  ── the scope, exercised ──')
       ? '★★★ 0xc1: a LATE FUNDER joins and the spend still stands'
       : '⚠ 0x41: a late funder INVALIDATES the spend — the input set is committed',
     `scope 0x${ANCHOR_SCOPE.toString(16)}, late funder ${ok ? 'accepted' : 'rejected'}`)
+}
+
+
+// ════ ⚠⚠⚠ CAN A BUYER ACTUALLY USE WHAT THEY BOUGHT? ════════════════════════════════════════════
+// The whole sale model is "a buyer replicates the log to themselves". ⇒ So the buyer must be able to
+// ANCHOR their replica. Nothing in this suite had ever tried.
+console.log('\n  ── the buyer, after the sale ──')
+{
+  const f = await forkSpend(mint, genesisState)
+  /* the child is output 1 of that fork transaction */
+  const r = await anchorSpend(f.tx, f.childState, 100, { vout: 1, signWith: forkerKey })
+  check(r.ok, '★★★ the FORKER can anchor the branch they just replicated', r.why)
+
+  /* ⚠ …and the SELLER cannot. A replica is not shared custody. */
+  const seller = await anchorSpend(f.tx, f.childState, 100, { vout: 1 })
+  check(!seller.ok, '★★★ …and the SELLER cannot anchor it — the sale is real')
+
+  /* ⚠⚠⚠ NO ROTATION PATH, ON PURPOSE (his call). An owner may not change the key on an anchor:
+     a rotation path is an attack vector — steal the key, rotate first, and the real owner is locked
+     out permanently. ⇒ The recovery for a compromise is to FORK AWAY, which now works. */
+  const rot = await anchorSpend(f.tx, { ...f.childState, owner: Array(20).fill(0x99) }, 100,
+                                { vout: 1, signWith: forkerKey })
+  check(!rot.ok, '★★★ the owner CANNOT be rotated on an anchor — no such path exists')
 }
 
 console.log(`\n  ${fail === 0 ? '✓' : '⚠'} ${pass} passed, ${fail} failed`)

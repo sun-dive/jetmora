@@ -64,7 +64,8 @@ export function anchorSrc(levels = ANCHOR_LEVELS_DEFAULT) {
      `childpb = pa` the name `pa` is gone from the model — and `pc`, having nothing shift into it,
      falls off the end entirely. ⇒ The frame pays the PARENT's payees, so it needs them under names
      nothing reassigns. One alias each, taken BEFORE the shift. */
-  const keeps = Array.from({ length: levels }, (_, i) => `pay${slot(i)} = ${slot(i)}`).join('\n')
+  const keeps = ['payowner = owner',
+    ...Array.from({ length: levels }, (_, i) => `pay${slot(i)} = ${slot(i)}`)].join('\n')
 
   return `
 REM ═══ THE ANCHOR'S STATE ═════════════════════════════════════════════════
@@ -120,6 +121,19 @@ REM  ★★★ And it makes BRC-113's immutableChunkBytes term REDUNDANT: that t
 REM  exists so tampering breaks the id, and the quine already makes tampering
 REM  impossible. ⇒ genesis = SHA256(genesisTxId ‖ outputIndex), nothing more.
 DIM leafcovers%2
+REM ★★★ owner — WHO MAY ANCHOR THIS BRANCH. hash160.
+REM  ⚠⚠ A STATE FIELD, NOT A SCRIPT LITERAL, AND THE REASON IS THE SALE.
+REM  A fork COPIES the parent's suffix verbatim, so an owner baked there is
+REM  inherited by the child — and a buyer who replicated the log could not
+REM  anchor it, because the seller still owned it. Measured 25 Aug: the
+REM  literal sat at byte 162, inside the copied suffix.
+REM  ⇒ FORK substitutes the forker here. ANCHOR carries it VERBATIM.
+REM  ⚠⚠⚠ THERE IS NO ROTATION PATH ON PURPOSE. His call: a rotation path is
+REM  an attack vector — steal the key, rotate first, and the real owner is
+REM  locked out for good. Without one, both can anchor, which is survivable:
+REM  ★ THE OWNER FORKS AWAY. Forking IS the recovery, and it costs the
+REM  attacker the branch's lineage.
+DIM owner$20
 ${dims}
 
 REM ═══ TWO SPEND PATHS, AND ONLY ONE NEEDS A KEY ═════════════════════════

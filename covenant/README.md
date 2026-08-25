@@ -408,3 +408,48 @@ leafcovers                                            ← a field, replicated un
 and nothing that can be lost or disagreed with.
 
 **26/26.** 1,285 B at N=3. Nothing minted.
+
+---
+
+## ⚠⚠⚠ THE SALE MODEL WAS BROKEN — found 25 Aug, by his question about a compromised owner key
+
+**A fork COPIED the parent's suffix verbatim, and the owner literal lived there.**
+⇒ Measured: byte **162**, with the state region ending at ~156. **The child inherited the seller's
+owner key**, so:
+
+| ★★★ **a buyer could not anchor the branch they replicated** | the seller still owned it ⇒ *"a buyer replicates the log to themselves"* was false |
+| ⚠⚠ **a compromised owner could not be escaped by forking** | the child inherits the compromise ⇒ **there was NO recovery path at all** |
+
+⚠ Nothing in 26 tests caught it, because **nothing had ever tried to anchor a child.**
+
+### ★ And his warning about rotation REVERSED my recommendation
+
+I proposed making the owner rotatable. ⇒ **He was right that it opens a vector:** with a rotation path,
+an attacker who steals the key **rotates first** and locks the owner out permanently. Without one, both
+can anchor — bad, but survivable.
+
+**⇒ The fix gives the buyer control WITHOUT giving anyone a rotation path:**
+
+| **FORK** | the child's owner = **the forker**, substituted with the register ⇒ the buyer owns their replica |
+| **ANCHOR** | the owner is carried **VERBATIM** ⇒ ⚠⚠⚠ **there is no rotation path, on purpose** |
+
+★★★ So *"sale = fork"* is now literally true — **forking is the ONLY way an owner ever changes** — and
+**forking is the recovery** for a compromised key: abandon the branch, keep the history, and the
+attacker's branch still pays the creator.
+
+⇒ **30/30**, including: the forker CAN anchor · the seller CANNOT · the owner cannot be rotated · the
+child's owner cannot be chosen freely. 1,314 B at N=3.
+
+### ⏭ OPEN — his other instinct, and it is a real weakening
+
+*"The royalties could be drained."* ⇒ Not by a compromised key — an anchorer PAYS royalties, never
+receives them. **But the LINEAGE royalty can be LAUNDERED.** The deep-fork test already shows it:
+
+```
+forked 5 deep, register: 532643 532643 532643      ← all one forker
+```
+
+⇒ **N self-forks flush every legitimate ancestor out of the register**, at roughly `N × 50` satoshis.
+★ The creator survives — he is a baked literal, which is exactly why that was the right call — but the
+intermediate ancestors do not. ⚠ **Anyone can escape paying their parent for about 150 sat.**
+⇒ That is a design question, not a bug: it is what a fixed-width shift register does.

@@ -73,8 +73,6 @@ export interface AnchorFrameParams {
   state: Record<string, number | number[]>
   /** N — lineage levels. ⚠ Fixed at genesis; it changes the script's SHAPE, not just its contents. */
   levels: number
-  /** hash160 of the key that may anchor this branch. */
-  owner: number[]
   /**
    * ★★★ hash160 of the log's ORIGINAL CREATOR — paid on every anchor of every branch, forever.
    *
@@ -109,7 +107,6 @@ export interface AnchorFrameParams {
 export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; layout: any[] } {
   const c = pushTxConstants(ANCHOR_SCOPE)
   const fieldOffset = p.fieldOffset ?? 1
-  if (p.owner.length !== 20) throw new Error(`the owner must be a 20-byte hash160, got ${p.owner.length}`)
   if (p.creator.length !== 20) throw new Error(`the creator must be a 20-byte hash160, got ${p.creator.length}`)
 
   /* ⚠ The BASIC program's own stack contract, plus the two the frame's value rule and output binding
@@ -137,29 +134,6 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
   const ops: any[] = [
     ...head,
 
-    /* ── ★★ AUTHORISE THE ANCHORER — BUT ONLY ON THE ANCHOR PATH ────────────────────────────────
-       ⚠⚠ FIRST, and adjacent to nothing else. *"Security state must not cross bytes you do not
-       control"* — the check happens before any attacker-supplied byte has been touched and its
-       result is consumed immediately rather than stashed.
-
-       ★★★ AND IT IS CONDITIONAL, WHICH IS THE WHOLE POINT OF THE DESIGN.
-         ANCHOR  needs the owner's key, because SCRIPT CANNOT VALIDATE A ROOT — a root is asserted,
-                 not determined, so the covenant authorises the anchorer instead.
-         FORK    needs NOTHING. A buyer replicates to themselves, permissionlessly, and the holder
-                 plays no part because out0 comes back untouched.
-
-       ⚠ Expressed as ARITHMETIC, not a branch: `authOk OR forking`. Both paths leave one item, so
-         there is nothing to balance — the same trick the BASIC uses for its own selectors. */
-    PN(depthOf(probe, 'pub')), op(OP.OP_PICK),
-    op(OP.OP_HASH160), pushData(p.owner), op(OP.OP_EQUAL),         // +1  ownerOk
-    PN(depthOf(probe, 'sig') + 1), op(OP.OP_PICK),                 // +2  sig
-    PN(depthOf(probe, 'pub') + 2), op(OP.OP_PICK),                 // +3  pub
-    op(OP.OP_CHECKSIG),                                            // +2  sigOk
-    op(OP.OP_BOOLAND),                                             // +1  authOk
-    PN(depthOf(probe, 'children') + 1), op(OP.OP_PICK),            // +2
-    op(OP.OP_1), op(OP.OP_SUB),                                    // +2  forking = children − 1
-    op(OP.OP_BOOLOR), op(OP.OP_VERIFY),                            //  0
-
     ...pushTxVerifyOps(c),                                   // the preimage is now genuine
 
     op(OP.OP_DUP), ...extractHashOutputsOps(), op(OP.OP_TOALTSTACK),          // alt: [HO]
@@ -183,6 +157,24 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
     return a.length - 1 - i
   }
   ops.push(
+    /* ── ★★ AUTHORISE THE ANCHORER — from the PEELED STATE, and only on the anchor path ─────────
+       ⚠⚠ This runs AFTER the program, because `owner` is now a FIELD rather than a literal and the
+       peel is what puts it on the stack. ★ That is also where the runbook wants it: *"put
+       verification and binding ADJACENT, as one unbroken run."*
+         ANCHOR  needs the owner's key — SCRIPT CANNOT VALIDATE A ROOT, so the covenant authorises
+                 the anchorer instead.
+         FORK    needs nothing: out0 returns the parent untouched, so there is nothing to consent to.
+       ⇒ Arithmetic, not a branch: `authOk OR forking`. */
+    PN(d('pub')), op(OP.OP_PICK), op(OP.OP_HASH160),         // +1
+    PN(d('payowner') + 1), op(OP.OP_PICK), op(OP.OP_EQUAL),  // +1  ownerOk
+    PN(d('sig') + 1), op(OP.OP_PICK),                        // +2
+    PN(d('pub') + 2), op(OP.OP_PICK),                        // +3
+    op(OP.OP_CHECKSIG),                                      // +2  sigOk
+    op(OP.OP_BOOLAND),                                       // +1  authOk
+    PN(d('children') + 1), op(OP.OP_PICK),                   // +2
+    op(OP.OP_1), op(OP.OP_SUB),                              // +2  forking
+    op(OP.OP_BOOLOR), op(OP.OP_VERIFY),                      //  0
+
     PN(d('newValue')), op(OP.OP_PICK), op(OP.OP_BIN2NUM),    // +1  what the spender claims
     op(OP.OP_FROMALTSTACK),                                  // +2  V, from the preimage
     /* ★★★ THE SPENDER PAYS. ALWAYS. THERE IS NO DRAIN SURFACE AT ALL.
@@ -247,8 +239,10 @@ function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, 
   /* ⚠ Everything between depth and the payees is copied VERBATIM — tree size, royalty, the fork rule
      and the immutable settings. ⇒ Derived from the layout, so adding a field here cannot desync it. */
   const MID = ['treesize', 'royalty', 'forkable', 'leafcovers'].reduce((a, n) => a + 1 + w(n), 0)
-  const PAY = levels * (1 + w('pa'))
-  const slots = Array.from({ length: levels }, (_, i) => 'child' + 'p' + 'abcdefgh'[i])
+  /* ⚠ owner sits immediately before the register and is substituted with it — the FORKER becomes the
+     child's owner, which is what makes a replica usable by the person who made it. */
+  const PAY = (1 + w('owner')) + levels * (1 + w('pa'))
+  const slots = ['forker', ...Array.from({ length: levels }, (_, i) => 'child' + 'p' + 'abcdefgh'[i])]
 
   const body: any[] = [
     /* ★★★ THE CHILD'S BRANCH ID = HASH256(the parent outpoint this fork consumed).
@@ -281,7 +275,7 @@ function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, 
   ]
   for (const slot of slots) {
     body.push(
-      pushData([w('pa')]), op(OP.OP_CAT),                // the payee's push opcode
+      pushData([w('pa')]), op(OP.OP_CAT),                // the push opcode — owner and payees are both 20
       PN(d(slot) + 1), op(OP.OP_PICK), op(OP.OP_CAT),    // ⚠ +1 for the child being held
     )
   }
