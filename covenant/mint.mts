@@ -127,6 +127,22 @@ line('txid', tx.id('hex'), '')
 /* ⚠ THE FEE GUARD. A rate far off policy means something is wrong; refuse rather than overpay. */
 if (rate < 90 || rate > 300) die(`fee rate ${rate.toFixed(1)} sat/KB is outside 90–300. Refusing.`)
 
+/* ★ A LOCAL RECORD, so a test mint can be found again without hunting shell history.
+   ⚠⚠ NOT WRITTEN INTO THE REPO BY DEFAULT — jetmora is PUBLIC, and a record like this collects
+   addresses. Set MINTLOG=<path> to somewhere of your own; unset, nothing is written. */
+if (process.env.MINTLOG) {
+  const { writeFileSync, existsSync, readFileSync } = await import('node:fs')
+  const prior = existsSync(process.env.MINTLOG)
+    ? JSON.parse(readFileSync(process.env.MINTLOG, 'utf8')) : []
+  prior.push({
+    txid: tx.id('hex'), broadcast: LIVE, genesis: hx(genesis),
+    creator: process.env.CREATOR, owners: ownerList,
+    levels: LEVELS, nowners: NOWNERS, forkable: FORKABLE, leafcovers: LEAFCOVERS, royalty: ROYALTY,
+    bytes, fee, note: process.env.NOTE ?? '',
+  })
+  writeFileSync(process.env.MINTLOG, JSON.stringify(prior, null, 2))
+  console.log(`\n  ★ recorded in ${process.env.MINTLOG} (${prior.length} mint${prior.length===1?'':'s'})`)
+}
 if (process.env.OUT) {
   const { writeFileSync } = await import('node:fs')
   writeFileSync(process.env.OUT, raw)

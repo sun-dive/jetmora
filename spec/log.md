@@ -618,6 +618,19 @@ governs what a third party can later be made to accept. **A log between anchors 
 transaction the first anchor references."** ⇒ **NEITHER.** There is nothing to serialize: identity is
 one derived field and every immutable setting is a field in the covenant (§4bis.0).
 
+· ⏭★★ **FUND ANCHORING FROM A BATTERY** (his, 25 Aug — BRC-226 / [[agent-battery-covenant]]).
+  Anchoring is a routine task: write the branch's current state to BSV, on a cadence. ⇒ Today that
+  needs a funding key with satoshis in it, sitting on the machine that anchors.
+  ★★★ **A battery removes it.** The battery is a covenant with **no key to steal**, so the server holds
+  **no satoshis at all** — and a battery *"bounds behaviour, not just amount"*, so it can enforce **at
+  most one anchor per day, at most N satoshis each.** ⇒ A fully compromised server can then only do
+  the thing it was going to do anyway, at the rate it was going to do it.
+  ★★ **A separation of powers, where neither half can do damage alone:**
+  the **owner key** says WHICH ROOT (it asserts the claim) · the **battery** says HOW MUCH and HOW
+  OFTEN (it bounds the spend). ⇒ A stolen key cannot drain; a drained battery cannot lie.
+  ⚠ It removes the FUNDING key, **not the owner key** — an anchor still needs a signature over the
+  transaction, because BSV has no `OP_CHECKDATASIG` (§4bis.4i).
+  ⚠ Needs its OWN battery instance, not the live grafverse one: same pattern, own constants, own file.
 · whether `anchor_policy` — which chains a log anchors to — is immutable or mutable. ⚠ Probably mutable,
   ⇒ in which case it belongs in the HEAD and not in the covenant at all
 · what else, if anything, is immutable enough to be worth **~21 bytes per anchor** (§4bis.0a). ⚠ That
