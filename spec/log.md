@@ -350,6 +350,45 @@ git remote: **someone hands it to you.**
 they cannot prove **what its entries said**. ⇒ That is the last-copy problem, not a defect in forking,
 and it is open.
 
+### 4bis.4c ⚠★★ WHEN A HOST VANISHES — what the anchors still do
+
+**Hosts will vanish. This section is not a mitigation plan; it is a description of the remainder.**
+
+⚠ **Stated plainly first: a hash does not reconstruct anything.** If no copy of the bodies survives
+anywhere, the content is gone, and no part of this design pretends otherwise.
+
+★★★ **What the anchors preserve is not the data. It is the ability to AUTHENTICATE the data if it ever
+comes back.** ⇒ Ordinarily a copy surfacing years after a host dies is worthless — nothing distinguishes
+a genuine archive from a fabrication, and the finder is trusting whoever handed it over. Against an
+anchored root, **any copy found anywhere can be proved to be the original, bit for bit**, and the proof
+is dated by a block rather than by a claim.
+
+⇒ ⚠ This is a **structural** claim about the anchor chain and cannot rot: no branch of it omits the
+root. Whether a copy exists somewhere is an **empirical** question, and a different one.
+
+★★ **And the loss is legible, which silence is not.** The anchors still say what existed, what its
+fingerprint was, how large it grew, when it was last seen, and **the whole branch structure — who forked
+from whom.** A gap you can describe exactly is a different thing from a gap you cannot see.
+
+### 4bis.4d ★★★ EVERY FORK IS A BACKUP THAT PAYS THE ORIGINAL CREATOR
+
+**A branch holds the common prefix (§4bis.4) — not a copy of it, the same tree.** ⇒ If B forked from A
+at height 1,000 and A's host disappears, **B still holds the tree for 0…1,000.**
+
+★★ So the royalty design and the survival design are one mechanism seen from two sides:
+
+| the royalty makes forking **worth doing** | ⇒ a permissionless fork, paid for by the forker |
+| forking makes the data **survive** | ⇒ each branch is an independent custodian of the shared prefix |
+
+⇒ **Replication is not a leak to be tolerated. It is the archive.** ★ Which is why *"duplication is not a
+problem, it is resilience — antifragile"* is an engineering statement here rather than a philosophical
+one: without anchors, finding a thing in many places does not tell you which copy is right.
+
+⚠⚠ **The honest limit: this is a mitigation, not a solution.** A log nobody forks has exactly one
+custodian, and a **non-forkable** log can never have more than one by construction. ⇒ That is the real
+cost of choosing non-forkable, and it should be weighed at genesis against the cleanliness that choice
+buys — because it is the one decision that can never be revisited.
+
 ### 4bis.5 ⏭ Open
 
 · the genesis's serialization, and whether it is committed **in** the first anchor or in a transaction
