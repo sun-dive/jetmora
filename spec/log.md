@@ -502,6 +502,28 @@ authorship out of the payee register is reading a nomination as a fact.
 ★ ⇒ With §4bis.4e this completes the picture: **payment is a window, provenance is the chain, and
 control is neither.**
 
+### 4bis.4g ✅ A FORK NEEDS NO FEE TO THE PARENT — and proposing one was a mistake
+
+**A fork takes NOTHING from the parent.** ⇒ out0 returns with identical state and identical value
+(`newValue >= V`); the forker pays the royalties and the miner. The only change is that the parent's
+tip moves to a new outpoint, which the computation walk already handles.
+
+★★★ **His argument, and it settles it:** *"If the fork never anchors it's the same as it never
+happened."* ⇒ A fork with no anchors is a branch with an **empty history**. It carries nothing, proves
+nothing, and no reader will reference it — `tree_size == 0` filters it in one comparison.
+
+⚠⚠ **A fork fee was proposed here to price "fork spam", and that was ADDING A RESTRICTION THE SYSTEM
+DOES NOT REQUIRE.** ⇒ Same mistake the depot made three times — a minimum, then a clamp, then a
+disabled button, every one of them invented rather than required. It would have made legitimate
+replication permanently more expensive to prevent a problem that does not exist.
+
+★ **The residual cost is real and trivial:** a third party walking from genesis traverses every fork
+transaction, at O(n) API calls. ⇒ The operator never walks — they know their own tip.
+
+⚠ **RECORDED SO IT IS NOT RE-PROPOSED.** The reasoning that leads back to a fork fee is *"forking is
+nearly free, therefore it should cost more"* — and the premise is right while the conclusion does not
+follow. **Cheap replication is the design, not a leak in it.**
+
 ### 4bis.5 ⏭ Open
 
 ✅ **RESOLVED — "the genesis's serialization, and whether it is committed in the first anchor or in a
