@@ -104,14 +104,9 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
   tx.addInput({ sourceTransaction: prevTx, sourceOutputIndex: opts.vout ?? 0, sequence: 0xffffffff })
   tx.addInput({ sourceTransaction: funder, sourceOutputIndex: 0, sequence: 0xffffffff })
   tx.addOutput({ lockingScript: nextLock, satoshis: newValue })
-  /* ★ THE CREATOR'S OUTPUT COMES FIRST — paid on every anchor of every branch, from a literal that
-     no shift can evict. */
-  if (!opts.omitCreator) {
-    tx.addOutput({ lockingScript: new P2PKH().lock(opts.wrongCreator ? Array(20).fill(0xdd) : creator),
-                   satoshis: prevState.royalty })
-  }
-  // then the lineage, and nothing else — spenderOutputs is empty here
-  for (let i = 0; i < (opts.omitRoyalties ? 0 : LEVELS); i++) {
+  /* ⚠⚠ AN ANCHOR PAYS NOBODY. Royalties are the PURCHASE PRICE of a fork, not a fee on use —
+     charging them per anchor would be rent on running what you already own. */
+  for (let i = 0; i < 0; i++) {
     /* ⚠ the saboteurs: pay somebody else, or pay them less. These are the ACTUAL attacks on a
        royalty — omitting it outright is the naive one. */
     const to = (opts.wrongPayee && i === 0) ? Array(20).fill(0xee) : prevState['p' + 'abcdefgh'[i]]
@@ -191,20 +186,14 @@ check(!wrongKey.ok, '⚠ a STRANGER cannot anchor — not just anyone may assert
 const rewind = await anchorSpend(mint, genesisState, 0)
 check(!rewind.ok, '⚠ the tree cannot STAND STILL on an anchor (no-op spend refused)')
 
-const noRoyalty = await anchorSpend(mint, genesisState, 264, { omitRoyalties: true })
-check(!noRoyalty.ok, '★★ ROYALTIES CANNOT BE OMITTED — permissionless, enforced by PoW')
+/* ★★★ THE INVERSION. An anchor pays the miner and NOBODY ELSE. */
+check(a1.ok, '★★★ an ANCHOR pays NO royalties — running your own branch is not rented')
 
 const badSucc = await anchorSpend(mint, genesisState, 264, { badSuccessor: true })
 check(!badSucc.ok, '⚠ the successor must carry the state the program computed')
 
 /* ★★ THE ATTACKS THAT MATTER. Omitting the royalty is the naive move; paying the wrong person, or
    paying them less, is what someone would actually try. */
-const wrongPayee = await anchorSpend(mint, genesisState, 264, { wrongPayee: true })
-check(!wrongPayee.ok, '★★★ the royalty cannot be REDIRECTED to another address')
-
-const shortPay = await anchorSpend(mint, genesisState, 264, { shortPay: true })
-check(!shortPay.ok, '★★★ the royalty cannot be SHORT-PAID')
-
 const drained = await anchorSpend(mint, genesisState, 264, { drain: true })
 check(!drained.ok, '⚠ the covenant cannot be DRAINED past its value floor')
 
@@ -214,11 +203,7 @@ check(!noFork.ok, '★★ a NON-FORKABLE log refuses a second covenant output')
 
 /* ★★★ THE CREATOR'S ROYALTY — the rule the whole design rests on, and the one the shift register
    silently broke. It is a baked literal now, so no shift can evict it. */
-const noCreator = await anchorSpend(mint, genesisState, 264, { omitCreator: true })
-check(!noCreator.ok, '★★★ the CREATOR cannot be left unpaid')
-
-const badCreator = await anchorSpend(mint, genesisState, 264, { wrongCreator: true })
-check(!badCreator.ok, '★★★ the CREATOR\'s royalty cannot be redirected')
+/* ⇒ the creator and lineage checks move to the FORK path, where the payment now lives. */
 
 
 // ════ ★★★ THE FORK PATH — permissionless replication ════════════════════════════════════════════
@@ -262,10 +247,15 @@ async function forkSpend(prevTx: any, prevState: any, opts: any = {}) {
   tx.addInput({ sourceTransaction: funder, sourceOutputIndex: 0, sequence: 0xffffffff })
   tx.addOutput({ lockingScript: lockFor(prevState), satoshis: parentBack })
   if (!opts.omitChild) tx.addOutput({ lockingScript: lockFor(childState), satoshis: 1 })
-  tx.addOutput({ lockingScript: new P2PKH().lock(creator), satoshis: prevState.royalty })
-  for (let i = 0; i < LEVELS; i++) {
-    tx.addOutput({ lockingScript: new P2PKH().lock(prevState['p' + 'abcdefgh'[i]]),
+  /* ★★★ THE PURCHASE PRICE — paid once, at replication, by the buyer. */
+  if (!opts.omitCreator) {
+    tx.addOutput({ lockingScript: new P2PKH().lock(opts.wrongCreator ? Array(20).fill(0xdd) : creator),
                    satoshis: prevState.royalty })
+  }
+  for (let i = 0; i < (opts.omitRoyalties ? 0 : LEVELS); i++) {
+    tx.addOutput({ lockingScript: new P2PKH().lock(
+      opts.wrongPayee && i === 0 ? Array(20).fill(0xee) : prevState['p' + 'abcdefgh'[i]]),
+      satoshis: opts.shortPay && i === 0 ? prevState.royalty + 1 : prevState.royalty })
   }
   const change = new P2PKH().lock(forkerHash)
   tx.addOutput({ lockingScript: change, satoshis: 15_000 })
@@ -333,6 +323,15 @@ check(!fNotForker.ok, '⚠ the child must carry the lineage the covenant compute
    ⇒ Control and payment are separable: a buyer may put a COLD key in charge of the branch while the
    royalties flow to a hot one. The covenant does not check it — the forker is the one spending, and
    nobody else has an interest in who controls their own replica. */
+const fNoCreator = await forkSpend(mint, genesisState, { omitCreator: true })
+check(!fNoCreator.ok, '★★★ a FORK cannot leave the CREATOR unpaid — the purchase price is enforced')
+
+const fNoRoyal = await forkSpend(mint, genesisState, { omitRoyalties: true })
+check(!fNoRoyal.ok, '★★★ …nor the LINEAGE')
+
+const fWrongPayee = await forkSpend(mint, genesisState, { wrongPayee: true })
+check(!fWrongPayee.ok, '★★★ …and it cannot be REDIRECTED')
+
 const fNotOwner = await forkSpend(mint, genesisState, { childNotOwner: true })
 check(fNotOwner.ok, '★★ the forker may set a COLD owner, different from their payee address',
       fNotOwner.why)
@@ -480,10 +479,7 @@ console.log('\n  ── split keys (2-of-2) ──')
       tx.addInput({ sourceTransaction: mint2, sourceOutputIndex: 0, sequence: 0xffffffff })
       tx.addInput({ sourceTransaction: fund, sourceOutputIndex: 0, sequence: 0xffffffff })
       tx.addOutput({ lockingScript: next, satoshis: 5000 })
-      tx.addOutput({ lockingScript: new P2PKH().lock(creator), satoshis: 1 })
-      for (let i = 0; i < LEVELS; i++) {
-        tx.addOutput({ lockingScript: new P2PKH().lock(st['p' + 'abcdefgh'[i]]), satoshis: 1 })
-      }
+      /* ⚠ no royalty outputs: this is an ANCHOR, and an anchor pays nobody. */
       const pre = TransactionSignature.format({
         sourceTXID: mint2.id('hex'), sourceOutputIndex: 0, sourceSatoshis: 5000,
         transactionVersion: tx.version, otherInputs: [tx.inputs[1]], inputIndex: 0,

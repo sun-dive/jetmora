@@ -218,20 +218,17 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
        ⇒ Everything else — the genesis, the tree size, the royalty, the fork rule and the covenant
        code itself — is carried across VERBATIM as byte slices. **A fork therefore cannot relax its
        own rules**, because the rules are not rebuilt, they are copied. */
-    ...childOps(d, probe.layout, fieldOffset, p.levels, owners),
+    ...childOps(d, probe.layout, fieldOffset, p.levels, owners, royaltyOps(d, p.levels, p.creator)),
 
-    /* ── ★★★ THEN THE ROYALTIES — CONSTRUCTED HERE, NOT ACCEPTED FROM THE SPENDER ────────────────
-       ⚠⚠ BINDING IS NOT ENFORCING, and the first version of this got it wrong. Taking the serialized
-       royalty outputs from the unlocking script and folding them into the hash means they cannot be
-       ALTERED — but nothing requires them to be PRESENT. A spender who pushes nothing and builds a
-       transaction with no royalty outputs satisfies it perfectly.
-       ⇒ Caught the moment the acceptance case started working, by a refusal that had been "passing"
-       for the wrong reason all along.
-       ★ So the covenant BUILDS them, from its own payee fields and its own royalty, and `hashOutputs`
-       then makes them unavoidable. THAT is what "permissionless royalties enforced by proof of work"
-       has to mean: the script has no branch that leaves them out. */
-    ...royaltyOps(d, p.levels, p.creator),
-
+    /* ── ⚠⚠ THE ROYALTIES ARE PAID ON A FORK AND ONLY ON A FORK ────────────────────────────────
+       ★★★ HIS CALL, AND IT INVERTS THE ECONOMICS. They used to be charged on EVERY spend, so
+       extending your own branch paid the creator every time. ⇒ **That is a recurring fee on USE —
+       landlord rent, SaaS, a tollgate** — and it is the exact thing this project exists to refuse.
+       ⇒ A FORK is a one-off PURCHASE: pay the creator and the lineage once, to acquire the right to
+         run a branch.
+       ⇒ An ANCHOR is FREE. Running what you already own costs the miner and nobody else.
+       ★ And it dissolves "fork spam" completely: **1,000 forks is 1,000 payments to the creator.**
+         There was never anything to defend against — it is revenue. */
     PN(d('spenderOutputs')), op(OP.OP_PICK), op(OP.OP_CAT),
     op(OP.OP_HASH256), op(OP.OP_FROMALTSTACK), op(OP.OP_EQUAL),
   )
@@ -254,7 +251,7 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
  *   crosses them. That is the condition the runbook sets, met deliberately rather than by luck.
  */
 function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, levels: number,
-                  owners: number): any[] {
+                  owners: number, royalty: any[]): any[] {
   const w = (n: string) => layout.find((f: any) => f.name === n).width
   const HEAD = fieldOffset + w('genesis') + 1            // …through BRANCH's own push opcode
   /* ⚠ Everything between depth and the payees is copied VERBATIM — tree size, royalty, the fork rule
@@ -308,6 +305,8 @@ function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, 
        top it up. The forker pays it. */
     pushData([...Buffer.from('0100000000000000', 'hex')]), op(OP.OP_SWAP), op(OP.OP_CAT),
     op(OP.OP_CAT),                                       //  0  onto the accumulator
+    /* ★★★ …and the royalties, INSIDE the fork branch. The purchase price, paid once. */
+    ...royalty,
   )
   /* ⚠ BALANCED BY CONSTRUCTION: the true arm nets zero — it builds the child and concatenates it
      away — and the false arm does nothing at all. */

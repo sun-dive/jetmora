@@ -533,6 +533,31 @@ its own operations, **but not for its anchor layer, because that layer is BSV.**
 moves, anchoring and forking move with it. ⇒ Nothing minted becomes unspendable — the covenant sets no
 fee bound (§6.1a-i) — but the CADENCE is a cost decision, permanently.
 
+### 4bis.4h ★★★ ROYALTIES ARE A PURCHASE PRICE, NOT A FEE ON USE
+
+**⇒ A FORK pays the creator and the lineage. AN ANCHOR PAYS NOBODY.**
+
+⚠⚠ **It was built the other way round, and that was wrong.** Royalties were charged on every spend, so
+**extending your own branch paid the creator every time.** ⇒ *"There should be no fee on running the
+fork and extending the branch, otherwise this is just another landlord rent, SaaS, or tollgate all over
+again."* — his call, and it is the thing this whole project exists to refuse.
+
+| ★ **FORK** | a **one-off PURCHASE** — pay once to acquire the right to run a branch |
+| ★★★ **ANCHOR** | **FREE.** Running what you already own costs the miner and nobody else |
+
+★★ **And it dissolves "fork spam" completely.** *"If someone wants to fork 1000 times, that's how many
+times they're going to pay the creator."* ⇒ Forking is **REVENUE**. There was never anything to defend
+against, and §4bis.4g's proposed fork fee was doubly wrong — it priced a behaviour that PAYS the
+creator.
+
+⇒ **Measured, 100 sat/KB, N=3, 2-of-2:**
+
+| an **anchor** | 3,235 B ⇒ **324 sat** · **0 royalties** |
+| a **fork** | 4,759 B ⇒ **476 sat** + (1 + N) satoshis |
+
+★ **The ongoing cost of operating a log is the miner fee and nothing else.** Nobody can raise it,
+nobody collects it, and no permission renews.
+
 ### 4bis.4g ✅ A FORK NEEDS NO FEE TO THE PARENT — and proposing one was a mistake
 
 **A fork takes NOTHING from the parent.** ⇒ out0 returns with identical state and identical value
