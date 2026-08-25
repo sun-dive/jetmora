@@ -244,7 +244,9 @@ export function anchorLockOps(p: AnchorFrameParams): { ops: any[]; state: any; l
 function childOps(d: (n: string) => number, layout: any[], fieldOffset: number, levels: number): any[] {
   const w = (n: string) => layout.find((f: any) => f.name === n).width
   const HEAD = fieldOffset + w('genesis') + 1            // …through BRANCH's own push opcode
-  const MID = ['treesize', 'royalty', 'forkable'].reduce((a, n) => a + 1 + w(n), 0)
+  /* ⚠ Everything between depth and the payees is copied VERBATIM — tree size, royalty, the fork rule
+     and the immutable settings. ⇒ Derived from the layout, so adding a field here cannot desync it. */
+  const MID = ['treesize', 'royalty', 'forkable', 'leafcovers'].reduce((a, n) => a + 1 + w(n), 0)
   const PAY = levels * (1 + w('pa'))
   const slots = Array.from({ length: levels }, (_, i) => 'child' + 'p' + 'abcdefgh'[i])
 

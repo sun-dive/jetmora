@@ -105,6 +105,21 @@ DIM depth%2
 DIM treesize%8
 DIM royalty%4
 DIM forkable%2
+
+REM ★★ leafcovers — WHAT A LEAF HASH IS TAKEN OVER (§4bis.3).
+REM  1 = the PLAINTEXT entry · 0 = the STORED BYTES. On a public log the two
+REM  are identical; it only bites where a log is encrypted.
+REM  ⚠⚠ IMMUTABLE, AND IT IS HERE RATHER THAN BEHIND A HASH ON PURPOSE.
+REM  A BRC-113 Token ID would commit to it in immutableChunkBytes — 32 bytes
+REM  of script, on every anchor of every branch forever, PLUS an OP_RETURN,
+REM  PLUS a merkle proof and a block header to READ it. To carry ONE BIT.
+REM  ⇒ BRC-226's answer is better for a payload this size: put it in the
+REM  script. It costs 3 bytes, it replicates unchanged, and a verifier holding
+REM  ANY TIP already has it — no genesis transaction to fetch.
+REM  ★★★ And it makes BRC-113's immutableChunkBytes term REDUNDANT: that term
+REM  exists so tampering breaks the id, and the quine already makes tampering
+REM  impossible. ⇒ genesis = SHA256(genesisTxId ‖ outputIndex), nothing more.
+DIM leafcovers%2
 ${dims}
 
 REM ═══ TWO SPEND PATHS, AND ONLY ONE NEEDS A KEY ═════════════════════════

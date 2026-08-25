@@ -338,3 +338,51 @@ back to `0x41` in the same commit.**
 ⇒ And it is **proved rather than assumed**: the suite adds a **late funder** after the covenant's
 unlocking data is fixed, and requires it to be **accepted under `0xc1`** and **refused under `0x41`**.
 ★ A suite that passes under both scopes says nothing about either — which is what it did an hour ago.
+
+---
+
+## ⚖ BRC-113 OR BRC-226 FOR IDENTITY? — investigated 25 Aug, on his challenge
+
+**Neither is inferior. They answer DIFFERENT HALVES, and the design needs both.**
+
+### ★★★ Why BRC-226 cannot supply identity here
+
+In a quine **the script IS the identity** — and that works because **BRC-226's counter never forks.**
+⇒ Two branches of one jetmora log have DIFFERENT scripts: different depth, different register,
+different branch id. **"The script is the identity" names a BRANCH, not a LOG.**
+⇒ BRC-226 has no answer because the question does not arise on a single line. **BRC-113 does**: a
+stable name every branch shares.
+
+### ★★ Why BRC-113 should NOT carry the settings
+
+⚠ The immutable set is about **two bits** — `leaf_hash_covers` and encryption. `N` and `forkable` are
+already in the script's shape and fields; the key scheme is derived from key length.
+
+⚠⚠ **AND A CORRECTION: "massively over-engineered" was WRONG on bytes, and the measurement said so.**
+A Token ID is **32 bytes whether or not it commits to metadata** — folding `immutableChunkBytes` into
+the hash costs ZERO extra script bytes.
+
+| **BRC-113** | 0 extra script bytes · one OP_RETURN at genesis (~40 B once) · ⚠ **a transaction fetch + merkle proof to read one bit** |
+| ★ **BRC-226** (taken) | **+24 B on every anchor of every branch** · ✅ **no lookup, ever** |
+
+⇒ **On bytes alone BRC-113 wins after roughly two anchors.** The decision is NOT a cost decision.
+★ It turns on this: **fetching a transaction and verifying a merkle proof against a block header, to
+learn one bit, is absurd.** A verifier holding any tip should already know how to read it.
+
+⇒ **The rule, stated so it generalises:** in the script if it is SMALL and read OFTEN; behind a hash if
+it is LARGE or read RARELY. One bit, read on every verification ⇒ the script.
+
+### ★★★ And the hybrid dissolves the genesis record
+
+`immutableChunkBytes` exists so that tampering with the metadata breaks the Token ID. ⇒ **The quine
+already makes tampering impossible**, so the term is redundant:
+
+```
+genesis = SHA256(genesisTxId ‖ outputIndex LE)        ← identity, and nothing else
+leafcovers                                            ← a field, replicated unchanged
+```
+
+⇒ **§4bis's separate genesis record disappears.** There is no OP_RETURN to publish, nothing to fetch,
+and nothing that can be lost or disagreed with.
+
+**26/26.** 1,285 B at N=3. Nothing minted.

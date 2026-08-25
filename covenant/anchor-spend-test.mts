@@ -53,7 +53,7 @@ const payees = Object.fromEntries(
 
 /** The state a log's genesis starts in: depth 0, an empty tree, payees pre-filled with the creator. */
 const genesisState = {
-  genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, ...payees,
+  genesis: Array(32).fill(0x9a), branch: Array(32).fill(0), depth: 0, treesize: 0, royalty: 1, forkable: 1, leafcovers: 1, ...payees,
 }
 
 const lockFor = (st: any) =>
