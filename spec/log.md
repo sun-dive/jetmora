@@ -510,6 +510,25 @@ Two entries at one `(covenant, sequence)` signed by the same authorised key are 
 — the evidence a rewind leaves (§8). ⚠ It needs no gossip protocol: **whoever was on the other side of
 that covenant already holds the later signature.**
 
+### 4d.5 ★★★ TESTED 25 Aug — BRANCHES, and the escape hatch a liar reaches for
+
+**18 cases now: the original eleven, plus seven the detector could not previously EXPRESS.**
+
+⇒ **A fork is no longer convicted.** Two heads at one size with different roots and DIFFERENT `log_id`s
+are a fork claim, not a lie. ⚠ And a head with **no** `log_id` is *uncomparable* — not "the same
+branch".
+
+★★★ **But the claim itself is where a liar hides**, so it is checked rather than believed:
+
+| declared **at or before** the divergence | ⇒ **a real fork** |
+| ★★★ declared **after** | ⇒ **refuted, and convicted** — *"a fork declared after the fact is a rewrite"* |
+| **no anchor offered** | ⇒ **unproven, NEVER disproven** ⚠ §4d.2 again: you cannot prove the absence of a proof |
+| the `(genesis, branch)` hashes to **neither** head's id | ⇒ refuted — the branch pointed at is not these heads' |
+
+⚠⚠ **This is why §4bis.4 requires the declaration to live in an ANCHOR.** The whole defence is that an
+anchor **cannot be backdated** — proof of work is what makes "I declared this fork earlier" checkable
+rather than assertable.
+
 ### 4d.4 ★★★ TESTED 24 Aug — eleven cases, none fooled it
 
 Convicted: two roots at one size · a history that is not a prefix · **a consistency proof borrowed from
@@ -545,10 +564,11 @@ carrying chain's own tree for anchor inclusion proofs (§6.1, and BRC-113 for BS
 An operator MUST publish signed tree heads containing at least: tree size, root hash, and a signature by
 the operator's key. A head MUST NOT be modified once published.
 
-⏭ **PROPOSED and implemented — 90 bytes, canonical by construction:**
+⏭ **PROPOSED and implemented — 122 bytes, canonical by construction:**
 
 ```
 version      1 byte
+log_id      32 bytes  — ★★★ HASH256(genesis ‖ branch): WHICH HISTORY THIS HEAD IS FOR
 tree_size    8 bytes, big-endian
 root        32 bytes
 timestamp    8 bytes, big-endian, unix seconds
@@ -556,6 +576,22 @@ anchor_root 32 bytes  — the last ANCHORED root, or 32 zero bytes if none
 anchor_size  8 bytes  — the tree size at that anchored root
 prune_level  1 byte   — retention granularity, K = 2^level. 0 = nothing pruned
 ```
+
+★★★ **`log_id` EXISTS BECAUSE WITHOUT IT THE EQUIVOCATION DETECTOR CANNOT WORK — added 25 Aug.**
+
+⚠⚠ §4bis.4 asked the detector to take `(genesis, branch, key)`. **A caller cannot supply what the heads
+do not carry.** One operator key runs many branches, so two heads signed by that key at one tree size
+with different roots are either a **LIE** or a **FORK** — and nothing in 90 bytes said which.
+⇒ **A detector that convicts on the key alone convicts every legitimate fork**, which is worse than
+none: it makes every accusation worthless (§4d.2).
+
+★ A reader checks it against the chain — the branch's anchor covenant carries `genesis` and `branch` in
+its PushDrop state (§6.1a-i), so hash them and compare. ⇒ **The head becomes attributable to a specific
+ON-CHAIN branch, not merely to a key.**
+
+⚠ **32 zero bytes means the log never declared which history this is.** That is legal, and a detector
+MUST treat two such heads as **UNCOMPARABLE** rather than as one branch — an absent fact is not evidence
+of a shared history.
 
 ⚠ **The timestamp is the operator's clock and is a CLAIM, not a fact.** Nothing depends on it being
 honest; anyone may compare it against the anchor. ★ It exists so a reader can see a log that has
@@ -1142,6 +1178,6 @@ not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
 | §7 | AST node encoding |
 | §9 | the `ERROR` statement's spelling in BASIC — the encoding is settled (§9.1–9.2) |
 | §4b | `OP_CHECKMULTISIG`, and `OP_CODESEPARATOR`'s effect on `scriptCode` |
-| §4d | the equivocation detector takes a key where it needs **`(genesis, branch, key)`**. ⚠ No longer blocked — `branch` exists (§4bis.4) — but still unbuilt |
+| ~~§4d~~ | ~~the equivocation detector takes a key where it needs `(genesis, branch, key)`~~ ⇒ ✅ **CLOSED 25 Aug**: `log_id` added to the head, detector is branch-aware, 18/18 (§4d.5) |
 
 An implementation MUST NOT claim conformance to version 1 while any of these remain open.

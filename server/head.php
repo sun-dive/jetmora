@@ -17,12 +17,22 @@ require_once __DIR__ . '/merkle.php';
 final class SignedHead
 {
     public const VERSION = 1;
+    /** ⚠ 122 bytes since 25 Aug — `log_id` was added. Nothing had shipped, so the format was free. */
+    public const SIZE = 122;
 
     /**
      * ⚠ CANONICAL: fixed field order, fixed widths, no optional fields. A head with two encodings
      *   could be signed as one thing and read as another.
      *
      *   version      1 byte
+     *   log_id      32 bytes — ★★★ HASH256(genesis ‖ branch): WHICH HISTORY THIS HEAD IS FOR.
+     *                ⚠⚠ Added 25 Aug, and the reason is that WITHOUT IT THE EQUIVOCATION DETECTOR
+     *                CANNOT WORK. One operator key runs many branches, so two heads signed by that
+     *                key at one tree size with different roots are either a LIE or a FORK — and
+     *                nothing in the bytes said which. §4bis.4 asked the detector to take
+     *                (genesis, branch, key); a caller cannot supply what the heads do not carry.
+     *                ★ A reader checks it against the chain: the branch's anchor covenant carries
+     *                `genesis` and `branch` in its PushDrop state, so hash them and compare.
      *   tree_size    8 bytes big-endian
      *   root        32 bytes
      *   timestamp    8 bytes big-endian, unix seconds — ⚠ THE OPERATOR'S CLOCK, and a CLAIM, not a fact.
@@ -35,31 +45,39 @@ final class SignedHead
      *                because a client verifying an OLD proof needs the value that applied THEN, and
      *                heads are immutable and never discarded (§5c.1) — so the answer is always there.
      */
-    public static function bytes(int $size, string $root, int $ts, string $anchorRoot = '', int $anchorSize = 0, int $pruneLevel = 0): string
+    public static function bytes(int $size, string $root, int $ts, string $anchorRoot = '', int $anchorSize = 0, int $pruneLevel = 0, string $logId = ''): string
     {
         if (strlen($root) !== 32) throw new InvalidArgumentException('root must be 32 bytes');
+        /* ⚠ 32 zero bytes means "this log has not declared its identity" — legal, and a detector
+           MUST treat two such heads as UNCOMPARABLE rather than as the same branch. */
+        $logId = $logId === '' ? str_repeat("\x00", 32) : $logId;
+        if (strlen($logId) !== 32) throw new InvalidArgumentException('log id must be 32 bytes');
         $anchorRoot = $anchorRoot === '' ? str_repeat("\x00", 32) : $anchorRoot;
         if (strlen($anchorRoot) !== 32) throw new InvalidArgumentException('anchor root must be 32 bytes');
         if ($pruneLevel < 0 || $pruneLevel > 63) throw new InvalidArgumentException('prune level out of range');
-        return chr(self::VERSION) . pack('J', $size) . $root . pack('J', $ts)
+        return chr(self::VERSION) . $logId . pack('J', $size) . $root . pack('J', $ts)
              . $anchorRoot . pack('J', $anchorSize) . chr($pruneLevel);
     }
 
     public static function parse(string $b): array
     {
-        if (strlen($b) !== 90) throw new InvalidArgumentException('a head is exactly 90 bytes');
+        if (strlen($b) !== self::SIZE) throw new InvalidArgumentException('a head is exactly ' . self::SIZE . ' bytes');
         $v = ord($b[0]);
         if ($v !== self::VERSION) throw new InvalidArgumentException("unknown head version $v");
-        $anchorRoot = substr($b, 49, 32);
+        $logId = substr($b, 1, 32);
+        $anchorRoot = substr($b, 81, 32);
         return [
             'version'     => $v,
-            'tree_size'   => unpack('J', substr($b, 1, 8))[1],
-            'root'        => substr($b, 9, 32),
-            'timestamp'   => unpack('J', substr($b, 41, 8))[1],
+            /* ⚠ null means the log has not declared which history this is. A detector MUST treat two
+               such heads as UNCOMPARABLE — not as the same branch. */
+            'log_id'      => $logId === str_repeat("\x00", 32) ? null : $logId,
+            'tree_size'   => unpack('J', substr($b, 33, 8))[1],
+            'root'        => substr($b, 41, 32),
+            'timestamp'   => unpack('J', substr($b, 73, 8))[1],
             'anchor_root' => $anchorRoot === str_repeat("\x00", 32) ? null : $anchorRoot,
-            'anchor_size' => unpack('J', substr($b, 81, 8))[1],
-            'prune_level' => ord($b[89]),
-            'prune_k'     => ord($b[89]) === 0 ? 0 : 1 << ord($b[89]),
+            'anchor_size' => unpack('J', substr($b, 113, 8))[1],
+            'prune_level' => ord($b[121]),
+            'prune_k'     => ord($b[121]) === 0 ? 0 : 1 << ord($b[121]),
         ];
     }
 

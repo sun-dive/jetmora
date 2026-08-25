@@ -19,6 +19,10 @@
 import { createHash, verify as nodeVerify, createPublicKey } from 'node:crypto'
 import * as M from './merkle.mjs'
 
+/** ⚠ Bitcoin's double SHA-256 — the same function the covenant uses to derive a branch id. */
+const hash256 = b =>
+  [...createHash('sha256').update(createHash('sha256').update(Buffer.from(b)).digest()).digest()]
+
 const hex = b => Buffer.from(b).toString('hex')
 const eq = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
 
@@ -39,14 +43,84 @@ export function verifySig(msg, pubkey, sig) {
   } catch { return false }
 }
 
-/** A signed head, 90 bytes — spec §5.2. */
+/** A signed head, 122 bytes — spec §5.2. */
 export function parseHead(b) {
-  if (b.length !== 90) throw new Error(`a head is 90 bytes, got ${b.length}`)
+  if (b.length !== 122) throw new Error(`a head is 122 bytes, got ${b.length}`)
   const rd = (o, n) => { let v = 0n; for (let i = 0; i < n; i++) v = (v << 8n) | BigInt(b[o+i]); return Number(v) }
-  const anchorRoot = b.slice(49, 81)
-  return { version: b[0], treeSize: rd(1, 8), root: b.slice(9, 41), timestamp: rd(41, 8),
+  const logId = b.slice(1, 33), anchorRoot = b.slice(81, 113)
+  return { version: b[0],
+           /* ⚠ null = the log never declared WHICH HISTORY this is. Two such heads are UNCOMPARABLE. */
+           logId: logId.every(x => x === 0) ? null : logId,
+           treeSize: rd(33, 8), root: b.slice(41, 73), timestamp: rd(73, 8),
            anchorRoot: anchorRoot.every(x => x === 0) ? null : anchorRoot,
-           anchorSize: rd(81, 8), pruneLevel: b[89] }
+           anchorSize: rd(113, 8), pruneLevel: b[121] }
+}
+
+/**
+ * ⚠⚠ THE GATE EVERY FORM MUST PASS FIRST — spec §4bis.4.
+ *
+ * **Two heads from DIFFERENT BRANCHES of one genesis are a FORK, not a lie.** One operator key runs
+ * many branches, so a detector that convicts on the key alone convicts every legitimate fork — which
+ * makes it worse than none, because it makes every accusation worthless (§4d.2).
+ *
+ * ⚠ And an undeclared log id is not permission to compare. It is the ABSENCE of the fact the
+ *   comparison needs, and §4d.2's rule applies: report it, never convict on it.
+ */
+function comparable(a, b) {
+  if (a.logId === null || b.logId === null) {
+    return { ok: false, reason: 'at least one head declares no log id — these are not comparable, ' +
+      'and an absent fact is not evidence of a shared history' }
+  }
+  if (!eq(a.logId, b.logId)) {
+    return { ok: false, fork: true, reason: 'different log ids — this is a FORK CLAIM, not a lie. ' +
+      'Verify it with checkForkClaim: an operator caught equivocating will say "different branch".' }
+  }
+  return { ok: true }
+}
+
+/**
+ * ★★★ THE ESCAPE HATCH, AND WHY IT CANNOT BE USED AFTERWARDS — spec §4bis.4.
+ *
+ * An operator caught signing two incompatible histories will say **"that was a fork."** ⇒ The claim is
+ * only refused if it cannot be BACKDATED, which is why §4bis.4 requires a fork to be declared **at or
+ * before the divergence** and to live in an ANCHOR, where the declaration costs proof of work.
+ *
+ * ⚠ This function does NOT fetch anything. Like `checkConsistency`, it takes the evidence and checks
+ *   it — so a caller who cannot supply the anchor gets suspicion, never a conviction (§4d.2).
+ *
+ * @param branch   { genesis, branch } read from the branch's anchor covenant PushDrop state
+ * @param anchoredAtSize  the tree size the FORK was anchored at, or null if no anchor is offered
+ * @param disputedSize    the size at which the two heads disagree
+ */
+export function checkForkClaim(headA, headB, branch, anchoredAtSize, disputedSize) {
+  const a = parseHead(headA), b = parseHead(headB)
+  if (a.logId === null || b.logId === null) {
+    return { verdict: 'unproven', reason: 'a head with no log id cannot support a fork claim' }
+  }
+  if (eq(a.logId, b.logId)) {
+    return { verdict: 'not-a-fork', reason: 'both heads carry the SAME log id — one history, so the ' +
+      'fork claim does not apply. Use checkSameSize.' }
+  }
+  /* ★ The id must be DERIVED, not asserted: HASH256(genesis ‖ branch) from the on-chain covenant. */
+  const derived = hash256([...branch.genesis, ...branch.branch])
+  if (!eq(derived, a.logId) && !eq(derived, b.logId)) {
+    return { verdict: 'refuted', reason: 'the supplied (genesis, branch) hashes to NEITHER log id — ' +
+      'the branch being pointed at is not the branch these heads claim' }
+  }
+  if (anchoredAtSize === null || anchoredAtSize === undefined) {
+    /* ⚠⚠ §4d.2 EXACTLY: you cannot prove the absence of a proof. */
+    return { verdict: 'unproven', suspicion: true,
+      reason: 'no anchor offered for the fork, so the claim cannot be dated. ⚠ Report it as ' +
+              'suspicion — an unanchored fork claim is unproven, NOT disproven' }
+  }
+  if (anchoredAtSize > disputedSize) {
+    return { verdict: 'refuted', equivocated: true,
+      reason: `the fork was anchored at size ${anchoredAtSize}, AFTER the histories diverged at ` +
+              `${disputedSize} — a fork declared after the fact is a rewrite`,
+      statement: 'claimed a fork that was declared after the divergence it explains' }
+  }
+  return { verdict: 'fork', reason: `declared at size ${anchoredAtSize}, at or before the divergence ` +
+    `at ${disputedSize} — a legitimate branch, not equivocation` }
 }
 
 /**
@@ -57,6 +131,9 @@ export function checkSameSize(headA, sigA, headB, sigB, pubkey) {
   const a = parseHead(headA), b = parseHead(headB)
   if (!verifySig(headA, pubkey, sigA)) return { equivocated: false, reason: 'first head is not signed by that key' }
   if (!verifySig(headB, pubkey, sigB)) return { equivocated: false, reason: 'second head is not signed by that key' }
+  /* ⚠⚠ THE BRANCH GATE, BEFORE ANY COMPARISON OF CONTENT. A key is not a history. */
+  const cmp = comparable(a, b)
+  if (!cmp.ok) return { equivocated: false, forkClaim: cmp.fork === true, reason: cmp.reason }
   if (a.treeSize !== b.treeSize) return { equivocated: false, reason: 'different tree sizes — see checkConsistency' }
   if (eq(a.root, b.root)) return { equivocated: false, reason: 'same size, same root — this is one head twice' }
   return { equivocated: true, form: 'same-size', treeSize: a.treeSize,
@@ -74,6 +151,10 @@ export function checkConsistency(headSmall, sigSmall, headLarge, sigLarge, pubke
   const s = parseHead(headSmall), l = parseHead(headLarge)
   if (!verifySig(headSmall, pubkey, sigSmall) || !verifySig(headLarge, pubkey, sigLarge))
     return { equivocated: false, reason: 'a head is not signed by that key' }
+  /* ⚠⚠ THE BRANCH GATE. Two branches of one genesis diverge BY DESIGN — the smaller is not a prefix
+     of the larger and that is exactly what a fork IS. Convicting on it would convict every fork. */
+  const cmp = comparable(s, l)
+  if (!cmp.ok) return { equivocated: false, forkClaim: cmp.fork === true, reason: cmp.reason }
   if (s.treeSize > l.treeSize) return checkConsistency(headLarge, sigLarge, headSmall, sigSmall, pubkey, proof)
   if (s.treeSize === l.treeSize) return checkSameSize(headSmall, sigSmall, headLarge, sigLarge, pubkey)
   if (proof === null || proof === undefined)
