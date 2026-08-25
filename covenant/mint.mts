@@ -15,7 +15,10 @@ import { buildAnchorLock } from './anchorFrame.mts'
 const WOC = 'https://api.whatsonchain.com/v1/bsv/main'
 const FEE_PER_KB = 100
 const LEVELS = Number(process.env.N ?? 3)
-const NOWNERS = Number(process.env.NOWNERS ?? 2)
+/* ⚠ 1 by DEFAULT. The owner key is the log's OPERATIONAL key — it signs every anchor — so n-of-n
+   doubles the ceremony on a routine action. ⇒ Raise it only where anchoring is rare and deliberate;
+   a log can also start at 1 and fork to an n-of-n branch later (spec §4bis.4i). */
+const NOWNERS = Number(process.env.NOWNERS ?? 1)
 const FORKABLE = Number(process.env.FORKABLE ?? 1)
 const LEAFCOVERS = Number(process.env.LEAFCOVERS ?? 1)
 const ROYALTY = Number(process.env.ROYALTY ?? 1)

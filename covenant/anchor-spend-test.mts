@@ -110,9 +110,12 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
      the royalties from their own input, exactly as a forker does. ⇒ Zero drain surface. */
   const newValue = prevOut.satoshis - (opts.drain ? 1 : 0)
 
+  /* ★ THE FUNDER IS A SEPARATE KEY when opts.fundWith says so — proving the owner key never needs
+     to hold satoshis, only to sign. */
+  const fundKey = opts.fundWith ?? opts.signWith ?? priv
   const funder = new Transaction()
   funder.addOutput({ lockingScript: new P2PKH().lock(
-    (opts.signWith ?? priv).toPublicKey().toHash() as number[]), satoshis: 20_000 })
+    fundKey.toPublicKey().toHash() as number[]), satoshis: 20_000 })
 
   const tx = new Transaction()
   tx.addInput({ sourceTransaction: prevTx, sourceOutputIndex: opts.vout ?? 0, sequence: 0xffffffff })
@@ -161,7 +164,7 @@ async function anchorSpend(prevTx: any, prevState: any, newTreeSize: number, opt
     push([...preimage]),
   ])
   tx.inputs[0].unlockingScript = unlock
-  tx.inputs[1].unlockingScript = await new P2PKH().unlock(opts.signWith ?? priv).sign(tx, 1)
+  tx.inputs[1].unlockingScript = await new P2PKH().unlock(fundKey).sign(tx, 1)
 
   const spend = new Spend({
     sourceTXID: prevTx.id('hex'), sourceOutputIndex: opts.vout ?? 0, sourceSatoshis: prevOut.satoshis,
@@ -559,6 +562,17 @@ if (process.env.FRAMES) {
   const { writeFileSync } = await import('node:fs')
   writeFileSync(process.env.FRAMES, JSON.stringify(frames, null, 2))
   console.log(`\n  ★ ${frames.length} frames written to ${process.env.FRAMES}`)
+}
+
+
+// ════ ★★ THE OWNER KEY NEVER NEEDS SATOSHIS ═════════════════════════════════════════════════════
+// ⚠ It SIGNS the covenant input; a completely separate key FUNDS the transaction. ⇒ So an owner key
+//   can live somewhere that never holds money, and the wallet with the coins never controls the log.
+console.log('\n  ── who needs funding ──')
+{
+  const walletWithMoney = PrivateKey.fromRandom()
+  const r = await anchorSpend(mint, genesisState, 512, { fundWith: walletWithMoney })
+  check(r.ok, '★★ the OWNER signs, a DIFFERENT wallet pays — owner keys hold no satoshis', r.why)
 }
 
 console.log(`\n  ${fail === 0 ? '✓' : '⚠'} ${pass} passed, ${fail} failed`)

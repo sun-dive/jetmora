@@ -581,6 +581,37 @@ nearly free, therefore it should cost more"* — and ⚠ **the premise is not ev
 **~476 sat** in BSV miner fees (§4bis.4f-ii), because it is a BSV transaction carrying two covenant
 scripts. ⇒ It is CHEAP, not free, and cheap replication is the design rather than a leak in it.
 
+### 4bis.4i ⚠★★ THE OWNER KEY IS OPERATIONAL, NOT COLD — and why it cannot be avoided
+
+**An anchor requires a signature, and that signature must be over THE TRANSACTION.**
+
+⚠⚠ **The better design does not exist on BSV.** A log already signs its heads (§5.2), so the natural
+move is for the covenant to check THAT signature and let **anyone** pay to anchor — no ceremony, no key
+operation, and a third party could anchor a log they care about. ⇒ **It cannot be built: BSV has no
+`OP_CHECKDATASIG`**, so a script can verify a signature over its own transaction and over nothing else.
+
+⇒ Therefore **the anchorer signs, and the owner key is the LOG'S OPERATIONAL KEY** — hot, on the
+machine that anchors, used routinely. ⚠ **Not cold, and not pretended to be.**
+
+★★ **The protection is architectural rather than ceremonial, and it is already built:**
+
+| the money is not there | ⇒ **owner keys hold no satoshis.** They sign; a separate key funds |
+| the royalties are not there | ⇒ control and payment are different fields (§4bis.4f) |
+| compromise is survivable | ⇒ **forking is the recovery** |
+
+⚠ **n-of-n is therefore the WRONG default.** It doubles the signatures on every anchor — the exact
+ceremony that makes a cold key impractical. ⇒ It is right only where **anchoring is rare and
+deliberate** and the log is valuable enough to justify it, which is a per-log policy and is why it is a
+mint parameter rather than a rule.
+
+★★★ **And the policy is upgradeable the same way everything else here is: a log may start `1-of-1`
+operational and later FORK to an `n-of-n` branch** when it becomes worth anchoring deliberately. ⇒ One
+more thing that works only because forking needs nobody's permission.
+
+⚠ **What makes the frequency bearable at all is §4c:** an anchor is a CADENCE, not a heartbeat.
+*"A lap time is final the moment it is recorded."* ⇒ Entries are final on append; anchoring only
+governs what a third party can later be made to accept. **A log between anchors is not waiting.**
+
 ### 4bis.5 ⏭ Open
 
 ✅ **RESOLVED — "the genesis's serialization, and whether it is committed in the first anchor or in a
