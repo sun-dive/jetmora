@@ -453,16 +453,36 @@ attacker's branch still pays the creator.
 ⇒ **30/30**, including: the forker CAN anchor · the seller CANNOT · the owner cannot be rotated · the
 child's owner cannot be chosen freely. 1,314 B at N=3.
 
-### ⏭ OPEN — his other instinct, and it is a real weakening
+### ✅ THE SLIDING WINDOW IS CORRECT — his call, and it closes my "laundering" concern
 
-*"The royalties could be drained."* ⇒ Not by a compromised key — an anchorer PAYS royalties, never
-receives them. **But the LINEAGE royalty can be LAUNDERED.** The deep-fork test already shows it:
+I called this a weakening. ⇒ **It is the design**: *"the N list of ancestors gets shuffled along on
+every fork."*
 
 ```
-forked 5 deep, register: 532643 532643 532643      ← all one forker
+forked 5 deep, register: 532643 532643 532643      ← the window slid, as it should
 ```
 
-⇒ **N self-forks flush every legitimate ancestor out of the register**, at roughly `N × 50` satoshis.
-★ The creator survives — he is a baked literal, which is exactly why that was the right call — but the
-intermediate ancestors do not. ⚠ **Anyone can escape paying their parent for about 150 sat.**
-⇒ That is a design question, not a bug: it is what a fixed-width shift register does.
+★★ **The register is a WINDOW, not a debt ledger.** A depth-10 branch genuinely has different recent
+ancestors than a depth-3 one, so nothing is escaped — and a self-forker pays real satoshis **and buries
+their own depth permanently** to move the window. ⇒ Self-moderating, the same shape as BRC-226's crumb.
+
+★★★ **And the property that makes it plainly right:**
+
+> **PAYMENT is a window. PROVENANCE is the whole chain.**
+
+⇒ The anchor chain records **every fork, forever**, so a branch at any depth still walks back to the
+creator through every intermediate. **Bounded cost, unbounded provenance.**
+
+⚠ ⇒ So `N` is a **POLICY** choice — how far back payment reaches — **not a security parameter.** That
+makes freezing it at genesis far less fraught than I had it.
+
+★ And the creator being a baked literal is what anchors the whole thing: the window may slide off every
+intermediate, but **it can never slide off the origin.**
+
+### ⏭ STILL OPEN BEFORE A MINT
+
+· **Split keys / multisig for `owner`** — ⚠ his suggestion, and it needs **NO covenant change at all**:
+  the field holds a hash160, so it may as well be the hash of a multisig script as a P2PKH address.
+  ⇒ *"Making the attack much more difficult"* is free here.
+· **A dry-run genesis mint** — build the real transaction locally, read it back, and look at every
+  value that is about to become permanent. ⚠ No key needed, nothing broadcast.

@@ -443,6 +443,26 @@ custodian, and a **non-forkable** log can never have more than one by constructi
 cost of choosing non-forkable, and it should be weighed at genesis against the cleanliness that choice
 buys — because it is the one decision that can never be revisited.
 
+### 4bis.4e ★★ THE LINEAGE REGISTER IS A WINDOW, NOT A LEDGER
+
+**The N ancestor slots shuffle along on every fork.** ⇒ A branch pays the creator and its **N most
+recent** ancestors, and an older ancestor slides out.
+
+⚠ **That is correct, not a leak.** A branch at depth 10 genuinely has different recent ancestors than
+one at depth 3. ★ And moving the window costs real satoshis **and buries the forker's own depth
+permanently**, so it is self-moderating in the same way BRC-226's crumb is.
+
+★★★ **The property that makes it right:**
+
+| **PAYMENT** | a **WINDOW** — bounded, N wide, fixed at genesis |
+| **PROVENANCE** | the **WHOLE CHAIN** — every fork, anchored forever |
+
+⇒ **Bounded cost, unbounded provenance.** A branch at any depth still walks back to the creator through
+every intermediate; only the payment list is capped.
+
+⚠ ⇒ Therefore **`N` is POLICY, not security.** ★ And the creator is a baked literal precisely so that
+the window **can never slide off the origin.**
+
 ### 4bis.5 ⏭ Open
 
 ✅ **RESOLVED — "the genesis's serialization, and whether it is committed in the first anchor or in a
