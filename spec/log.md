@@ -1472,6 +1472,75 @@ open** — no seats at all — and it survives because a proof-of-work fee makes
 remains shared even then is **who starts the race and who declares it finished**, and those need 6c.5.
 
 
+## 6e. The anchor is chain-agnostic — and that is the answer to being locked out
+
+⚠ This section exists because of a question worth answering once: *"maybe we'll have to launch our own
+main chain too in the end?"* ⇒ **No — and this is why.**
+
+### 6e.1 ★★★ What an anchor actually buys
+
+A log's integrity is **its own**: the entry hashes, the merkle structure, the equivocation detector
+(§4d). Nothing in that depends on which chain is watching.
+
+> **The chain supplies exactly one thing: a timestamp nobody controls.**
+
+⇒ Therefore the dependency is not on Bitcoin SV. It is on **some** public, ordered, unforgeable history
+being willing to carry 32 bytes.
+
+### 6e.2 The mechanism degrades, the guarantee does not
+
+| | what it costs | what it still gives |
+|---|---|---|
+| ★ **a covenant anchor** (§6.1a) | needs a chain with covenants | the chain is **walkable** — anchor to anchor, free, no index |
+| ⇒ **a plain commitment** | any chain with a data output | ⚠ the walk is lost. **The timestamp is not.** |
+
+★★ So a hostile fee policy, a hostile library, or a hostile social layer costs **convenience**, never
+**integrity**. The covenant is an optimisation. **It was never the guarantee.**
+
+### 6e.3 ⚠⚠ Two witnesses you do not control beat one you do
+
+**A chain you run is a chain you must defend** — nodes, consensus, an economy, and a target painted on
+all three. ⇒ Anchoring the same head to **two chains you do not run** costs a few satoshis and defends
+itself, because other people's incentives do the work.
+
+★★★ And you only need **one** of them to survive. That is a stronger guarantee than self-hosting can
+offer, at a fraction of the cost.
+
+### 6e.4 Choosing a witness — the criteria, not the brands
+
+1. ⚠⚠ **Expensive to reorg.** A chain cheap to reorg is a chain where an anchor could be REMOVED, and
+   that is the one thing an anchor must never be. ⇒ This rules out small-hashrate chains as a *sole*
+   witness, however cheap they are.
+2. ⚠ **Retrievable years later.** An anchor you cannot find is not an anchor. **A single block explorer
+   is a single point of failure** — the chain surviving is not enough if the means of querying it does
+   not.
+3. ★★★ **Uncorrelated failure.** Two witnesses that die of the same cause are one witness. ⇒ Prefer a
+   chain with different mining, different tooling and a different community from the first.
+4. **Cheap and unremarkable.** Anchoring is routine; it must not be an event.
+
+⇒ **Shortlist considered (26 Aug 2026):**
+
+| | |
+|---|---|
+| **BCH** | ★★ real hashrate, deep infrastructure, cheap `OP_RETURN`. ⚠ Shares BSV's ancestry and much of its ecosystem — **the convenient second witness, and the least independent one** |
+| **Doge** | ★★★ merge-mined with Litecoin, one-minute blocks, and culturally very hard to kill. ⇒ **Genuinely uncorrelated with BSV.** If only one second witness is taken, take this |
+| **PND** | cheap, and a third witness costs almost nothing. ⚠⚠ Low hashrate and a single explorer ⇒ **rides along, is never relied upon alone** |
+
+★ The criteria outrank the list. A chain that meets 1–4 qualifies whatever it is called, and one that
+fails 1 does not, however friendly its community.
+
+### 6e.5 Normative
+
+1. An implementation **MUST NOT** assume a specific chain. The anchor's interface is *"commit 32 bytes,
+   return a reference that can be resolved later."*
+2. A head **MAY** be anchored to more than one chain. Where it is, **any one** valid anchor is
+   sufficient proof of time — verifiers **MUST NOT** require all of them.
+3. An implementation **MUST** record which chain each anchor was made on, and **MUST NOT** assume the
+   resolution method is the same for all of them.
+4. ⚠ Where a chain supports covenants, the walkable form (§6.1a) **SHOULD** be used — but a verifier
+   **MUST** accept a plain commitment, because that is what a fallback chain will carry.
+
+
 ## 11. Version 1 summary of open items
 
 | ~~§2~~ | ~~genesis commitment serialization and on-chain envelope~~ ⇒ ✅ **CLOSED 25 Aug: there is none.** Identity is one derived field and every immutable setting is an enforced field in the covenant (§4bis.0) |
@@ -1479,6 +1548,7 @@ remains shared even then is **who starts the race and who declares it finished**
 | §6.2 | recommended anchor depth |
 | §7 | AST node encoding |
 | §9 | the `ERROR` statement's spelling in BASIC — the encoding is settled (§9.1–9.2) |
+| §6e | which chains are actually adopted as second witnesses, and the reference format for a non-BSV anchor — the RULES are settled (§6e.4–6e.5), the choice is not |
 | §4b | `OP_CHECKMULTISIG`, and `OP_CODESEPARATOR`'s effect on `scriptCode` |
 | §6c | the seat credential's encoding, and whether a deadline counts in entries or in wall-clock seconds — the RULES are settled (§6c.3–6c.5), the wire format is not |
 | ~~§4d~~ | ~~the equivocation detector takes a key where it needs `(genesis, branch, key)`~~ ⇒ ✅ **CLOSED 25 Aug**: `log_id` added to the head, detector is branch-aware, 18/18 (§4d.5) |
