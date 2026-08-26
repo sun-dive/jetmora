@@ -1154,8 +1154,14 @@ bytes, so altering the appended byte changes the preimage and the signature ceas
 malleability is not a threat here: an entry is identified by the hash of its own canonical bytes, and
 nothing in this specification depends on a signature being unique.
 
-⏭ **OPEN: `OP_CHECKMULTISIG`.** Covenants here are keyless, so it has no use yet. It is deliberately
-unimplemented rather than written untested — **a wrong signature check is worse than an absent one.**
+⏭ **OPEN: `OP_CHECKMULTISIG`.** The covenants written so far are keyless, so it has no use *yet*. It is
+deliberately unimplemented rather than written untested — **a wrong signature check is worse than an
+absent one.**
+
+⚠ **This is no longer safe to assume permanently.** §6c.5 requires a seated covenant to bind a seat with
+a signature over the transaction, so **interactive covenants on this chain will not all be keyless.**
+Single-key seats need only `OP_CHECKSIG`, which is implemented; a seat shared between parties would need
+this opcode. ⇒ Revisit before §6c's wire format is settled, not after.
 
 ⏭ **OPEN: `OP_CODESEPARATOR`'s effect on `scriptCode`.** Currently the whole script is used.
 
@@ -1352,6 +1358,120 @@ H(result) = SHA-256( for each stack item: varint(len) ‖ bytes )
 ⚠ Vectors marked `013` describe behaviour where **Bitcoin 0.1.3 and BSV differ**; a BSV interpreter is
 not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
 
+## 6c. Multi-party covenants — seats, timeouts, and what free costs
+
+A covenant authorised by transaction introspection alone has **no key, and therefore no owner**. That
+is the point of it: nobody can be locked out, nothing can be seized, and the rules are the whole of the
+authorisation. ⇒ It also means **anybody may spend it**, which is exactly right for a monument and
+exactly wrong for a game.
+
+### 6c.1 ⚠⚠ On this chain the fee does not stand in for access control
+
+On a proof-of-work chain an interfering spend still costs its author a fee. That is weak deterrence and
+was never designed as access control — but it is not nothing, and it is why an open board on BSV
+survives without seats.
+
+**jetmora has no fee.** Covenants tick free; that is a deliberate property and §4bis keeps it. ⇒ The
+consequence follows immediately and must be written down rather than discovered:
+
+> **Griefing an interactive covenant on this chain costs the griefer nothing.**
+
+⚠ Note the asymmetry with §6.1a's rule that *"the covenant has no business duplicating a rule it does
+not own"* — a covenant there declines to police underpayment because **the network already refuses an
+underpaying transaction.** Here there is no such backstop. A rule nobody else enforces is a rule the
+covenant must enforce or nobody will.
+
+### 6c.2 ★★★ The exposure is created by the feature, not by an oversight
+
+The README's racing note draws the distinction that matters: on a proof-of-work chain a car is compiled
+**for one run and no other** — the race is simulated to its last tick before anything is minted, and the
+whole run is unrolled into a single locking script.
+
+⇒ **That design is immune to interference by accident.** Nobody can meddle at tick 40 because there is
+no tick 40 to meddle with; there is only a script that already knows how the race ends.
+
+★★ Here the throttle is **a decision per tick, not a plan** — which is the whole reason racing belongs
+on this chain. And a decision per tick means **a live spend per tick**, each one an opportunity for
+somebody who is not driving.
+
+> **The property that makes this chain right for interactive covenants is the same property that
+> requires them to have seats.**
+
+### 6c.3 Seating: three mechanisms, and one of them has a hole
+
+| | mechanism | keeps "no wallet"? | binds the *content* of the move? |
+|---|---|---|---|
+| **A** | public keys in state; `CHECKSIG` against whoever's turn it is | ✗ | ✅ a signature commits to the transaction |
+| **B** | hash-chain seat tokens — commit `H⁽ⁿ⁾(s)`, each move reveals one link | ✅ a secret, not a key | ⚠⚠ **no** |
+| **C** | first-come binding — the board starts open and **seats whoever moves first** | — (a policy, not a credential) | — |
+
+⚠⚠ **B's hole, stated plainly because it is not obvious and it is fatal on its own.** A signature commits
+to the transaction; **a hash reveal does not.** The moment a reveal is broadcast, that preimage is public
+in the mempool — anyone may take it, build a *different* transaction making a *different* move, and race
+the original. Whichever is sequenced first wins.
+
+⇒ **A seat token of this kind proves who may move. It cannot pin what the move is.** That is inherent to
+any bearer reveal and cannot be patched; it is not a reason to discard hash chains, but it is a reason
+never to use one alone where the *content* of the action matters.
+
+★ **C is orthogonal and composes with either.** First-come binding answers *how a seat is acquired*, not
+*what a seat is*. A board opens unclaimed, the first mover's credential is written into state as it
+plays, and thereafter that seat is spoken for. ⇒ No registration, no lobby, no setup: **whoever sits
+down at the board is playing**, which is also how it works in a pub.
+
+### 6c.4 ⚠⚠ Timeouts run one way only
+
+The obvious rule — *"move within sixty seconds or forfeit"* — **cannot be written.** A lock time proves a
+transaction was **not sequenced earlier** than T. Nothing can prove a move **did not happen**, and no
+covenant can observe an absence.
+
+⇒ Therefore the rule is inverted, and the inversion is the whole idiom:
+
+| ✗ cannot express | ✅ expresses the same outcome |
+|---|---|
+| you must move within 60 s | **after 60 s, anyone may skip you** |
+
+★★ A **forfeit is a distinct spend**: it advances the turn, places no mark, resets the clock, and carries
+a lock time at or beyond the recorded deadline. It is **permissionless by design** — anybody may
+un-stall a stalled game, and the opponent has every incentive to. ⇒ The moves are seated; **the clock is
+not.**
+
+⚠ **The clock must be monotonic or it becomes the attack.** A mover chooses their own lock time, and a
+low one shortens the *opponent's* deadline. A conforming implementation MUST require each spend's lock
+time to be no earlier than the previous one, so the clock can only ever move forward. The worst a
+hostile mover can then do is decline to extend it.
+
+⚠ And a deadline is **sequencing time, not wall-clock time**. Sixty seconds is a target, not a promise;
+an implementation MUST NOT present it to a player as a guarantee.
+
+### 6c.5 Normative
+
+1. A covenant intended for more than one participant **MUST** define its seats, or document that it is
+   deliberately open.
+2. Where the *content* of an action matters, a seat **MUST** be bound by a signature over the
+   transaction. A bearer reveal alone **MUST NOT** be used for this (6c.3). ⚠ A single-key seat needs only
+   `OP_CHECKSIG`; a seat shared between parties needs `OP_CHECKMULTISIG`, which §4b leaves deliberately
+   unimplemented — **that opcode's status must be settled before a shared seat is specified.**
+3. A covenant with a deadline **MUST** express it as *"after T, anyone may…"*, never as an obligation to
+   act before T (6c.4).
+4. Such a covenant **MUST** require lock times to be monotonic across the chain of spends.
+5. A forfeit or timeout path **SHOULD** be permissionless, so no participant can hold a shared object
+   hostage by declining to act.
+6. Reading is never gated. **Spectators require no permission and no credential**, and an implementation
+   MUST NOT introduce one.
+
+### 6c.6 Worked example — a shared board
+
+Noughts and crosses on chain (`grafverse.com/oxo.html`) is the smallest honest instance: a shared object,
+two participants, alternating turns, unlimited spectators. Its current mainnet form is **deliberately
+open** — no seats at all — and it survives because a proof-of-work fee makes interference cost something.
+⇒ **The same covenant on this chain would need 6c.3 C plus A, and 6c.4.**
+
+★★ **A shared board needs seats; parallel lanes do not.** Where each participant owns their own covenant
+— one lane per driver — the seat is the covenant itself, and 6c.3 collapses to ordinary ownership. ⚠ What
+remains shared even then is **who starts the race and who declares it finished**, and those need 6c.5.
+
+
 ## 11. Version 1 summary of open items
 
 | ~~§2~~ | ~~genesis commitment serialization and on-chain envelope~~ ⇒ ✅ **CLOSED 25 Aug: there is none.** Identity is one derived field and every immutable setting is an enforced field in the covenant (§4bis.0) |
@@ -1360,6 +1480,7 @@ not an oracle for them. Vectors marked `jetmora` have no external oracle at all.
 | §7 | AST node encoding |
 | §9 | the `ERROR` statement's spelling in BASIC — the encoding is settled (§9.1–9.2) |
 | §4b | `OP_CHECKMULTISIG`, and `OP_CODESEPARATOR`'s effect on `scriptCode` |
+| §6c | the seat credential's encoding, and whether a deadline counts in entries or in wall-clock seconds — the RULES are settled (§6c.3–6c.5), the wire format is not |
 | ~~§4d~~ | ~~the equivocation detector takes a key where it needs `(genesis, branch, key)`~~ ⇒ ✅ **CLOSED 25 Aug**: `log_id` added to the head, detector is branch-aware, 18/18 (§4d.5) |
 
 An implementation MUST NOT claim conformance to version 1 while any of these remain open.
