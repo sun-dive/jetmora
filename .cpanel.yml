@@ -13,6 +13,9 @@ deployment:
     - /bin/cp site/index.html "$DEPLOYPATH/index.html"      # the paper — crawlable, self-contained, no CDN
     - /bin/cp site/.htaccess "$DEPLOYPATH/.htaccess"        # ⚠ Options -Indexes: this host lists directories by default
     - /bin/cp site/light-speed-transfers.html "$DEPLOYPATH/light-speed-transfers.html"   # the anchor-transfer paper v0.1 — the serious version; the Substack essay points here
+    - /bin/cp site/og-light-speed.jpg "$DEPLOYPATH/og-light-speed.jpg"   # OG/Twitter card for the paper
+    - /bin/cp site/robots.txt "$DEPLOYPATH/robots.txt"                   # allow all + sitemap pointer
+    - /bin/cp site/sitemap.xml "$DEPLOYPATH/sitemap.xml"                 # index, paper, spec, vectors
     # The specification and the vectors are published as static files so they can be cited and fetched.
     # ⚠ vectors/core.json is CC0 and IS the specification — an implementation reproducing it is conformant.
     - /bin/mkdir -p "$DEPLOYPATH/spec" && /bin/cp spec/log.md "$DEPLOYPATH/spec/log.md"
