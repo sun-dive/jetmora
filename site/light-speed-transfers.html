@@ -1,0 +1,785 @@
+<title>Light Speed Transfers</title>
+<link rel="canonical" href="https://jetmora.org/light-speed-transfers.html">
+<meta name="description" content="Anchor transfers: value locked on chain, ownership moved by signing forward, exit always available. A transfer is a signature handed over — no block, no confirmation. Apache-2.0, implement it freely.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;600&display=swap">
+<style>
+:root{
+  --bg:#F7F6F2; --card:#FFFFFF; --ink:#161513; --body:#46433D; --soft:#78736A;
+  --rule:#E0DCD2; --hair:#EFECE5;
+  --deep:#1D3F52; --deep-soft:#E6EEF2;
+  --alarm:#9C3520; --alarm-soft:#FAEBE6;
+  --good:#3D6349; --good-soft:#E9F1EB;
+  --gold:#8A6510; --gold-soft:#F7F0DE;
+  --code-bg:#F0EEE7; --code-ink:#2A2723;
+}
+:root:not([data-theme="light"]){@media(prefers-color-scheme:dark){
+  --bg:#131412; --card:#1B1C19; --ink:#EDEAE3; --body:#B7B3A9; --soft:#8A857B;
+  --rule:#2E302B; --hair:#212320;
+  --deep:#8FC0D6; --deep-soft:#16262E;
+  --alarm:#E59277; --alarm-soft:#2B1A15;
+  --good:#8FC0A0; --good-soft:#17231B;
+  --gold:#D9B15C; --gold-soft:#26200F;
+  --code-bg:#1E201C; --code-ink:#D2CEC5;
+}}
+:root[data-theme="dark"]{
+  --bg:#131412; --card:#1B1C19; --ink:#EDEAE3; --body:#B7B3A9; --soft:#8A857B;
+  --rule:#2E302B; --hair:#212320;
+  --deep:#8FC0D6; --deep-soft:#16262E;
+  --alarm:#E59277; --alarm-soft:#2B1A15;
+  --good:#8FC0A0; --good-soft:#17231B;
+  --gold:#D9B15C; --gold-soft:#26200F;
+  --code-bg:#1E201C; --code-ink:#D2CEC5;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--body);margin:0;
+  font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  font-size:17.5px;line-height:1.68;-webkit-font-smoothing:antialiased}
+.wrap{max-width:70ch;margin:0 auto;padding:3.5rem 1.5rem 8rem}
+@media(max-width:640px){.wrap{padding:2rem 1.1rem 5rem}body{font-size:17px}}
+
+.stamp{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:.66rem;
+  letter-spacing:.14em;text-transform:uppercase;font-weight:600;
+  background:var(--alarm);color:var(--bg);padding:.35em .7em;border-radius:2px;margin-bottom:1.4rem}
+h1{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:clamp(2.1rem,6vw,3.1rem);
+  line-height:1.08;color:var(--ink);margin:0 0 .7rem;letter-spacing:-.018em;text-wrap:balance}
+.sub{font-size:1.12rem;color:var(--soft);margin:0 0 2.6rem;font-style:italic}
+h2{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:1.62rem;line-height:1.22;
+  color:var(--ink);margin:3.4rem 0 1rem;padding-top:1.6rem;border-top:1px solid var(--rule);
+  letter-spacing:-.01em;text-wrap:balance}
+h3{font-weight:600;font-size:1.02rem;color:var(--ink);margin:2.2rem 0 .7rem}
+h4{font-family:"IBM Plex Mono",monospace;font-size:.72rem;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--soft);margin:1.9rem 0 .6rem;font-weight:600}
+p{margin:0 0 1.05rem}
+strong{color:var(--ink);font-weight:600}
+ul,ol{margin:0 0 1.1rem;padding-left:1.25rem}li{margin-bottom:.45rem}
+
+/* the ⇒ conclusion block */
+.lede{border-left:3px solid var(--deep);background:var(--deep-soft);padding:.9rem 1.15rem;
+  margin:0 0 1.25rem;border-radius:0 3px 3px 0;color:var(--ink)}
+.lede.bad{border-left-color:var(--alarm);background:var(--alarm-soft)}
+.lede.ok{border-left-color:var(--good);background:var(--good-soft)}
+.lede.key{border-left-color:var(--gold);background:var(--gold-soft)}
+.lede>:last-child{margin-bottom:0}
+
+.tag{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:.6rem;
+  letter-spacing:.11em;text-transform:uppercase;font-weight:600;padding:.28em .62em;
+  border-radius:2px;margin-right:.5em;vertical-align:.15em;white-space:nowrap}
+.t-bad{background:var(--alarm);color:var(--bg)}
+.t-ok{background:var(--good);color:var(--bg)}
+.t-key{background:var(--gold);color:var(--bg)}
+.t-flat{background:var(--rule);color:var(--soft)}
+
+.scroll{overflow-x:auto;margin:0 0 1.4rem;border:1px solid var(--rule);border-radius:4px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:.88rem;min-width:min(100%,28rem)}
+th,td{padding:.6rem .85rem;text-align:left;vertical-align:top;border-bottom:1px solid var(--hair)}
+thead th{font-family:"IBM Plex Mono",monospace;font-size:.65rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--soft);font-weight:600;border-bottom:1px solid var(--rule);background:var(--bg)}
+tbody tr:last-child td{border-bottom:none}
+td.n{font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+
+code{font-family:"IBM Plex Mono",monospace;font-size:.87em;background:var(--code-bg);
+  color:var(--code-ink);padding:.1em .34em;border-radius:3px}
+pre{background:var(--code-bg);border:1px solid var(--rule);border-radius:4px;
+  padding:.95rem 1.05rem;overflow-x:auto;margin:0 0 1.4rem;font-size:.8rem;line-height:1.6}
+pre code{background:none;padding:0;font-size:1em}
+
+.break{border:1px solid var(--alarm);border-left:4px solid var(--alarm);border-radius:4px;
+  padding:1.15rem 1.25rem;margin:0 0 1.6rem;background:var(--card)}
+.break h3{margin-top:0;color:var(--alarm)}
+.break>:last-child{margin-bottom:0}
+
+footer{margin-top:4rem;padding-top:1.3rem;border-top:1px solid var(--rule);font-size:.82rem;color:var(--soft)}
+@media print{body{background:#fff}.wrap{padding:0}}
+</style>
+
+<div class="wrap">
+
+<span class="stamp">v0.1 · design · nothing built yet</span>
+
+<h1>Light Speed Transfers</h1>
+<p class="sub">Free until it matters</p>
+
+<div class="lede key"><p><strong>A transfer is a signature handed over.</strong> No block, no
+confirmation, no consensus round. <strong>Taipei to London in 48 milliseconds</strong> — propagation and
+20 microseconds of signature check, and nothing else.</p>
+<p><strong>Settlement is a separate act, bought when the value justifies it.</strong></p></div>
+
+<p><em>Anchor transfers — moving a covenant without touching the chain. Seven attacks, four dissolved,
+and what is left.</em></p>
+
+<div class="scroll"><table>
+<tbody>
+<tr><td><strong>Version</strong></td><td><strong>0.1</strong> · 27 August 2026</td></tr>
+<tr><td><strong>Authors</strong></td><td><strong>Ma An-Zuo</strong> <em>(design)</em> · <strong>Claude Opus 5</strong> <em>(document, adversarial pass)</em></td></tr>
+<tr><td><strong>Status</strong></td><td><strong>Design. Nothing is implemented.</strong> Two problems are open</td></tr>
+<tr><td><strong>Supersedes</strong></td><td>— <em>(first version)</em></td></tr>
+<tr><td><strong>Provenance</strong></td><td><strong>Minted 27 August 2026.</strong><br><strong>TX1</strong> <code style="font-size:.8em">32ed69dbdc40933a2dcad9b4adb484073cbb94a404f9a237171be62ff5735b0a</code> — the content-bearing collection, and the reference target.<br>TX2 (edition token) <code style="font-size:.8em">de034188c144ccd05ac6e4b74388f4fdd7bb62c577cdf7853d4bdc40242319ee</code></td></tr>
+<tr><td><strong>Licence</strong></td><td><strong>Apache License 2.0</strong> · © 2026 Ma An-Zuo</td></tr>
+</tbody></table></div>
+
+<div class="lede ok"><p><strong>Anyone may implement this design, freely, on any chain or none.</strong>
+No permission is needed and none should be asked for.</p></div>
+
+<div class="scroll"><table>
+<thead><tr><th></th><th>What it actually does</th></tr></thead>
+<tbody>
+<tr><td><strong>Apache §3 — patent grant</strong></td><td>A grant <em>from the author to implementers</em> — he can never assert a patent against anyone who built on this. <strong>It does not shield implementers from a third party's patent.</strong> No licence can</td></tr>
+<tr><td><strong>Apache §3 — retaliation</strong></td><td>Sue over this work and <strong>your own licence to it terminates.</strong> The reason to prefer Apache over MIT here</td></tr>
+<tr><td><strong>The BRC-226 mint</strong></td><td><strong>This is the actual protection against someone else patenting the idea.</strong> A timestamped public disclosure is prior art — it doesn't stop a filing, it makes the resulting patent invalid and dates the evidence</td></tr>
+</tbody></table></div>
+
+<div class="lede"><p><strong>The mint is the patent defence. Apache is the licence hygiene.</strong>
+Neither substitutes for the other.</p>
+<p>And a licence on a document governs <em>copying the text</em>, not implementing the idea — copyright
+covers expression, never the design. Which is why the implementation grant is stated separately, in plain
+words, rather than left to be inferred.</p></div>
+
+<div class="lede"><p><strong>Each version is a separate mint, and each names the txid of the one it
+supersedes</strong> — so the document's own history becomes an anchored chain. Which is the thing the
+document describes, applied to itself.</p>
+<p><strong>0.x</strong> is design, nothing built. <strong>1.0 is reserved for when it is built and a real
+spend has been measured</strong> — bump on a serialized spend, never on an argument.</p></div>
+
+<div class="lede key"><p><strong>BSV holds the value. The jetmora log holds the ownership. Exit to BSV is
+always available, unilaterally, to whoever holds it now.</strong></p></div>
+
+<p>Design: Ma An-Zuo. Written up and stress-tested the same day.</p>
+
+<pre><code>    ┌──────────────────────────────────────────────────────┐
+    │  BSV — the ANCHOR POINT                              │
+    │  a covenant UTXO holding sats, or a token / NFT       │
+    └──────┬───────────────────────────────▲───────────────┘
+       LOCK│                               │UNLOCK
+           ▼                               │ (any current holder)
+    ┌──────────────────────────────────────────────────────┐
+    │  jetmora — the NON-FORKABLE LOG                      │
+    │   A ──sign──▶ B ──sign──▶ C ──sign──▶ D ──sign──▶ E  │
+    │   ZERO chain transactions · ZERO fees                │
+    └──────────────────────────────────────────────────────┘</code></pre>
+
+<div class="lede"><p><strong>Lock once. Transfer a thousand times for nothing. Unlock once.</strong>
+Chain cost is constant and independent of how often it changes hands.</p></div>
+
+<h2>Where this came from — a game, not a payments thesis</h2>
+
+<p><strong>This design was not reasoned down from first principles about money. It was forced by a
+game.</strong></p>
+
+<p><strong>grafverse</strong> needs items that move: a painted object handed between players, an
+inventory that travels with a person from one world into another, an asset acquired on the far side of a
+gate. And the moment you write that requirement down, <strong>the chain-per-transfer model is already
+dead</strong>:</p>
+
+<div class="scroll"><table>
+<thead><tr><th>The requirement</th><th>What a transaction per transfer does to it</th></tr></thead>
+<tbody>
+<tr><td>A player hands an item to another player</td><td>Costs a fee, waits for a block. <strong>Nobody does this twice</strong></td></tr>
+<tr><td>Inventory travels between worlds</td><td>Every crossing becomes a settlement event</td></tr>
+<tr><td>A gate's toll is <em>acquiring the assets on the other side</em></td><td><strong>The toll becomes the fee, not the asset</strong> — the opposite of the design</td></tr>
+</tbody></table></div>
+
+<p>Three standing laws collide here, and the collision is the brief: <strong>play free, touch chain only
+when it matters</strong> — a game that charges to hand someone a sword is not free, whatever the
+download costs. <strong>Inventory is player state, and it travels</strong> — so it cannot live in any one
+world's database. <strong>Owned, not claimed</strong> — so it cannot be a row in a server either.</p>
+
+<div class="lede key"><p><strong>Those three together have exactly one shape of answer: the thing must be
+genuinely owned, must move for nothing, and must remain redeemable on chain at any moment.</strong></p>
+<p>That is not a payments requirement that happened to suit a game. <strong>It is a game requirement
+that turned out to describe cash.</strong></p></div>
+
+<p>Which is also why this paper says what it says about scale. A billion players trading pennies-worth
+of paint is not a stress test invented to sound impressive — <strong>it is the ordinary load</strong>,
+and any design needing a global ledger to carry it has already lost.</p>
+
+<h2>The covenant <em>is</em> the token</h2>
+
+<p>Not "a covenant that holds a token". <strong>There is no token layer. The covenant is the
+asset.</strong> That deletes a whole tier:</p>
+
+<div class="scroll"><table>
+<thead><tr><th>The usual way</th><th>Here</th></tr></thead>
+<tbody>
+<tr><td>Token protocol (issuance, IDs, transfer rules)</td><td><strong>Gone.</strong> Genesis txid <em>is</em> the asset id</td></tr>
+<tr><td>An indexer to know who holds what</td><td><strong>Gone.</strong> The log says who holds it</td></tr>
+<tr><td>A wrapper contract to lock the token</td><td><strong>Gone.</strong> Nothing to wrap</td></tr>
+<tr><td>A standard everyone must implement</td><td><strong>Gone.</strong> The rules are <em>in</em> the script</td></tr>
+</tbody></table></div>
+
+<p>And the asset becomes self-describing. The covenant's Script says what it is and what it may do — and
+because it compiled from BASIC, it <strong>reads back through <code>unbasic</code></strong>. A buyer
+doesn't consult a registry or trust a metadata server. <strong>They decompile the thing they're
+buying.</strong></p>
+
+<div class="lede"><p>Anchor id = genesis txid. Rules = the script. Holder = the log head.
+<strong>Three things, no registry.</strong></p></div>
+
+<h2>The decomposition</h2>
+
+<p>It separates two things every other scheme welds together:</p>
+
+<div class="scroll"><table>
+<thead><tr><th>Property</th><th>Provided by</th><th>Fails how</th></tr></thead>
+<tbody>
+<tr><td><strong>Authority</strong> — only the rightful holder can move it</td><td>the signature chain</td><td>forge a signature (can't)</td></tr>
+<tr><td><strong>Uniqueness</strong> — can't hand it to two people</td><td>the non-forkable log</td><td>the log equivocates</td></tr>
+<tr><td><strong>Exit</strong> — the holder can always get out</td><td>the covenant</td><td>nothing — it's unilateral</td></tr>
+</tbody></table></div>
+
+<div class="lede"><p><strong>Authority is cryptographic. Uniqueness is the log's only job.</strong> Once
+you see that, the log needs no custody and no trust beyond <em>never show two successors for one
+anchor</em>.</p></div>
+
+<h2>The real attack — stealing the tip onto a parallel log</h2>
+
+<p>The design above says <em>"the log provides uniqueness."</em> <strong>It never says which
+log.</strong> That is the whole attack.</p>
+
+<pre><code>                     ┌── log L1 ──▶ D ──▶ E     "I sold it to D"
+ A ──▶ B ──▶ C ──────┤
+                     └── log L2 ──▶ X ──▶ Y     "I sold it to X"
+                                                 (a log C spun up, or
+                                                  a different network)</code></pre>
+
+<p><strong>Both branches are cryptographically perfect.</strong> Every signature verifies, both run back
+to genesis. The covenant can't tell them apart because nothing is wrong with either one.</p>
+
+<div class="lede bad"><p><strong>No key was stolen and the signature chain didn't break.</strong> C had
+the authority and used it twice, in two places. Authority was never the problem — uniqueness was, and
+"a log" isn't an answer.</p></div>
+
+<h3>Why nothing inside the system can fix it</h3>
+
+<p>Distributed parties <strong>cannot</strong> agree which of two valid histories came first without
+something outside themselves. That's not an engineering gap — it's the impossibility every consensus
+system exists to solve.</p>
+
+<div class="lede key"><p><strong>So stop trying. BSV <em>is</em> a total order. That's the one thing it
+does that this can't do for itself.</strong></p></div>
+
+<h3>The fix, three parts</h3>
+
+<p><strong>1 · The covenant names its anchor chain at genesis, immutably.</strong> A transfer anchored
+anywhere else isn't a transfer of this asset — which settles the different-network attack outright. The
+<em>system</em> stays chain-agnostic; each <em>asset</em> doesn't.</p>
+
+<p><strong>2 · First anchored wins</strong>, by the chain's own ordering. The strongest form makes the
+anchor a <strong>covenant UTXO that must be spent to advance</strong> — then uniqueness isn't a policy
+anyone enforces, <strong>it's the UTXO set</strong>. Bitcoin has prevented exactly this since 2009.</p>
+
+<p><strong>3 · The buyer waits for the anchor.</strong></p>
+
+<div class="scroll"><table>
+<tbody>
+<tr><td><strong>Transfer</strong></td><td>free · instant · <strong>reversible until anchored</strong></td></tr>
+<tr><td><strong>Settlement</strong></td><td>one anchor over thousands of transfers · <strong>irreversible</strong></td></tr>
+</tbody></table></div>
+
+<div class="lede"><p>The cost amortises. <strong>The latency doesn't.</strong> And it reframes BSV's
+job: not storing or securing the asset — <strong>supplying the total order</strong>, consulted once per
+anchor rather than once per transfer.</p></div>
+
+<h3>The hash-lock proposal</h3>
+
+<p><em>"Use a one-way hash so only jetmora can redeem."</em> <span class="tag t-ok">Works</span> It kills
+the attack completely. <strong>But look at the price:</strong></p>
+
+<div class="scroll"><table>
+<tbody>
+<tr><td>jetmora offline / refuses / seized</td><td>every holder's value <strong>frozen forever</strong></td></tr>
+<tr><td>jetmora loses the secret</td><td>every asset ever minted is <strong>dead</strong></td></tr>
+<tr><td>jetmora compelled or colluding</td><td>redeems to the wrong party</td></tr>
+<tr><td>&nbsp;</td><td><strong>Unilateral exit — gone</strong></td></tr>
+</tbody></table></div>
+
+<div class="lede bad"><p>That converts this into a <strong>statechain</strong> — handing back the one
+advantage it has over the closest prior art, and introducing a custodian.</p></div>
+
+<p><strong>Keep the fix, keep the property: jetmora <em>or</em> timeout.</strong> Don't make jetmora
+necessary; make jetmora <em>fast</em>.</p>
+
+<pre><code>unlock =  jetmora co-signs the current head   ← fast path, minutes
+       OR holder alone, after N blocks        ← escape hatch</code></pre>
+
+<p>The timeout is what makes it not custody: jetmora can <em>delay</em> you by N blocks, never take and
+never trap. <strong>But see B1 below — the escape hatch as written is broken.</strong></p>
+
+<h3>Where the hash genuinely wins</h3>
+
+<p><strong>1 · A hash <em>chain</em> makes ordering physically unforgeable.</strong> Commit
+<code>H^n(s)</code>; reveal <code>H^(n-k)(s)</code> at sequence <em>k</em>. There's exactly one preimage
+per link — the log <em>cannot</em> produce two valid values for the same sequence. Not "is punished
+for it". <strong>Cannot.</strong></p>
+
+<p><strong>2 · An HTLC solves the in-flight sale, atomically</strong> — and it's the single mechanism
+for both open problems:</p>
+
+<pre><code>buyer pays into an HTLC locked to H(x)
+seller can ONLY claim it by revealing x
+revealing x is WHAT COMMITS the transfer in the log</code></pre>
+
+<div class="lede ok"><p><strong>Neither party can act before the other is safe</strong> — the exact
+shape both problems shared.</p></div>
+
+<h2>Why there is no ceiling</h2>
+
+<p>Asking <em>"how many transactions per second?"</em> imports a chain assumption: that some node
+validates everything. <strong>Here no such node exists or can.</strong> A participant verifies only the
+anchors they hold or are buying.</p>
+
+<div class="scroll"><table>
+<thead><tr><th>1 trillion/sec spread over</th><th class="n">Each device does</th><th class="n">= cores</th></tr></thead>
+<tbody>
+<tr><td>8bn phones</td><td class="n">125 / sec</td><td class="n">0.003</td></tr>
+<tr><td><strong>1bn devices</strong></td><td class="n"><strong>1,000 / sec</strong></td><td class="n"><strong>0.02</strong></td></tr>
+<tr><td>10m servers</td><td class="n">100,000 / sec</td><td class="n">2</td></tr>
+</tbody></table></div>
+
+<div class="lede key"><p>A trillion transfers a second across a billion devices is <strong>2% of one
+core each</strong>. <strong>"Trillions per second" is the conservative reading, not the bold
+one.</strong></p></div>
+
+<p><strong>Say it structurally:</strong> <em>"There is no throughput number, because there is no
+bottleneck to measure. Every participant verifies only what they own."</em> That can't rot and can't be
+argued down to a benchmark. <strong>The chain bounds the doors, not the dancing.</strong></p>
+
+<h2>Where it breaks</h2>
+
+<p>Adversarial pass, ordered by severity. <strong>B1 breaks a fix proposed earlier in this same
+document.</strong></p>
+
+<div class="break">
+<h3><span class="tag t-bad">Fatal</span>B1 · The escape hatch is a universal double-spend</h3>
+<p>The timeout path verifies <em>only signatures</em> — and the whole attack was that both branches have
+perfect signatures.</p>
+<pre><code>C signs to D  → goes in the log, legitimate
+C signs to X  → parallel log, or no log at all
+
+X waits N blocks, uses THE ESCAPE HATCH — which by
+definition does not consult the log.
+The covenant sees a flawless chain A→B→C→X and pays out.</code></pre>
+<p><strong>Anyone ever offered a signed transfer — a failed negotiation, a cancelled sale, a test — can
+wait N blocks and steal the asset.</strong> It doesn't weaken the log's guarantee; it bypasses it.</p>
+<p>It can't be patched with "longest chain wins" — both branches fork at C, so both are the same length.
+Nothing in the signature data discriminates.</p>
+<div class="lede ok"><p><strong>Fix: the escape hatch must exit to the LAST ANCHORED STATE, never to a
+signature chain.</strong> Every transfer after that anchor is void. Unilateral exit survives, the
+double-spend dies — and the honest cost is that unanchored transfers are lost on escape.</p></div>
+<p>That promotes anchor frequency from a tuning knob to a <strong>safety parameter</strong>.</p>
+</div>
+
+<div class="break">
+<h3><span class="tag t-flat">Dissolved</span>B2–B4, B7 — see below</h3>
+<p><strong>B2</strong> log-binding vs distribution · <strong>B3</strong> split-view attack ·
+<strong>B4</strong> bonds can't cover appreciation · <strong>B7</strong> public ownership record.</p>
+<p>All four attack <em>the log operator</em> — and the next section removes that component entirely.</p>
+</div>
+
+<div class="break">
+<h3><span class="tag t-bad">Now central</span>B5 · Data availability</h3>
+<p>Verification needs the chain. If the seller withholds it, a buyer can't verify an asset the covenant
+would happily redeem. <strong>Once there's no log service, this is the whole game</strong> — see below.</p>
+<p><strong>B6 · Immutable rules mean unfixable bugs.</strong> "The covenant is the token" removes the
+registry — and removes the ability to ever fix anything. Fine for a game item; not obviously fine for
+anything valuable.</p>
+</div>
+
+<h2>The resolution — there is no log service</h2>
+
+<div class="lede key"><p><em>"The secret to scaling is not for this to run on a central server but on
+each user's device. Each user is responsible for the custody."</em></p></div>
+
+<p><strong>This isn't a deployment note. It removes the component that every break above attacks.</strong></p>
+
+<div class="scroll"><table>
+<thead><tr><th>What it was</th><th>What it becomes</th></tr></thead>
+<tbody>
+<tr><td>A log service ordering transfers</td><td><strong>Each holder's own local signature chain</strong></td></tr>
+<tr><td>An operator's signed root</td><td><strong>The anchor UTXO on BSV</strong></td></tr>
+<tr><td>A bond against equivocation</td><td><strong>Nothing to bond — nobody is trusted</strong></td></tr>
+</tbody></table></div>
+
+<div class="lede ok"><p><strong>The buyer never had to trust a log.</strong> They had to check one thing
+the seller cannot control — and that thing was always on chain.</p></div>
+
+<div class="scroll"><table>
+<thead><tr><th>Break</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr><td>B2 · log-binding</td><td><strong>Dissolved</strong> — no log key exists to bind</td></tr>
+<tr><td>B3 · split-view</td><td><strong>Dissolved</strong> — anchor is a public UTXO, one view by construction</td></tr>
+<tr><td>B4 · bond sizing</td><td><strong>Dissolved</strong> — no operator, no bond</td></tr>
+<tr><td>B7 · privacy</td><td><strong>Partly improved</strong> — see "the anchor chain is walkable"</td></tr>
+<tr><td>B1 · escape to last anchor</td><td>Unchanged, still required</td></tr>
+<tr><td>B5 · data availability</td><td><strong>Sharpened — now the central risk</strong></td></tr>
+</tbody></table></div>
+
+<p><strong>Four of seven gone, and the two hardest among them.</strong> The design got smaller and
+stronger at once.</p>
+
+<h3>What it costs, plainly</h3>
+
+<p><strong>Lose your chain, lose your proof.</strong> That isn't a flaw to engineer away — it's exactly
+what "each user is responsible for the custody" means, and it's the same bargain as holding your own
+keys. The answer to "custody is hard" is better UX, never a custodian.</p>
+
+<p>So: the seller must hand over full history before payment — <strong>bind it into the HTLC</strong> —
+and backup is a first-class feature, not an afterthought.</p>
+
+<h3>What it doesn't solve</h3>
+
+<pre><code>C sells to D.  C also sells to X.
+Both hold perfect chains. Neither is anchored.
+⇒ Whoever anchors FIRST owns it.</code></pre>
+
+<div class="lede ok"><p>The answer isn't to prevent the race — it's to <strong>never pay before winning
+it</strong>. The buyer's payment sits in an HTLC released <strong>only when the transfer is
+anchored</strong>. Atomic and final in one step.</p></div>
+
+<p>Which means the buyer pays for one anchor when it matters, and nothing for the thousand transfers
+that don't. <strong>Finality is a thing you buy, per transfer, only when the value justifies it — and
+the scale claim survives <em>because</em> most transfers never anchor.</strong></p>
+
+<div class="break">
+<h3><span class="tag t-bad">New</span>Finding the tip</h3>
+<p>A buyer must confirm the anchor they're shown <em>is</em> the current one. Verifying walks backwards
+and is free; <strong>finding the tip needs an index</strong>. Walking <code>/spent</code> until it 404s
+works for one asset and <strong>does not obviously survive a billion.</strong> This is now on the
+critical path, where before it was a convenience.</p>
+</div>
+
+<h2>Is it "peer-to-peer electronic cash"?</h2>
+
+<p><strong>Mostly. Say the precise version — it's stronger and can't be laughed off.</strong></p>
+
+<div class="lede key"><p><em>"We define an electronic coin as a chain of digital signatures. Each owner
+transfers the coin to the next by digitally signing a hash of the previous transaction and the public
+key of the next owner."</em><br>— Bitcoin whitepaper, §2</p></div>
+
+<p><strong>That is this design, line for line.</strong> A coin <em>is</em> the chain of signatures, held
+by its owner, passed forward by signing. "The covenant is the token" is that sentence said in Script —
+and in this one respect it's <em>more</em> faithful to §2 than the modern UTXO model.</p>
+
+<p>But §2's very next paragraph is where it diverges: <em>"the payee can't verify that one of the owners
+did not double-spend… The only way to confirm the absence of a transaction is to be aware of all
+transactions."</em> Satoshi's answer was to announce every transaction to everybody.</p>
+
+<div class="scroll"><table>
+<thead><tr><th></th><th>Bitcoin</th><th>Here</th></tr></thead>
+<tbody>
+<tr><td>Double-spend prevented by</td><td>everyone sees everything</td><td>the payee anchors before accepting</td></tr>
+<tr><td>Who must act</td><td><strong>nobody</strong></td><td><strong>the payee</strong></td></tr>
+<tr><td>Cost</td><td>every transaction, forever</td><td>only transfers needing finality</td></tr>
+<tr><td>Ceiling</td><td>what all nodes can see</td><td><strong>none</strong></td></tr>
+</tbody></table></div>
+
+<div class="lede"><p><strong>"It is the whitepaper's §2 coin, with the double-spend solved by anchoring
+instead of universal broadcast — which is what removes the scaling ceiling."</strong></p>
+</div>
+
+<h3>Cash is denominated, not divisible</h3>
+
+<div class="lede key"><p><em>"I've got coins I can't split and notes I can't cut in half — because if I
+did, they'd be worthless."</em></p></div>
+
+<p><strong>Cash has never been divisible — it is denominated.</strong> Nobody has ever cut a note in
+half. <strong>They make change.</strong></p>
+
+<div class="lede ok"><p><strong>And the hardest problem in this document disappears with it.</strong> The
+objection was that splitting forks the signature chain and every branch needs its own uniqueness
+guarantee. <strong>If nothing ever splits, that problem does not exist.</strong> An anchor is minted at a
+denomination and keeps it for life — its chain is linear forever, which is what every mechanism here
+already assumed.</p></div>
+
+<pre><code>pay 17:  hand over a 20-anchor
+         receive back a 2-anchor and a 1-anchor
+         ⇒ THREE independent transfers, each a linear chain</code></pre>
+
+<p>Exactly what the design already does well, three times, in parallel. <strong>No new mechanism at
+all.</strong></p>
+
+<div class="scroll"><table>
+<tbody>
+<tr><td><strong>Denominations</strong></td><td>Mint at 1 · 2 · 5 · 10 · 20 · 50 · 100 — the pattern the world already uses</td></tr>
+<tr><td><strong>Making change</strong></td><td>The payee draws on their own float, like every merchant on earth</td></tr>
+<tr><td><strong>Re-denomination</strong></td><td>Unlock a 100 on chain, mint five 20s. Costs one transaction</td></tr>
+</tbody></table></div>
+
+<div class="lede"><p>That last row maps to real behaviour with uncanny fidelity: <strong>you spend the
+notes you have, and occasionally go to the bank to break a big one.</strong> The chain is the bank you
+visit rarely, not the till you use hourly.</p></div>
+
+<div class="break">
+<h3><span class="tag t-flat">Ordinary costs</span>What it actually gives up</h3>
+<p><strong>You can't always make exact change.</strong> <em>"Have you got anything smaller?"</em>
+Physical cash has this problem and the world runs on it anyway.</p>
+<p><strong>A merchant holds a float of small anchors.</strong> A real cost of doing business — and a
+thoroughly solved one. Not a research problem.</p>
+<p><strong>Fungibility.</strong> Two 10-anchors have different genesis txids and histories. Notes have
+serial numbers and nobody checks — but here history is partly public at anchor points, so taint-based
+discrimination is technically possible. Same question as "private between anchors", not a new one.</p>
+</div>
+
+<div class="break">
+<h3><span class="tag t-bad">Remains</span>The payee must act</h3>
+<p>With Bitcoin you receive a payment and the network protects you. Here an unanchored payment is
+<strong>provisional</strong>, and the payee chooses when to finalise. A genuine UX difference — the
+wallet must make <strong>"safe" the default and "provisional" the deliberate choice</strong>.</p>
+<p>Which is, again, exactly how people treat cash: a tenner between friends is provisional; a car
+changes hands at a bank.</p>
+<div class="lede ok"><p><strong>With denomination replacing divisibility, "peer-to-peer electronic cash"
+is essentially earned. What remains is a UX obligation, not a missing property.</strong></p></div>
+</div>
+
+<h2>"Keeping a copy" — the last problem</h2>
+
+<div class="lede key"><p><em>"One user must spend the tip to push it forward to another. There needs to
+be a way to prevent them from keeping a copy and using it before the other party does."</em></p></div>
+
+<h3>The reframe: there is no copy to keep</h3>
+
+<p><strong>A secret cannot be handed over. It can only be shared.</strong> If transfer meant <em>"give
+the recipient my key"</em>, the sender always keeps a copy and this would be unsolvable.</p>
+
+<pre><code>C does NOT give D anything secret.
+D generates D's own keypair. D keeps the private key.
+C never sees it. C merely SIGNS: "the next owner is D's pubkey."</code></pre>
+
+<div class="lede ok"><p>C never possessed D's key, so there is no copy to retain. <strong>The attack
+isn't copying — it's C signing a SECOND time, naming X instead of D.</strong> A different problem, and
+unlike copying, solvable.</p></div>
+
+<h3>The three layers</h3>
+
+<p><strong>1 · Structural</strong> — nothing secret moves, so the whole problem reduces to
+double-signing.</p>
+
+<p><strong>2 · Settlement</strong> — the anchor UTXO is <strong>consumed</strong> when spent. Bitcoin has
+made that impossible to do twice since 2009. Absolute prevention, at the cost of one transaction. Paired
+with the HTLC, the buyer's money releases <em>only on anchor</em> — so they never pay into a race they
+haven't already won.</p>
+
+<p><strong>3 · Punishment</strong> — make signing twice mathematically self-destructive. This is real
+cryptography, not a policy:</p>
+
+<div class="lede bad"><p><strong>ECDSA leaks the private key if one nonce signs two different
+messages.</strong><br>
+<code>k = (h₁ − h₂)/(s₁ − s₂)</code> then <code>d = (s₁k − h₁)/r</code><br>
+Full key recovery, by arithmetic, from the two signatures alone.</p></div>
+
+<pre><code>C pre-commits a one-time nonce point R = k·G for this transfer.
+The covenant honours only a transfer signed with THAT R.
+
+sign once  → fine, nothing leaks
+sign twice → both signatures share k
+           → ANYONE holding both recovers C's private key
+           → C's bond is claimable by anyone. Instantly.</code></pre>
+
+<div class="scroll"><table>
+<tbody>
+<tr><td><strong>Self-executing</strong></td><td>Not merely "detectable" — no court, no operator, no vote</td></tr>
+<tr><td><strong>Permissionless</strong></td><td><em>Anyone</em> can claim the bond; the victim needn't be watching</td></tr>
+<tr><td><strong>Pure arithmetic</strong></td><td>The proof <em>is</em> the two signatures. Verified on real secp256k1</td></tr>
+</tbody></table></div>
+
+<p>You cannot stop C signing twice. <strong>You can make it cost C more than the asset is worth, with no
+trusted party anywhere in the mechanism.</strong></p>
+
+<div class="scroll"><table>
+<thead><tr><th></th><th>Mechanism</th><th>Cost</th></tr></thead>
+<tbody>
+<tr><td><strong>Prevention</strong></td><td>anchor the transfer (UTXO consumed)</td><td>one chain transaction</td></tr>
+<tr><td><strong>Punishment</strong></td><td>one-time nonce + forfeitable bond</td><td><strong>free</strong></td></tr>
+</tbody></table></div>
+
+<div class="lede key"><p><strong>Prevention costs a transaction. Punishment is free. Choose per transfer,
+by value.</strong> A game item moves on punishment alone. A house anchors. That's the same choice every
+settlement system in the world makes — put in the user's hands rather than a bank's.</p></div>
+
+<div class="break">
+<h3><span class="tag t-flat">To build</span>Three things this still needs</h3>
+<p><strong>1.</strong> Prefer a <strong>separate bond covenant that anyone may spend by presenting two
+signatures sharing an R</strong> — far less Script than verifying the nonce commitment inside the main
+covenant.</p>
+<p><strong>2.</strong> Bond sizing returns, but it's now the <em>sender's own</em> bond, per transfer. A
+buyer refuses a bond below the asset's value. <strong>Market, not governance.</strong></p>
+<p><strong>3.</strong> The nonce commitment must be <strong>verifiable before the buyer accepts</strong>
+— otherwise C commits R and signs with a different k anyway.</p>
+</div>
+
+<div class="break">
+<h3><span class="tag t-bad">Correction</span>"Cash and private too"</h3>
+<p><strong>Cash — essentially earned.</strong> Cash is <em>denominated</em>, not divisible. What remains is a UX obligation, not a missing property.</p>
+<p><strong>Private — only between anchors.</strong> See the section below: the anchor points form a
+<em>walkable chain</em>, not isolated dots.</p>
+</div>
+
+<h2>The anchor chain is walkable</h2>
+
+<div class="lede key"><p><em>"The log tip once anchored can be read back to the previous anchor through
+the anchor Merkle path."</em></p></div>
+
+<p><strong>The anchors are not isolated dots. They are a linked list.</strong></p>
+
+<p>The anchor advances by <strong>spending the previous anchor UTXO</strong> — that is the entire
+uniqueness mechanism. And a spend chain is, by construction, a linked list:</p>
+
+<pre><code>genesis ──▶ anchor 1 ──▶ anchor 2 ──▶ anchor 3 ──▶ … ──▶ tip
+
+each one SPENDS the last. Public. Permanent. Walkable by
+anyone, in either direction, with nothing but a block explorer.</code></pre>
+
+<div class="lede bad"><p>This is our own tip-discovery walk pointed back at us. <strong>The property that
+makes the tip findable is the property that makes the ownership history readable. You cannot have one
+without the other.</strong></p></div>
+
+<div class="scroll"><table>
+<tbody>
+<tr><td><strong>Private</strong></td><td>Transfers <em>between</em> anchors — a holder who receives and passes on without ever anchoring never appears</td></tr>
+<tr><td><strong>Public</strong></td><td>Every holder who was current at an anchor point</td></tr>
+<tr><td><strong>Public</strong></td><td>That those holders form <strong>one continuous chain</strong>, genesis to tip</td></tr>
+</tbody></table></div>
+
+<div class="lede bad"><p><strong>And the trade is exactly backwards from what anyone would want: the
+more you anchor for safety, the more of your ownership history you publish.</strong> A high-value asset
+anchored at every transfer ends up with a complete public ownership record. Privacy and safety are
+directly opposed.</p></div>
+
+<h3>The mitigation — and it's cheap</h3>
+
+<p><strong>Commit to a hash of the holder, not the holder's key.</strong></p>
+
+<pre><code>anchor commits:  H(holder_pubkey ‖ salt)     ← not the pubkey itself</code></pre>
+
+<div class="scroll"><table>
+<tbody>
+<tr><td><strong>Uniqueness survives</strong></td><td>Still exactly one leaf per sequence — the anchor's only job</td></tr>
+<tr><td><strong>The buyer still verifies</strong></td><td>They hold the chain, so they recompute the hash and match it</td></tr>
+<tr><td><strong>An outsider learns</strong></td><td>"Someone owned it at this point" — <strong>not who</strong></td></tr>
+</tbody></table></div>
+
+<div class="break">
+<h3><span class="tag t-bad">Still leaks</span>What hashing does not hide</h3>
+<p>The <strong>shape</strong> — how many times it changed hands, and when. And at <strong>exit</strong>
+the covenant must pay a real address, so the final holder is revealed at that moment. One moment rather
+than the whole history — a large improvement, not a clean one.</p>
+<p>Fungibility is unchanged: anchors stay individually identifiable by genesis txid, so an asset's shape
+is a fingerprint even when the names are hashed.</p>
+</div>
+
+<div class="lede"><p><strong>"Transfers between anchors are private. The anchor points are a public,
+walkable chain — and hashing the holder hides who, but not how often."</strong></p>
+<p>Long, and every clause is load-bearing. Any shorter version is false.</p></div>
+
+<h2>Why nobody built this</h2>
+
+<div class="lede key"><p><em>"Everyone has been trying to incorporate a token or coin in every sidechain
+attempt — reproducing the same bottleneck they're trying to avoid."</em></p></div>
+
+<p>It isn't <em>having</em> a token that costs them. It's that a token forces a <strong>shared
+ledger</strong>, a shared ledger forces <strong>consensus</strong>, and consensus is the bottleneck.</p>
+
+<div class="scroll"><table>
+<thead><tr><th>Accounting model</th><th>What a spend depends on</th></tr></thead>
+<tbody>
+<tr><td>A <strong>balance</strong></td><td><strong>Everything that ever touched that account</strong> — irreducibly global</td></tr>
+<tr><td>A <strong>chain of signatures</strong> for one asset</td><td><strong>That asset's own history. Nothing else. Ever.</strong></td></tr>
+</tbody></table></div>
+
+<p><strong>A balance cannot be validated locally.</strong> To know whether Alice may spend 5 you need
+Alice's balance, which depends on every transaction she was ever party to. The moment your design has
+balances you've signed up for global state, and everything after that is damage control.</p>
+
+<div class="scroll"><table>
+<thead><tr><th></th><th>What it built</th><th>Outcome</th></tr></thead>
+<tbody>
+<tr><td>Sidechains (Liquid, RSK)</td><td>Own consensus, own blocks</td><td>Global ordering rebuilt from scratch</td></tr>
+<tr><td>Rollups</td><td>Batched txs, one shared state root</td><td>The sequencer <em>is</em> the bottleneck</td></tr>
+<tr><td>Lightning</td><td>Per-channel state, no shared ledger</td><td><strong>Escaped it</strong> — but 2-party, and routing became the new bottleneck</td></tr>
+<tr><td>Statechains</td><td>Per-asset off-chain transfer</td><td>Very close — but a trusted operator</td></tr>
+<tr><td>RGB / single-use seals</td><td>Per-asset client-side validation</td><td><strong>Escaped it properly</strong></td></tr>
+</tbody></table></div>
+
+<div class="break">
+<h3><span class="tag t-flat">For the record</span>Arrived at independently</h3>
+<p>This design was not built from any of the systems above, and the author was not aware of them. They
+are listed because they are <strong>adjacent</strong> and a reader will want the comparison —
+<strong>not because they were inputs.</strong></p>
+<p>Convergence is worth noting in its own right: <strong>several people reaching similar structure from
+different starting points is evidence the structure is natural</strong>, not evidence anyone copied.</p>
+</div>
+
+<div class="lede"><p><strong>RGB and statechains also escaped the shared ledger.</strong> The
+observation here isn't that the escape is unknown — it's that <strong>the mainstream didn't take it, and
+the reason was commercial rather than technical.</strong></p>
+<p><em>This design was arrived at independently of both — see "Related work".</em></p></div>
+
+<h3>The honest — and more interesting — version</h3>
+
+<p><strong>The mainstream went the shared-ledger route for a reason that was never technical.</strong> A
+sidechain needs a token to fund itself: to raise the money, reward validators, give the thing a price.
+And the moment you need a token to have a price, you need a ledger of balances — <strong>and you have
+rebuilt the bottleneck you launched to escape.</strong></p>
+
+<div class="lede key"><p><strong>The architecture was chosen by the funding model, not by the
+engineering.</strong></p>
+<p>Which is exactly why this project can go the other way. Never needing a token to raise money is what
+leaves the design free to have no shared ledger at all — the constraint that looked like poverty is what
+kept the architecture clean.</p></div>
+
+<div class="lede"><p><strong>They made ordering global because the token forced it. Here, ordering is
+per-asset — so there is nothing global left to be a bottleneck.</strong></p></div>
+
+<h2>Authorship</h2>
+
+<p><strong>Recorded precisely, because this document is going on chain for provenance — and because a
+night spent on unattributed code is a poor night to be vague about attribution.</strong></p>
+
+<h3>Ma An-Zuo — the design. All of it.</h3>
+
+<p>Every idea here is his, and the sequence matters, because each one made the design <em>smaller</em>:</p>
+
+<div class="scroll"><table>
+<tbody>
+<tr><td><strong>The mechanism</strong></td><td>Anchors lock sats or NFTs; a non-forkable log moves the covenant by signing it forward; any holder returns it to the anchor to unlock</td></tr>
+<tr><td><strong>"The covenant IS the token"</strong></td><td>Deleted the token layer, the indexer and the registry</td></tr>
+<tr><td><strong>"It runs on each user's device"</strong></td><td><strong>Dissolved four of the seven attacks at once</strong> — including the two hardest</td></tr>
+<tr><td><strong>The parallel-log attack</strong></td><td><strong>Found the biggest hole</strong> — in the version I had just written and called sound</td></tr>
+<tr><td><strong>"Prevent them keeping a copy"</strong></td><td>Named the last remaining problem exactly</td></tr>
+<tr><td><strong>"Notes I can't cut in half"</strong></td><td><strong>Killed the final research problem</strong> by correcting me: cash is denominated, never divisible</td></tr>
+<tr><td><strong>The token-bottleneck diagnosis</strong></td><td>Why this wasn't built before</td></tr>
+</tbody></table></div>
+
+<h3>Claude (Opus 5) — the writing, and the adversarial pass</h3>
+
+<ul>
+<li><strong>Wrote the document</strong> — structure, prose, tables, diagrams, and this HTML edition.</li>
+<li><strong>The decomposition</strong> — authority / uniqueness / exit as three separable properties.</li>
+<li><strong>Found B1</strong>: the "jetmora OR timeout" escape hatch I had proposed an hour earlier was a
+<strong>universal double-spend</strong> — and supplied the fix.</li>
+<li><strong>The one-time-nonce punishment mechanism</strong> — pre-committed <code>R</code>, so signing
+twice leaks the key by arithmetic. Verified numerically on real secp256k1 before being written down.</li>
+<li><strong>Prior art</strong> — statechains, RGB, payment channels — and the whitepaper §2 framing.</li>
+</ul>
+
+<div class="lede"><p><strong>Every correction tonight ran the same direction: he made it simpler, I made
+it survive contact.</strong> No claim of co-invention is made or implied — <strong>the design is Ma An-Zuo's</strong>, in full. The byline records who wrote the <em>paper</em>.</p></div>
+
+<h2>Next step</h2>
+<ol>
+<li><strong>B1 · the escape hatch</strong> — has a fix (exit to last anchored state). Apply it.</li>
+<li><strong>Denominations</strong> — pick the ladder (1·2·5·10·20·50·100) and the re-denomination path. <em>No longer a research problem.</em></li>
+<li><strong>Finding the tip at scale</strong> — now on the critical path.</li>
+<li>Model <strong>anchor frequency</strong> — after B1 it's a safety parameter, not a tuning knob.</li>
+<li>BRC-226 mint for provenance, before any public mention.</li>
+<li>Prototype in BASIC via <code>compileState</code>; measure by serializing a real spend.</li>
+</ol>
+
+<footer>
+<p>Light Speed Transfers v0.1 · Ma An-Zuo and Claude Opus 5 · 27 August 2026 · Apache-2.0.</p>
+<p>Closest prior art: statechains/Mercury (theirs is unprovable, ours is a fraud proof), RGB single-use
+seals, payment channels. Know them before claiming novelty.</p>
+</footer>
+
+</div>
