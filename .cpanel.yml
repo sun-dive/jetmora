@@ -21,6 +21,18 @@ deployment:
     - /bin/mkdir -p "$DEPLOYPATH/spec" && /bin/cp spec/log.md "$DEPLOYPATH/spec/log.md"
     - /bin/mkdir -p "$DEPLOYPATH/vectors" && /bin/cp vectors/core.json "$DEPLOYPATH/vectors/core.json"
     - /bin/cp vectors/LICENSE "$DEPLOYPATH/vectors/LICENSE"  # CC0 1.0, alongside the file it dedicates
+    # ── THE LOG SERVICE ────────────────────────────────────────────────────────────────────────────
+    # ⚠⚠ The database lives OUTSIDE the docroot. Inside one it is web-readable as well as writable.
+    #    `server/data/` is gitignored, so a deploy can never overwrite a live database.
+    - /bin/mkdir -p "$HOME/jetmora-data" && /bin/chmod 700 "$HOME/jetmora-data"
+    - /bin/mkdir -p "$DEPLOYPATH/log"
+    - /bin/cp server/log.php "$DEPLOYPATH/log/log.php"          # the only endpoint; the rest are includes
+    - /bin/cp server/store.php "$DEPLOYPATH/log/store.php"
+    - /bin/cp server/merkle.php "$DEPLOYPATH/log/merkle.php"
+    - /bin/cp server/genesis.php "$DEPLOYPATH/log/genesis.php"
+    - /bin/cp server/append.php "$DEPLOYPATH/log/append.php"
+    - /bin/cp server/head.php "$DEPLOYPATH/log/head.php"
+    # ⚠ emit-vectors.php and probe.php are development tools and are deliberately NOT deployed.
     - /bin/cp LICENSE "$DEPLOYPATH/LICENSE"                  # Apache-2.0
     - /bin/cp NOTICE "$DEPLOYPATH/NOTICE"                    # derivation + the Open BSV position
     - echo "jetmora.org ← $(git rev-parse --short HEAD)"

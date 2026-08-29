@@ -15,7 +15,18 @@ require_once __DIR__ . '/append.php';
 require_once __DIR__ . '/head.php';
 require_once __DIR__ . '/merkle.php';
 
-const DB_PATH = __DIR__ . '/data/log.db';       // ⚠ put this OUTSIDE the docroot in a real deployment
+// ⚠⚠ THE DATABASE MUST LIVE OUTSIDE THE DOCROOT. Inside one it is web-READABLE as well as
+//     web-writable, which hands out the file instead of the proofs.
+//   ⇒ Deployment creates a sibling of the docroot ($HOME/jetmora-data); if that directory exists we
+//     use it. Locally it does not, so development falls back to ./data and needs no configuration.
+define('DB_PATH', (static function (): string {
+    $root = $_SERVER['DOCUMENT_ROOT'] ?? '';
+    if ($root !== '') {
+        $sibling = dirname(rtrim($root, '/')) . '/jetmora-data';
+        if (is_dir($sibling)) return $sibling . '/log.db';
+    }
+    return __DIR__ . '/data/log.db';
+})());
 
 function out(array $body, int $status = 200): never {
     http_response_code($status);
