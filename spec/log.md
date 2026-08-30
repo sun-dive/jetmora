@@ -83,9 +83,22 @@ genesis    = SHA256( SHA256( commitment ) )
              where LP(b) = uint32be(len(b)) ‖ b
 ```
 
+where `authorised` is itself **packed bytes** (§4.2a), never JSON:
+
+```
+open        0x00
+threshold   0x01 ‖ k ‖ n ‖ (len ‖ key) × n      keys ASCENDING by raw bytes, no duplicates
+```
+
 ⇒ Canonical by construction: fixed order, length-prefixed, no options. **It is computed by observers
 from the commitment, and MUST NOT be stored inside the thing it identifies** — storing it there is what
 made the 0.1 formulation impossible (§4bis.0).
+
+⚠⚠ **JSON MUST NOT APPEAR IN A COMMITMENT.** §3 already says JSON *"MUST NOT appear anywhere a hash or a
+signature is taken"*, and until 30 Aug this field broke that rule: `authorised` was `json_encode`d
+straight into the bytes an identity is hashed from, so an encoder's spacing or key order changed **which
+covenant it was**. ★ And the sort is not tidiness — before it, `[a, b]` and `[b, a]` were **different
+covenants**. They are now one, which is what anybody writing them meant.
 
 An implementation:
 - **MUST** treat `authorised` as immutable. There is no update path: *a genesis that could change who
@@ -387,11 +400,26 @@ closed here.**
 | `["<key>", …]` | ⇒ **1-of-n.** Any one listed key authorises. ★ This is what 0.1 implementations do, and the bare-list form keeps meaning it |
 | `{"threshold": k, "keys": ["<key>", …]}` | ⇒ **k-of-n.** k distinct listed keys MUST each sign |
 
+⚠ **Those are API spellings. The COMMITMENT form is packed bytes and is the only one that is hashed:**
+
+```
+open        0x00
+threshold   0x01 ‖ k ‖ n ‖ (len ‖ key) × n
+```
+
+- keys **MUST** be sorted ascending by their raw bytes, and **MUST NOT** repeat ⇒ one encoding per set
+- a bare list **MUST** encode as `k = 1` ⇒ a 1-of-n set has exactly **one** encoding, never two
+- a key's length **MUST** be 32 (Ed25519) or 33 / 65 (secp256k1) — §4.0a's verifier selects on it
+- trailing bytes after the last key make the encoding **non-canonical** and **MUST** be rejected
+
 An implementation:
 - **MUST** treat a bare array as `threshold: 1`. ⇒ Existing genesis records keep their current meaning.
 - **MUST** reject `k < 1` or `k > n` at registration, and **MUST NOT** count one key twice toward `k`.
 - **MUST** apply the threshold recorded **at genesis**. `authorised` is immutable (§2); a threshold that
   could be lowered later is not a threshold.
+- ⚠⚠ **MUST refuse an append it cannot satisfy, rather than accept a weaker one.** An endpoint carrying
+  a single signature **MUST NOT** admit an entry against a `k > 1` covenant: doing so silently turns every
+  threshold into 1-of-n. ⇒ Refuse as *not implemented*; that is a limitation, whereas accepting is a hole.
 
 ★★ **No `OP_CHECKMULTISIG` is required for any of this.** Append authorisation is checked by the log, not
 by a script (§4.0a) — so a multi-key covenant owner, a multi-key log operator, and a multi-key creator

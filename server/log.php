@@ -124,7 +124,8 @@ case 'genesis':
     if ($g === null) out(['error' => 'unknown genesis'], 404);
     out(['id' => $hex($g['id']), 'source_hash' => $hex($g['source_hash']),
          'script' => $hex($g['script']), 'state' => $hex($g['state']),
-         'authorised' => json_decode($g['authorised'], true)]);
+         // ⚠ unpacked for the reader's convenience; the COMMITMENT is the packed bytes, never this.
+         'authorised' => GenesisRegistry::unpackAuthorised($g['authorised'])]);
 
 // ── register a genesis (spec §2) ─────────────────────────────────────────────────────────────
 // ⚠ Idempotent and never overwriting: re-registering the same genesis returns the same id, and a
@@ -136,14 +137,16 @@ case 'register':
     if (!is_array($in)) out(['error' => 'body must be JSON'], 400);
     foreach (['source_hash', 'script', 'state', 'authorised'] as $k)
         if (!isset($in[$k])) out(['error' => "missing $k"], 400);
-    // `authorised` is a list of hex public keys, or the string "open" (spec §4.2)
-    $auth = $in['authorised'];
-    if ($auth !== 'open' && !is_array($auth)) out(['error' => 'authorised must be a list or "open"'], 400);
+    // `authorised` is "open", a list of hex public keys (1-of-n), or {threshold, keys} (k-of-n) — §4.2a.
+    // ⚠⚠ PACKED, NEVER json_encode: these bytes are hashed into the covenant's IDENTITY, and a JSON
+    //    encoder's spacing or key order would change it. Sorting inside makes [a,b] and [b,a] one covenant.
+    try { $authPacked = GenesisRegistry::packAuthorised($in['authorised']); }
+    catch (InvalidArgumentException $e) { out(['error' => $e->getMessage()], 400); }
     $id = $registry->register([
         'source_hash' => $unhex($in['source_hash'], 32),
         'script'      => $unhex($in['script']),
         'state'       => $unhex($in['state']),
-        'authorised'  => json_encode($auth),
+        'authorised'  => $authPacked,
     ]);
     out(['genesis' => $hex($id)], 201);
 

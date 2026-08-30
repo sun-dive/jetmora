@@ -60,8 +60,16 @@ final class Appender
         $auth = $this->registry->authorisedFor($genesisId);
         if ($auth === null) return new AppendResult(false, null, 'unknown genesis', 404);
         $hexKey = bin2hex($pubkey);
-        if ($auth !== 'open' && !in_array($hexKey, array_map('strtolower', $auth), true))
-            return new AppendResult(false, null, 'key not authorised for this covenant', 403);
+        if ($auth !== 'open') {
+            // ⚠⚠ REFUSE k>1 RATHER THAN ACCEPT ONE SIGNATURE FOR IT. This endpoint carries a single
+            //   signature, so a k-of-n covenant CANNOT be satisfied here. Letting one signature through
+            //   would silently turn every threshold into 1-of-n — a hole, not a limitation.
+            //   ⇒ 501: the covenant is well-formed and this server cannot honour it yet (spec §4.2a).
+            if (($auth['k'] ?? 1) > 1)
+                return new AppendResult(false, null, 'k-of-n append is not implemented; this endpoint carries one signature', 501);
+            if (!in_array($hexKey, array_map('strtolower', $auth['keys'] ?? []), true))
+                return new AppendResult(false, null, 'key not authorised for this covenant', 403);
+        }
 
         // ── operator policy: a price, an account, a rate limit (spec §4.5). NOT a validity check. ──
         if ($this->authorise !== null && !($this->authorise)($genesisId, $hexKey))
