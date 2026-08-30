@@ -51,6 +51,9 @@ export function inclusionProof(m, entries) {
  *    which is exactly the kind of partial green that looks like a working implementation.
  *    ⇒ This mirrors the construction rather than reasoning about the order, which is why it is right.
  */
+// ⚠ `leaf` is the leaf's DATA, not its hash — this hashes it itself (see `size === 1` below). Passing
+//   a leafHash() double-hashes and every proof fails, silently and identically, which looks like a
+//   broken tree rather than a caller error.
 export function verifyInclusion(m, n, leaf, path, expectedRoot) {
   if (m < 0 || m >= n || n < 1) return false
   const walk = (m, size, pos) => {

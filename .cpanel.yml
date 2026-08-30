@@ -22,6 +22,14 @@ deployment:
     #   their own URL, so anyone holding an older copy can tell which one it is. Never rename or replace.
     - /bin/mkdir -p "$DEPLOYPATH/spec" && /bin/cp spec/log.md "$DEPLOYPATH/spec/log.md"
     - /bin/cp spec/log-v0.1.md "$DEPLOYPATH/spec/log-v0.1.md"          # frozen 0.1, superseded 30 Aug
+    # ── THE REPLAY PAGE ────────────────────────────────────────────────────────────────────────────
+    # ⚠ site/js/ holds COPIES of tools/entry.mjs, merkle.mjs and sha256.mjs — the SAME files the fuzzer
+    #   and test/tree-crosscheck.mjs exercise, so the page proves with the tested code rather than a
+    #   reimplementation. ⚠⚠ They are copied at DEPLOY, never edited in site/js — edit tools/ and
+    #   redeploy, or the page and the tests silently diverge, which is the whole failure this avoids.
+    - /bin/cp site/bitcoin-racers.html "$DEPLOYPATH/bitcoin-racers.html"
+    - /bin/mkdir -p "$DEPLOYPATH/js"
+    - /bin/cp tools/entry.mjs tools/merkle.mjs tools/sha256.mjs "$DEPLOYPATH/js/"
     - /bin/mkdir -p "$DEPLOYPATH/vectors" && /bin/cp vectors/core.json "$DEPLOYPATH/vectors/core.json"
     - /bin/cp vectors/LICENSE "$DEPLOYPATH/vectors/LICENSE"  # CC0 1.0, alongside the file it dedicates
     # ── THE LOG SERVICE ────────────────────────────────────────────────────────────────────────────

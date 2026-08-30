@@ -1,0 +1,235 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bitcoin Racers — the quarter mile, tick by tick</title>
+<meta name="description" content="Four drag races replayed from a jetmora log. Every tick is an entry, and every entry is proved in your browser.">
+<!--
+  © 2026 sun-dive. Apache License 2.0.
+
+  ⚠⚠ THIS PAGE IMPORTS NOTHING FROM grafverse. A replay needs no physics: the state after every tick is
+     IN the entry, so re-deriving it from a simulator would be recomputing what we recorded precisely so
+     we would not have to. ⇒ No cross-repo import, no shared bundle, nothing to keep in step.
+
+  ★ The proofs are verified by tools/merkle.mjs — the SAME code the fuzzer exercises and the same code
+    server/merkle.php is cross-checked against (test/tree-crosscheck.mjs, 969 pass). Not a port.
+-->
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#12161b; --edge:#1e252d; --ink:#e8edf2; --dim:#8b97a4;
+    --stage:#f0a500; --go:#31d07a; --hot:#ff5a5f; --cool:#5ac8fa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:clamp(26px,5vw,40px);line-height:1.1;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--dim);margin:0 0 28px}
+  .strip{height:3px;background:linear-gradient(90deg,var(--stage),var(--go));margin:0 0 28px;border-radius:2px}
+  .panel{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:16px 18px;margin:0 0 18px}
+  .row{display:flex;flex-wrap:wrap;gap:10px 26px;align-items:baseline}
+  .k{color:var(--dim);font-size:13px}
+  .v{font-variant-numeric:tabular-nums}
+  .hash{word-break:break-all;font-size:12.5px;color:var(--cool)}
+  canvas{width:100%;height:auto;display:block;border-radius:8px;background:#0e1216;border:1px solid var(--edge)}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--edge);font-variant-numeric:tabular-nums}
+  th{color:var(--dim);font-weight:400;font-size:12.5px;text-transform:uppercase;letter-spacing:.06em}
+  .ok{color:var(--go)} .warn{color:var(--stage)} .bad{color:var(--hot)}
+  .scroll{overflow-x:auto}
+  .note{color:var(--dim);font-size:14px}
+  a{color:var(--cool)}
+  .bar{height:6px;background:#0e1216;border:1px solid var(--edge);border-radius:3px;overflow:hidden;margin-top:6px}
+  .bar>i{display:block;height:100%;background:var(--go)}
+</style>
+
+<div class="wrap">
+  <h1>Bitcoin Racers</h1>
+  <p class="sub">The quarter mile, tick by tick — replayed from the chain, and proved in your browser.</p>
+  <div class="strip"></div>
+
+  <div class="panel">
+    <div class="row">
+      <div><div class="k">log</div><div class="v" id="size">…</div></div>
+      <div><div class="k">root</div><div class="v hash" id="root">…</div></div>
+    </div>
+  </div>
+
+  <canvas id="c" width="1720" height="820"></canvas>
+  <p class="note" style="margin:8px 0 18px">
+    ⚠ One car reaches the line and three do not, so on a single scale the three are a flat line. The
+    second panel is the same data over the first twenty metres — a zoom, not a different axis.
+  </p>
+  <canvas id="c2" width="1720" height="620"></canvas>
+
+  <div class="panel" style="margin-top:18px">
+    <div class="scroll"><table id="races">
+      <thead><tr><th>race</th><th>entries</th><th>distance</th><th>top speed</th><th>ending</th><th>proofs</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+
+  <div class="panel">
+    <div class="k">battery — this log has no coin, so what it meters is entries</div>
+    <div class="row" style="margin-top:4px">
+      <div class="v" id="charge">…</div>
+    </div>
+    <div class="bar"><i id="bar" style="width:0"></i></div>
+    <p class="note" style="margin:10px 0 0">
+      A race costs about ninety entries. Nobody pays to play; the operator refuels.
+    </p>
+  </div>
+
+  <p class="note">
+    Every tick above was fetched from
+    <a href="https://jetmora.org/log/log.php?op=info">the log</a> and checked against its root with an
+    RFC&nbsp;6962 inclusion proof, computed here rather than taken on trust. The chain has no blocks, no
+    coin and no miners. <span class="warn">Its ordering and structure are proved; its timestamps are its
+    own claim.</span>
+  </p>
+</div>
+
+<script type="module">
+import { parseEntry } from './js/entry.mjs'
+import { verifyInclusion } from './js/merkle.mjs'
+import { fromHex, toHex } from './js/sha256.mjs'
+
+const API = 'https://jetmora.org/log/log.php'
+const S = 2 ** 32                       // ⚠ the racers' fixed-point scale — metres and m/s are v / 2^32
+const QUARTER = 402.336
+const j = async q => (await fetch(`${API}?${q}`)).json()
+
+// ⚠ 8- and 6-byte BIG-endian, and the values exceed 2^32 — so Number() would silently round. BigInt.
+const be = (b, o, n) => { let v = 0n; for (let i = 0; i < n; i++) v = (v << 8n) | BigInt(b[o + i]); return Number(v) }
+
+/** The 24-byte locking script the racers write: n ‖ throttle ‖ v(8) ‖ s(8) ‖ fuel(6). */
+const decode = lock => ({ n: lock[0], throttle: lock[1],
+                          v: be(lock, 2, 8) / S, s: be(lock, 10, 8) / S, fuel: be(lock, 18, 6) })
+
+const info = await j('op=info')
+document.getElementById('size').textContent = `${info.size} entries`
+document.getElementById('root').textContent = info.root
+
+if (info.charge) {
+  const c = info.charge, races = Math.floor(c.entries_remaining / 90)
+  document.getElementById('charge').textContent =
+    `${races.toLocaleString()} races remaining · ${c.entries_remaining.toLocaleString()} entries · ${c.bytes_per_entry} bytes each`
+  document.getElementById('bar').style.width =
+    `${Math.max(0.5, 100 * info.bytes / info.capacity_bytes).toFixed(2)}%`
+}
+
+// ── fetch every entry, in parallel but politely ──────────────────────────────────────────────────
+const ticks = new Array(info.size)
+const LANES = 12                        // ⚠ shared hosting: 264 at once is a stampede, 12 is a queue
+for (let i = 0; i < info.size; i += LANES) {
+  await Promise.all(Array.from({ length: Math.min(LANES, info.size - i) }, async (_, k) => {
+    const seq = i + k
+    const { entry } = await j(`op=entry&seq=${seq}`)
+    const bytes = fromHex(entry)
+    ticks[seq] = { seq, bytes, ...decode(parseEntry(bytes).outputs[0].locking) }
+  }))
+}
+
+// ⚠ Races are separate covenants but share one log, appended back to back. Each starts its tick count
+//   at 1, so a reset to 1 IS the boundary — no metadata needed, and none is invented.
+const races = []
+for (const t of ticks) { if (t.n === 1) races.push([]); races.at(-1)?.push(t) }
+
+// ── draw ─────────────────────────────────────────────────────────────────────────────────────────
+const NAMES = ['finishes', 'goes off', 'grenades', 'runs dry']
+const COLOURS = ['#31d07a', '#f0a500', '#ff5a5f', '#5ac8fa']
+const QUARTER_ONLY = Math.max(QUARTER, ...ticks.map(t => t.s))
+
+function draw(id, maxS, caption) {
+  const c = document.getElementById(id), g = c.getContext('2d')
+  // ⚠ 108, not 62: "410 m" right-aligned needs room, and at 62 the leading digit was cut off the canvas
+  //   entirely — which reads as a wrong number rather than a clipped one.
+  const PAD = { l: 108, r: 28, t: 26, b: 52 }
+  const W = c.width - PAD.l - PAD.r, H = c.height - PAD.t - PAD.b
+  const maxT = Math.max(...races.map(r => r.length))
+  const X = i => PAD.l + (i / (maxT - 1)) * W
+  const Y = m => PAD.t + H - (Math.min(m, maxS) / maxS) * H
+
+  g.fillStyle = '#0e1216'; g.fillRect(0, 0, c.width, c.height)
+  g.font = '22px ui-monospace,monospace'
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD.t + (H * i) / 4
+    g.strokeStyle = '#1e252d'; g.lineWidth = 2
+    g.beginPath(); g.moveTo(PAD.l, y); g.lineTo(c.width - PAD.r, y); g.stroke()
+    g.fillStyle = '#8b97a4'; g.textAlign = 'right'
+    g.fillText(`${(maxS * (1 - i / 4)).toFixed(maxS < 50 ? 1 : 0)} m`, PAD.l - 14, y + 8)
+  }
+  if (QUARTER <= maxS) {                       // ★ the finish line, where it is on this scale
+    g.strokeStyle = '#f0a500'; g.setLineDash([10, 8])
+    g.beginPath(); g.moveTo(PAD.l, Y(QUARTER)); g.lineTo(c.width - PAD.r, Y(QUARTER)); g.stroke()
+    g.setLineDash([]); g.fillStyle = '#f0a500'; g.textAlign = 'left'
+    g.fillText('¼ mile · 402.3 m', PAD.l + 10, Y(QUARTER) - 12)
+  }
+
+  // ⚠ Labels stack when traces end close together — 'goes off' and 'runs dry' sat on top of each other.
+  //   Remember what each row used and push the next one clear.
+  const used = []
+  races.forEach((r, i) => {
+    g.strokeStyle = COLOURS[i]; g.lineWidth = 4; g.beginPath()
+    r.forEach((t, k) => k ? g.lineTo(X(k), Y(t.s)) : g.moveTo(X(k), Y(t.s)))
+    g.stroke()
+    const ex = X(r.length - 1); let ey = Y(r.at(-1).s)
+    g.fillStyle = COLOURS[i]
+    g.beginPath(); g.arc(ex, ey, 7, 0, 7); g.fill()
+    // ⚠⚠ A label pushed clear of a collision STOPS DESCRIBING ITS POINT. On the first render 'runs dry'
+    //   floated to 5 m while its car stopped at 0 m, which reads as a result it never achieved. ⇒ If it
+    //   moves, a leader line goes with it: displaced is fine, detached is a lie.
+    const dotY = ey
+    while (used.some(u => Math.abs(u - ey) < 32)) ey -= 32
+    used.push(ey)
+    g.textAlign = ex > c.width - 340 ? 'right' : 'left'
+    const tx = ex + (g.textAlign === 'left' ? 18 : -18)
+    if (ey !== dotY) {
+      g.strokeStyle = COLOURS[i]; g.lineWidth = 1.5; g.globalAlpha = 0.55
+      g.beginPath(); g.moveTo(ex, dotY); g.lineTo(tx, ey + 2); g.stroke(); g.globalAlpha = 1
+      g.fillStyle = COLOURS[i]
+    }
+    g.fillText(NAMES[i] ?? `race ${i + 1}`, tx, ey + 8)
+  })
+  g.fillStyle = '#8b97a4'; g.textAlign = 'center'
+  g.fillText(caption, PAD.l + W / 2, c.height - 16)
+}
+
+draw('c', QUARTER_ONLY, 'ticks — the whole quarter mile')
+draw('c2', 20, 'ticks — the first 20 metres, where the three failures are')
+
+// ── prove every tick, in the page ────────────────────────────────────────────────────────────────
+const tbody = document.querySelector('#races tbody')
+races.forEach((r, i) => {
+  const tr = document.createElement('tr')
+  const end = r.at(-1).s >= QUARTER ? 'FINISH' : r.length === 1 ? 'BLOWN'
+            : r.at(-1).fuel === 0 ? 'STOPPED' : 'OFF'
+  tr.innerHTML = `<td style="color:${COLOURS[i]}">${NAMES[i] ?? i + 1}</td>
+    <td>${r.length}</td><td>${r.at(-1).s.toFixed(1)} m</td>
+    <td>${Math.max(...r.map(t => t.v)).toFixed(2)} m/s</td><td>${end}</td>
+    <td class="warn" data-p="${i}">checking…</td>`
+  tbody.append(tr)
+})
+
+const ROOT = fromHex(info.root)
+let good = 0
+for (const [i, r] of races.entries()) {
+  let ok = 0
+  for (let k = 0; k < r.length; k += LANES) {
+    const batch = r.slice(k, k + LANES)
+    const results = await Promise.all(batch.map(async t => {
+      const p = await j(`op=inclusion&leaf=${t.seq}&size=${info.size}`)
+      // ★ verified HERE, against the root shown at the top — not trusted because the server said so.
+      // ⚠ verifyInclusion takes the leaf DATA and hashes it itself. Handing it a leafHash() double-hashes
+      //   and fails every proof — which is exactly what this page did until a browser said 0/78.
+      return verifyInclusion(t.seq, info.size, t.bytes, p.proof.map(fromHex), ROOT)
+    }))
+    ok += results.filter(Boolean).length
+  }
+  good += ok
+  const cell = document.querySelector(`[data-p="${i}"]`)
+  cell.textContent = `${ok}/${r.length}`
+  cell.className = ok === r.length ? 'ok' : 'bad'
+}
+document.getElementById('size').textContent = `${info.size} entries · ${good} proved here`
+</script>

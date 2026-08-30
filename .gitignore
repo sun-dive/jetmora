@@ -7,3 +7,7 @@ server/data/
 *.db-shm
 server/dataB/
 server/logB.php
+
+# ⚠ Local dev copies only. The DEPLOY takes these from tools/ — see .cpanel.yml. Committing them
+#   would create a second copy that can drift from the tested one, which is the whole thing we avoid.
+site/js/
