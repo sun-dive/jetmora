@@ -48,9 +48,10 @@
          position:relative;overflow:visible}
   .car{position:absolute;top:12px;left:0;width:30px;height:30px;display:grid;place-items:center;
        font-size:22px;transition:left .09s linear;z-index:2}
-  /* ⚠ 🏎 FACES LEFT. Driving it left-to-right without this is a car in reverse for the whole race.
-     The flip lives on an inner span so `.car`'s own transform stays free for the fly-off. */
-  .car b{display:block;transform:scaleX(-1);font-style:normal;font-weight:400}
+  /* ⚠⚠ NO TRANSFORM HERE, DELIBERATELY. grafverse has none and its cars read correctly; I added a
+     scaleX(-1) to "fix" an orientation that was never wrong and turned every car around. The <b> is
+     only a holder so `.car`'s own transform stays free for the fly-off. */
+  .car b{display:block;font-style:normal;font-weight:400}
   .car.off{transition:left .9s ease-out,transform .9s ease-out,opacity .9s ease-in}
   @media (prefers-reduced-motion:reduce){ .car,.car.off{transition:none} }
   .fin{position:absolute;top:0;bottom:0;right:8px;width:3px;
@@ -707,6 +708,10 @@ function draw(id, maxS, caption) {
   }
 
   playBtn.onclick = () => {
+    // ⚠⚠ A browser will not create or resume an AudioContext outside a user gesture, and will not tell
+    //   you it refused. Sound defaults ON (grafverse persists that), so the toggle is never clicked —
+    //   which meant nothing ever armed it. THIS is the gesture, so this is where it arms.
+    audio.arm()
     running = !running; last = performance.now(); acc = 0
     if (running && t >= maxT - 1) { t = 0; scrub.value = 0 }
     playBtn.textContent = running ? '❚❚ pause' : '▶ play'
