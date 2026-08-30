@@ -48,12 +48,20 @@
          position:relative;overflow:visible}
   .car{position:absolute;top:12px;left:0;width:30px;height:30px;display:grid;place-items:center;
        font-size:22px;transition:left .09s linear;z-index:2}
+  /* ⚠ 🏎 FACES LEFT. Driving it left-to-right without this is a car in reverse for the whole race.
+     The flip lives on an inner span so `.car`'s own transform stays free for the fly-off. */
+  .car b{display:block;transform:scaleX(-1);font-style:normal;font-weight:400}
+  .car.off{transition:left .9s ease-out,transform .9s ease-out,opacity .9s ease-in}
+  @media (prefers-reduced-motion:reduce){ .car,.car.off{transition:none} }
   .fin{position:absolute;top:0;bottom:0;right:8px;width:3px;
        background:repeating-linear-gradient(0deg,#fff 0 6px,#333 6px 12px)}
   .tel{position:absolute;left:10px;top:6px;font:11px/1 ui-monospace,monospace;color:var(--dim);
        letter-spacing:.04em}
   .end{position:absolute;right:16px;top:6px;font:600 11px/1 ui-monospace,monospace;letter-spacing:.1em}
+  /* ⚠ A finished car greys out — but NOT when the ending replaced the glyph. Greyscaling 💥, 🔥 or 🏁
+     turns the one frame that carries the outcome into a smudge. */
   .done .car{filter:grayscale(1) brightness(.7)}
+  .done .car.told{filter:none}
 
   canvas{width:100%;height:auto;display:block;border-radius:8px;background:#080c11;border:1px solid var(--line)}
   table{width:100%;border-collapse:collapse;font-size:14px}
@@ -123,6 +131,26 @@
       A race costs about ninety entries. Nobody pays to play; the operator refuels.
     </p>
   </div>
+
+  <div class="panel">
+    <div class="lbl">⛽ how this stays free</div>
+    <p style="margin:0 0 10px">
+      <strong>No wallet, and no coins from you, ever.</strong> This chain has no coin to spend — what a
+      race costs is about ninety log entries, and the meter above says how many races are left in the tank.
+    </p>
+    <p class="note" style="margin:0">
+      On <a href="https://grafverse.com/bitcoin-racers.html">the Bitcoin SV version</a> a depot pays for
+      every car and the shop keeps it fuelled — fiat in the front, satoshis out the back. Here there is
+      no depot and nothing to fuel: the only cost is disk, and the operator refills it.
+    </p>
+  </div>
+
+  <a href="https://grafverse-shop.fourthwall.com/products/bitcoin-racers"
+     class="panel" style="display:flex;gap:14px;align-items:center;text-decoration:none;color:var(--fg)">
+    <span style="font-size:30px">👕</span>
+    <span><strong>Bitcoin Racers merch</strong><br>
+      <span class="note">The shop is what keeps the cars running. grafverse-shop.fourthwall.com</span></span>
+  </a>
 
   <p class="note">
     Every tick above was fetched from
@@ -247,7 +275,7 @@ function draw(id, maxS, caption) {
 //   transition rather than repainted. ⇒ The browser does the interpolation; we only ever set a
 //   percentage, and the number we set comes straight out of the entry.
 {
-  const CARS = ['🏎️', '🏎️', '🏎️', '🏎️']
+  const CARS = ['🏎', '🏎', '🏎', '🏎']    // ⚠ no variation selector — grafverse uses the bare glyph
   const host = document.getElementById('lanes')
   const maxT = Math.max(...races.map(r => r.length))
   host.innerHTML = races.map((r, i) => `
@@ -255,11 +283,48 @@ function draw(id, maxS, caption) {
       <div class="who" style="color:${COLOURS[i]}">${NAMES[i] ?? 'race ' + (i + 1)}</div>
       <div class="strip">
         <div class="tel"></div><div class="end"></div>
-        <div class="fin"></div><div class="car">${CARS[i]}</div>
+        <div class="fin"></div><div class="car"><b>${CARS[i]}</b></div>
       </div>
     </div>`).join('')
   const lanes = [...host.querySelectorAll('.lane')].map(el => ({
-    el, car: el.querySelector('.car'), tel: el.querySelector('.tel'), end: el.querySelector('.end') }))
+    el, car: el.querySelector('.car'), glyph: el.querySelector('.car b'),
+    tel: el.querySelector('.tel'), end: el.querySelector('.end'), fired: false }))
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  /**
+   * ★ THE ENDING, MADE VISIBLE — ported from grafverse.com/bitcoin-racers.html.
+   * ⚠⚠ EVERY BRANCH IS KEYED OFF THE ENDING THE LOG RECORDED, never off "did the car reach the end of
+   *   the trace". That page had already told that lie once, printing a finishing time for a car that
+   *   went off at tick four. A visual lie is the loudest kind.
+   */
+  function finale(i) {
+    const L = lanes[i]
+    switch (ENDINGS[i]) {
+      case 'OFF': {          // ★ IT REALLY LEAVES — .strip is overflow:visible so it can
+        if (REDUCED) { L.car.style.opacity = '.25'; break }
+        const up = Math.random() < .5 ? -1 : 1
+        L.car.classList.add('off')
+        requestAnimationFrame(() => {          // one frame later, or there is nothing to animate FROM
+          L.car.style.transform = `translate(${60 + Math.random() * 90}px,${up * 90}px) rotate(${up * 520}deg) scale(.8)`
+          L.car.style.opacity = '0'
+        })
+        break }
+      case 'BLOWN':
+        L.car.classList.add('told'); L.glyph.textContent = '💥'
+        setTimeout(() => { L.glyph.textContent = '🔥'; L.car.style.opacity = '.85' }, 260)
+        break
+      case 'FINISH':
+        L.car.classList.add('told'); L.glyph.textContent = '🏁'
+        break
+      // ⚠ STOPPED gets nothing, deliberately. The drama of running dry is the ABSENCE — the engine
+      //   has already died, and dressing that up would be inventing an event the log does not have.
+    }
+  }
+  function unfinale(i) {
+    const L = lanes[i]
+    L.fired = false; L.car.classList.remove('off', 'told')
+    L.car.style.transform = ''; L.car.style.opacity = ''; L.glyph.textContent = CARS[i]
+  }
 
   const scrub = document.getElementById('scrub'), playBtn = document.getElementById('play')
   scrub.max = maxT - 1
@@ -273,6 +338,8 @@ function draw(id, maxS, caption) {
       const done = t >= r.length, cur = r[Math.min(t, r.length - 1)]
       const L = lanes[i]
       L.el.classList.toggle('done', done)
+      if (done && !L.fired) { L.fired = true; finale(i) }
+      else if (!done && L.fired) unfinale(i)     // scrubbing back un-crashes it
       // ⚠ the car is 30px wide and the finish sits 8px in, so the track is not the full width
       L.car.style.left = `calc(${(Math.min(cur.s, QUARTER) / QUARTER * 100).toFixed(3)}% - ${
         (Math.min(cur.s, QUARTER) / QUARTER * 38).toFixed(1)}px)`
