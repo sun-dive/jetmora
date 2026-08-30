@@ -14,67 +14,88 @@
     server/merkle.php is cross-checked against (test/tree-crosscheck.mjs, 969 pass). Not a port.
 -->
 <style>
+  /* ⚠ The palette, type and furniture are grafverse.com/bitcoin-racers.html's — COPIED, never shared.
+     A page owns its own bundle (that rule cost a day on 20 Aug), so duplicated CSS is the price of
+     isolation, and looking like a stranger's page would be a worse one. */
   :root{
-    --bg:#0b0d10; --panel:#12161b; --edge:#1e252d; --ink:#e8edf2; --dim:#8b97a4;
-    --stage:#f0a500; --go:#31d07a; --hot:#ff5a5f; --cool:#5ac8fa;
+    --bg:#0b0f14;--fg:#dfe7ef;--dim:#8fa3b8;--acc:#31c8ff;--warm:#ffb454;
+    --good:#5ee08a;--bad:#ff6b6b;--panel:#111823;--line:#1d2836;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-       font:16px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-       -webkit-font-smoothing:antialiased}
-  .wrap{max-width:920px;margin:0 auto;padding:32px 20px 80px}
-  h1{font-size:clamp(26px,5vw,40px);line-height:1.1;margin:0 0 6px;letter-spacing:-.02em}
-  .sub{color:var(--dim);margin:0 0 28px}
-  .strip{height:3px;background:linear-gradient(90deg,var(--stage),var(--go));margin:0 0 28px;border-radius:2px}
-  .panel{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:16px 18px;margin:0 0 18px}
-  .row{display:flex;flex-wrap:wrap;gap:10px 26px;align-items:baseline}
-  .k{color:var(--dim);font-size:13px}
-  .v{font-variant-numeric:tabular-nums}
-  .hash{word-break:break-all;font-size:12.5px;color:var(--cool)}
-  canvas{width:100%;height:auto;display:block;border-radius:8px;background:#0e1216;border:1px solid var(--edge)}
-  table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
-  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--edge);font-variant-numeric:tabular-nums}
-  th{color:var(--dim);font-weight:400;font-size:12.5px;text-transform:uppercase;letter-spacing:.06em}
-  .ok{color:var(--go)} .warn{color:var(--stage)} .bad{color:var(--hot)}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:28px 18px 80px}
+  h1{font-size:1.7rem;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--dim);margin:0 0 18px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0}
+  .lbl{font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;
+       color:var(--acc);text-transform:uppercase;margin-bottom:12px}
+  .row{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+  .hash{word-break:break-all;font-size:12px;color:var(--acc)}
+  button{background:var(--acc);color:#04141c;border:0;border-radius:8px;padding:11px 18px;
+         font:600 15px/1 inherit;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  button:hover{filter:brightness(1.1)}
+  select{background:#0b0f14;color:var(--fg);border:1px solid var(--line);border-radius:8px;
+         padding:9px 12px;font:inherit;font-size:14px}
+  input[type=range]{width:100%;accent-color:var(--acc);margin-top:14px}
+
+  /* the strip — one lane per race */
+  .lane{display:grid;grid-template-columns:96px 1fr;gap:12px;align-items:center;margin:10px 0}
+  .lane .who{font:600 12px/1.3 ui-monospace,monospace;letter-spacing:.06em;text-align:right}
+  .strip{height:56px;background:#080c11;border:1px solid var(--line);border-radius:8px;
+         position:relative;overflow:visible}
+  .car{position:absolute;top:12px;left:0;width:30px;height:30px;display:grid;place-items:center;
+       font-size:22px;transition:left .09s linear;z-index:2}
+  .fin{position:absolute;top:0;bottom:0;right:8px;width:3px;
+       background:repeating-linear-gradient(0deg,#fff 0 6px,#333 6px 12px)}
+  .tel{position:absolute;left:10px;top:6px;font:11px/1 ui-monospace,monospace;color:var(--dim);
+       letter-spacing:.04em}
+  .end{position:absolute;right:16px;top:6px;font:600 11px/1 ui-monospace,monospace;letter-spacing:.1em}
+  .done .car{filter:grayscale(1) brightness(.7)}
+
+  canvas{width:100%;height:auto;display:block;border-radius:8px;background:#080c11;border:1px solid var(--line)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);
+        font-variant-numeric:tabular-nums}
+  th{color:var(--dim);font:600 11px/1 ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase}
+  .ok{color:var(--good)} .warn{color:var(--warm)} .bad{color:var(--bad)}
   .scroll{overflow-x:auto}
-  .note{color:var(--dim);font-size:14px}
-  a{color:var(--cool)}
-  button,select{background:#12161b;color:var(--ink);border:1px solid var(--edge);border-radius:6px;
-    padding:7px 14px;font:inherit;font-size:14px;cursor:pointer}
-  button:hover,select:hover{border-color:var(--go)}
-  input[type=range]{accent-color:var(--go)}
-  .bar{height:6px;background:#0e1216;border:1px solid var(--edge);border-radius:3px;overflow:hidden;margin-top:6px}
-  .bar>i{display:block;height:100%;background:var(--go)}
+  .note{color:var(--dim);font-size:13.5px}
+  a{color:var(--acc)}
+  .bar{height:6px;background:#080c11;border:1px solid var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
+  .bar>i{display:block;height:100%;background:var(--acc)}
 </style>
 
 <div class="wrap">
   <h1>Bitcoin Racers</h1>
   <p class="sub">The quarter mile, tick by tick — replayed from the chain, and proved in your browser.</p>
-  <div class="strip"></div>
 
   <div class="panel">
     <div class="row">
-      <div><div class="k">log</div><div class="v" id="size">…</div></div>
-      <div><div class="k">root</div><div class="v hash" id="root">…</div></div>
+      <div><div class="lbl" style="margin-bottom:6px">log</div><div class="mono" id="size">…</div></div>
+      <div><div class="lbl" style="margin-bottom:6px">root</div><div class="mono hash" id="root">…</div></div>
     </div>
   </div>
 
-  <canvas id="strip" width="1720" height="700"></canvas>
-  <div class="panel" style="margin-top:12px">
-    <div class="row" style="justify-content:space-between">
-      <div class="row" style="gap:14px">
+  <div class="panel">
+    <div class="lbl">the replay — one log entry per frame</div>
+    <div id="lanes"></div>
+    <div class="row" style="justify-content:space-between;margin-top:16px">
+      <div class="row" style="gap:12px">
         <button id="play">▶ play</button>
-        <button id="again">↻ restart</button>
-        <span class="k" id="tick">tick 0</span>
+        <button id="again" class="ghost">↻ restart</button>
+        <span class="mono" id="tick" style="color:var(--dim)">tick 0</span>
       </div>
-      <div class="row" style="gap:10px"><span class="k">speed</span>
+      <div class="row" style="gap:10px">
         <select id="rate"><option value="60">1×</option><option value="150">2.5×</option>
           <option value="20">slow</option><option value="600">fast</option></select></div>
     </div>
-    <input id="scrub" type="range" min="0" value="0" step="1" style="width:100%;margin-top:12px">
-    <p class="note" style="margin:10px 0 0">
-      ⚠ Each frame is one log entry — this is the chain played back, not a simulation re-run. The four
-      races were run <em>separately</em>; four lanes is how they are shown, not a race that happened.
+    <input id="scrub" type="range" min="0" value="0" step="1">
+    <p class="note" style="margin:12px 0 0">
+      ⚠ Each frame is one log entry — the chain played back, not a simulation re-run. The four races were
+      run <em>separately</em>; four lanes is how they are shown, not a race that happened.
     </p>
   </div>
 
@@ -93,9 +114,9 @@
   </div>
 
   <div class="panel">
-    <div class="k">battery — this log has no coin, so what it meters is entries</div>
+    <div class="lbl">battery — this log has no coin, so what it meters is entries</div>
     <div class="row" style="margin-top:4px">
-      <div class="v" id="charge">…</div>
+      <div class="mono" id="charge">…</div>
     </div>
     <div class="bar"><i id="bar" style="width:0"></i></div>
     <p class="note" style="margin:10px 0 0">
@@ -160,7 +181,7 @@ for (const t of ticks) { if (t.n === 1) races.push([]); races.at(-1)?.push(t) }
 
 // ── draw ─────────────────────────────────────────────────────────────────────────────────────────
 const NAMES = ['finishes', 'goes off', 'grenades', 'runs dry']
-const COLOURS = ['#31d07a', '#f0a500', '#ff5a5f', '#5ac8fa']
+const COLOURS = ['#5ee08a', '#ffb454', '#ff6b6b', '#31c8ff']   // --good --warm --bad --acc
 const QUARTER_ONLY = Math.max(QUARTER, ...ticks.map(t => t.s))
 const ending = r => r.at(-1).s >= QUARTER ? 'FINISH' : r.length === 1 ? 'BLOWN'
                   : r.at(-1).fuel === 0 ? 'STOPPED' : 'OFF'
@@ -176,19 +197,19 @@ function draw(id, maxS, caption) {
   const X = i => PAD.l + (i / (maxT - 1)) * W
   const Y = m => PAD.t + H - (Math.min(m, maxS) / maxS) * H
 
-  g.fillStyle = '#0e1216'; g.fillRect(0, 0, c.width, c.height)
+  g.fillStyle = '#080c11'; g.fillRect(0, 0, c.width, c.height)
   g.font = '22px ui-monospace,monospace'
   for (let i = 0; i <= 4; i++) {
     const y = PAD.t + (H * i) / 4
-    g.strokeStyle = '#1e252d'; g.lineWidth = 2
+    g.strokeStyle = '#1d2836'; g.lineWidth = 2
     g.beginPath(); g.moveTo(PAD.l, y); g.lineTo(c.width - PAD.r, y); g.stroke()
-    g.fillStyle = '#8b97a4'; g.textAlign = 'right'
+    g.fillStyle = '#8fa3b8'; g.textAlign = 'right'
     g.fillText(`${(maxS * (1 - i / 4)).toFixed(maxS < 50 ? 1 : 0)} m`, PAD.l - 14, y + 8)
   }
   if (QUARTER <= maxS) {                       // ★ the finish line, where it is on this scale
-    g.strokeStyle = '#f0a500'; g.setLineDash([10, 8])
+    g.strokeStyle = '#ffb454'; g.setLineDash([10, 8])
     g.beginPath(); g.moveTo(PAD.l, Y(QUARTER)); g.lineTo(c.width - PAD.r, Y(QUARTER)); g.stroke()
-    g.setLineDash([]); g.fillStyle = '#f0a500'; g.textAlign = 'left'
+    g.setLineDash([]); g.fillStyle = '#ffb454'; g.textAlign = 'left'
     g.fillText('¼ mile · 402.3 m', PAD.l + 10, Y(QUARTER) - 12)
   }
 
@@ -217,86 +238,69 @@ function draw(id, maxS, caption) {
     }
     g.fillText(NAMES[i] ?? `race ${i + 1}`, tx, ey + 8)
   })
-  g.fillStyle = '#8b97a4'; g.textAlign = 'center'
+  g.fillStyle = '#8fa3b8'; g.textAlign = 'center'
   g.fillText(caption, PAD.l + W / 2, c.height - 16)
 }
 
 // ── THE REPLAY — one log entry per frame ─────────────────────────────────────────────────────────
-// ★ This is the point of the whole design: "a live demo is the log; a replay is that log run backwards."
-//   Nothing here computes a race. It reads what was recorded and shows it at a watchable speed.
+// ★ The design is grafverse's: an emoji car on a strip with a chequered finish, moved by a CSS
+//   transition rather than repainted. ⇒ The browser does the interpolation; we only ever set a
+//   percentage, and the number we set comes straight out of the entry.
 {
-  const sc = document.getElementById('strip'), sg = sc.getContext('2d')
+  const CARS = ['🏎️', '🏎️', '🏎️', '🏎️']
+  const host = document.getElementById('lanes')
   const maxT = Math.max(...races.map(r => r.length))
-  // ⚠ R is wide because the ENDING label lives in it — at 90 it sat on top of the ¼-mile line.
-  const L = 150, R = 190, TOP = 70, LANE = (sc.height - TOP - 60) / races.length
-  const px = m => L + (Math.min(m, QUARTER) / QUARTER) * (sc.width - L - R)
+  host.innerHTML = races.map((r, i) => `
+    <div class="lane" data-i="${i}">
+      <div class="who" style="color:${COLOURS[i]}">${NAMES[i] ?? 'race ' + (i + 1)}</div>
+      <div class="strip">
+        <div class="tel"></div><div class="end"></div>
+        <div class="fin"></div><div class="car">${CARS[i]}</div>
+      </div>
+    </div>`).join('')
+  const lanes = [...host.querySelectorAll('.lane')].map(el => ({
+    el, car: el.querySelector('.car'), tel: el.querySelector('.tel'), end: el.querySelector('.end') }))
+
   const scrub = document.getElementById('scrub'), playBtn = document.getElementById('play')
   scrub.max = maxT - 1
   let t = 0, running = false, last = 0, acc = 0
 
-  function frame(now) {
-    if (running) {
-      const rate = +document.getElementById('rate').value       // ticks per second
-      acc += (now - last) / 1000 * rate; last = now
-      while (acc >= 1) { acc -= 1; t++ }
-      if (t >= maxT) { t = maxT - 1; running = false; playBtn.textContent = '▶ play' }
-      scrub.value = t
-    }
-    render(); requestAnimationFrame(frame)
-  }
-
   function render() {
     document.getElementById('tick').textContent = `tick ${t}`
-    sg.fillStyle = '#0e1216'; sg.fillRect(0, 0, sc.width, sc.height)
-    sg.font = '22px ui-monospace,monospace'
-
-    // the strip: staging lights at 0, the finish at 402.3 m
-    sg.strokeStyle = '#f0a500'; sg.lineWidth = 3; sg.setLineDash([12, 10])
-    sg.beginPath(); sg.moveTo(px(QUARTER), TOP - 26); sg.lineTo(px(QUARTER), sc.height - 44); sg.stroke()
-    sg.setLineDash([]); sg.fillStyle = '#f0a500'; sg.textAlign = 'right'
-    sg.fillText('¼ mile', px(QUARTER) - 12, TOP - 34)
-    sg.strokeStyle = '#31d07a'; sg.beginPath()
-    sg.moveTo(px(0), TOP - 26); sg.lineTo(px(0), sc.height - 44); sg.stroke()
-
     races.forEach((r, i) => {
-      const y = TOP + LANE * i + LANE / 2
-      sg.strokeStyle = '#1e252d'; sg.lineWidth = 1.5
-      sg.beginPath(); sg.moveTo(L, y + LANE / 2 - 4); sg.lineTo(sc.width - R, y + LANE / 2 - 4); sg.stroke()
-
-      // ⚠ a race shorter than the playhead has ENDED — it holds its last recorded state, it does not
-      //   keep moving. Clamping the index is what "the log ran out" looks like.
-      const done = t >= r.length
-      const cur = r[Math.min(t, r.length - 1)]
-
-      sg.fillStyle = '#8b97a4'; sg.textAlign = 'right'
-      sg.fillText(NAMES[i] ?? `race ${i + 1}`, L - 16, y + 8)
-
-      sg.strokeStyle = COLOURS[i]; sg.lineWidth = 3; sg.globalAlpha = .45
-      sg.beginPath(); sg.moveTo(px(0), y); sg.lineTo(px(cur.s), y); sg.stroke(); sg.globalAlpha = 1
-
-      sg.fillStyle = COLOURS[i]
-      sg.beginPath(); sg.arc(px(cur.s), y, done ? 8 : 11, 0, 7); sg.fill()
-      if (!done && cur.throttle > 0) {                   // ★ a flare while the throttle is open
-        sg.globalAlpha = .35
-        sg.beginPath(); sg.arc(px(cur.s), y, 11 + cur.throttle, 0, 7); sg.fill(); sg.globalAlpha = 1
-      }
-
-      sg.textAlign = 'left'; sg.fillStyle = done ? '#8b97a4' : '#e8edf2'
-      sg.fillText(`${cur.s.toFixed(1)} m   ${cur.v.toFixed(2)} m/s   thr ${cur.throttle}   fuel ${cur.fuel}`,
-                  L, y - LANE / 2 + 24)
-      if (done) { sg.fillStyle = '#8b97a4'; sg.textAlign = 'right'
-                  sg.textAlign = 'left'; sg.fillText(ENDINGS[i], px(QUARTER) + 22, y + 8) }
+      // ⚠ A race shorter than the playhead has ENDED — it holds its last recorded state rather than
+      //   drifting on, because that is what the log running out looks like.
+      const done = t >= r.length, cur = r[Math.min(t, r.length - 1)]
+      const L = lanes[i]
+      L.el.classList.toggle('done', done)
+      // ⚠ the car is 30px wide and the finish sits 8px in, so the track is not the full width
+      L.car.style.left = `calc(${(Math.min(cur.s, QUARTER) / QUARTER * 100).toFixed(3)}% - ${
+        (Math.min(cur.s, QUARTER) / QUARTER * 38).toFixed(1)}px)`
+      L.tel.textContent = `${cur.s.toFixed(1)} m · ${cur.v.toFixed(2)} m/s · thr ${cur.throttle} · fuel ${cur.fuel}`
+      L.end.textContent = done ? ENDINGS[i] : ''
+      L.end.style.color = done && ENDINGS[i] === 'FINISH' ? 'var(--good)'
+                        : ENDINGS[i] === 'BLOWN' ? 'var(--bad)' : 'var(--warm)'
     })
+  }
+
+  function frame(now) {
+    if (running) {
+      acc += (now - last) / 1000 * (+document.getElementById('rate').value); last = now
+      while (acc >= 1) { acc -= 1; t++ }
+      if (t >= maxT) { t = maxT - 1; running = false; playBtn.textContent = '▶ play' }
+      scrub.value = t; render()
+    }
+    requestAnimationFrame(frame)
   }
 
   playBtn.onclick = () => {
     running = !running; last = performance.now(); acc = 0
-    if (running && t >= maxT - 1) t = 0
+    if (running && t >= maxT - 1) { t = 0; scrub.value = 0 }
     playBtn.textContent = running ? '❚❚ pause' : '▶ play'
   }
-  document.getElementById('again').onclick = () => { t = 0; scrub.value = 0 }
-  scrub.oninput = () => { t = +scrub.value; running = false; playBtn.textContent = '▶ play' }
-  requestAnimationFrame(frame)
+  document.getElementById('again').onclick = () => { t = 0; scrub.value = 0; render() }
+  scrub.oninput = () => { t = +scrub.value; running = false; playBtn.textContent = '▶ play'; render() }
+  render(); requestAnimationFrame(frame)
 }
 
 draw('c', QUARTER_ONLY, 'ticks — the whole quarter mile')
