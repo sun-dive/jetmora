@@ -72,6 +72,17 @@
   .scroll{overflow-x:auto}
   .note{color:var(--dim);font-size:13.5px}
   a{color:var(--acc)}
+  .boardwrap{display:flex;gap:14px;align-items:flex-start}
+  .garage{flex:0 0 clamp(250px,31%,336px)}
+  .garage-art{display:block;position:relative;width:100%;aspect-ratio:672/900;border-radius:8px;
+              overflow:hidden;text-decoration:none;border:1px solid var(--line);transition:border-color .15s}
+  .garage-art svg,.garage-art img{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .garage-art img{object-fit:cover}
+  .garage-art:hover{border-color:var(--acc)}
+  .garage-note{color:var(--dim);font-size:12.5px;line-height:1.6;margin:12px 2px 0}
+  .garage-note b{color:var(--fg)}
+  @media(max-width:760px){ .boardwrap{flex-direction:column}
+    .garage{flex:none;width:100%;max-width:420px;margin:0 auto} }
   .bar{height:6px;background:#080c11;border:1px solid var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
   .bar>i{display:block;height:100%;background:var(--acc)}
 </style>
@@ -94,6 +105,7 @@
       <div class="row" style="gap:12px">
         <button id="play">▶ play</button>
         <button id="again" class="ghost">↻ restart</button>
+        <button id="snd" class="ghost" title="engine, tyres and crowd — all synthesised, no files">🔇 sound</button>
         <span class="mono" id="tick" style="color:var(--dim)">tick 0</span>
       </div>
       <div class="row" style="gap:10px">
@@ -114,11 +126,51 @@
   </p>
   <canvas id="c2" width="1720" height="620"></canvas>
 
-  <div class="panel" style="margin-top:18px">
+  <div class="boardwrap" style="margin:18px 0 14px">
+  <div class="panel" style="flex:1;min-width:0;margin:0">
+    <div class="lbl">the standings — every tick proved in this browser</div>
     <div class="scroll"><table id="races">
       <thead><tr><th>race</th><th>entries</th><th>distance</th><th>top speed</th><th>ending</th><th>proofs</th></tr></thead>
       <tbody></tbody>
     </table></div>
+  </div>
+
+  <!-- ⛳ THE PROMO SLOT — ported from grafverse.com/bitcoin-racers.html, art and copy unchanged.
+       ★★ BE THE MERCHANT, NEVER THE AFFILIATE. sun-dive's own shop, styled as part of the page rather
+       than an injected ad — nothing that invites an ad-blocker to eat it or a reader to skip it.
+       ⚠ The SVG is the FALLBACK, not a leftover: it sits UNDER the photograph, so a missing or blocked
+       image leaves a designed card rather than an empty hole. -->
+  <div class="panel garage" style="margin:0">
+    <a class="garage-art" href="https://grafverse-shop.fourthwall.com/products/bitcoin-racers"
+       target="_blank" rel="noopener"
+       aria-label="Bitcoin Racers t-shirt, $21 — opens the shop in a new tab">
+      <svg viewBox="0 0 300 250" preserveAspectRatio="xMidYMid slice" role="img" aria-hidden="true">
+        <defs><pattern id="pflag" width="24" height="24" patternUnits="userSpaceOnUse">
+          <rect width="24" height="24" fill="#0d1218"/><rect width="12" height="12" fill="#16202b"/>
+          <rect x="12" y="12" width="12" height="12" fill="#16202b"/></pattern></defs>
+        <rect width="300" height="250" fill="url(#pflag)"/>
+        <text x="150" y="86" text-anchor="middle" font-family="ui-monospace,Menlo,monospace"
+              font-size="15" letter-spacing="3" fill="#39d0ff">BITCOIN RACERS</text>
+        <text x="150" y="132" text-anchor="middle" font-size="44">🏎️💨</text>
+        <text x="150" y="176" text-anchor="middle" font-family="ui-monospace,Menlo,monospace"
+              font-size="13" fill="#dfe7ef">Wear the record</text>
+        <rect x="86" y="196" width="128" height="30" rx="7" fill="#39d0ff"/>
+        <text x="150" y="216" text-anchor="middle" font-family="ui-monospace,Menlo,monospace"
+              font-size="12" font-weight="700" fill="#04141c">SHOP THE SET</text>
+      </svg>
+      <img src="/img/racers-shirt-88.webp?v=20260830" width="672" height="900" loading="lazy"
+           decoding="async" alt="Bitcoin Racers t-shirt — two wedge racers under a green 88">
+    </a>
+
+    <!-- ⚠⚠ HIS COPY RULE: racing is FREE — say that and stop. The first line is the freedom, never the
+         ask, and the ask never becomes a toll. A third sentence was cut on grafverse for the same
+         reason: two sentences say it, three explain it. -->
+    <div class="lbl" style="margin:14px 0 0">⛽ How this stays free</div>
+    <p class="garage-note">
+      Racing is free — <b>no wallet, and no coins from you, ever</b>.
+      This chain has no coin at all: a race costs about ninety log entries, and the shop keeps them paid for.
+    </p>
+  </div>
   </div>
 
   <div class="panel">
@@ -132,26 +184,6 @@
     </p>
   </div>
 
-  <div class="panel">
-    <div class="lbl">⛽ how this stays free</div>
-    <p style="margin:0 0 10px">
-      <strong>No wallet, and no coins from you, ever.</strong> This chain has no coin to spend — what a
-      race costs is about ninety log entries, and the meter above says how many races are left in the tank.
-    </p>
-    <p class="note" style="margin:0">
-      On <a href="https://grafverse.com/bitcoin-racers.html">the Bitcoin SV version</a> a depot pays for
-      every car and the shop keeps it fuelled — fiat in the front, satoshis out the back. Here there is
-      no depot and nothing to fuel: the only cost is disk, and the operator refills it.
-    </p>
-  </div>
-
-  <a href="https://grafverse-shop.fourthwall.com/products/bitcoin-racers"
-     class="panel" style="display:flex;gap:14px;align-items:center;text-decoration:none;color:var(--fg)">
-    <span style="font-size:30px">👕</span>
-    <span><strong>Bitcoin Racers merch</strong><br>
-      <span class="note">The shop is what keeps the cars running. grafverse-shop.fourthwall.com</span></span>
-  </a>
-
   <p class="note">
     Every tick above was fetched from
     <a href="https://jetmora.org/log/log.php?op=info">the log</a> and checked against its root with an
@@ -162,6 +194,304 @@
 </div>
 
 <script type="module">
+// ═══ 🔊 SOUND — PORTED from grafverse.com/bitcoin-racers.html, synthesised, no files ═══════════
+// ⚠ COPIED, never imported: a page owns its own bundle. What follows is grafverse's code with two
+//   GM constant lookups broken and the single car generalised to the leading lane. The comments are
+//   its authors' and are kept, because they carry the reasoning.
+// ⚠⚠ NOT PORTED: burst() — the particle effects need a canvas per lane. Sound only, and said so.
+function makeAudio(getStrip) {
+  var actx = null, master = null, CARPAN = null, CARDIST = null, CHEERPAN = null;
+  var ENGINE = null, SCREECH = null;   // ⚠ SND is declared below, by the ported block — it
+                                      //   defaults ON and remembers the choice in localStorage.
+  var SPACE = { pan: 0, gain: 1, dop: 1 };
+  var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var st = { get clientWidth(){ return getStrip().clientWidth },
+             get clientHeight(){ return getStrip().clientHeight } };
+/* ═══ 🔊 SOUND — SYNTHESISED, NO FILES ═══════════════════════════════════════════════════════════
+     Follows the house idiom set by `grafverse.html:1141` — *"audio (synthesised, fully offline — no
+     files)"*. There is not one audio asset in this repository and this change does not add one: no
+     bytes to deploy, no `.cpanel.yml` line to forget, no licence to carry in the colophon.
+
+     ★★ AND FOR THE ENGINE IT IS NOT A PREFERENCE — IT IS THE ONLY THING THAT WORKS.
+     A recording replayed faster is a recording replayed faster: tape speed, not a bigger motor. The
+     brief needs TWO independent knobs — pitch tracking `v` continuously, and timbre tracking `eng` —
+     and a sample gives one. Synthesis gives both, so a small engine is genuinely a higher, thinner
+     note and a big one is genuinely lower and heavier, rather than the same note slowed down.
+
+     ⚠ EVERYTHING BELOW IS DRIVEN FROM THE TRACE THE COVENANT SETTLED. No sound re-derives physics.  */
+
+  var AUDIO_KEY = 'racers.sound';
+  var SND = true; try { SND = localStorage.getItem(AUDIO_KEY) !== '0' } catch(e){}
+  var actx = null, master = null, ENGINE = null, SCREECH = null;
+  var CARPAN = null, CARDIST = null, CHEERPAN = null;
+  /* ⚠ ROUTE THROUGH A BUS, NEVER STRAIGHT TO MASTER. Everything the CAR makes — engine, tyres, the
+     crash, the grenade — shares one distance gain and one panner, so the car's position in the mix
+     is a single number that cannot disagree with itself. */
+  function carBus(){ return CARDIST || master }
+  function cheerBus(){ return CHEERPAN || master }
+
+  /* ═══ 🎧 WHERE THE CAR IS, AND HOW FAST IT IS COMING AT YOU ══════════════════════════════════════
+     ★★ ONE GEOMETRY DRIVES THREE THINGS — pan, loudness and Doppler — so they cannot drift apart.
+     The listener stands trackside, level with the middle of the strip and set back from the lane.
+     That is the seat the picture already takes: the car crosses left to right in front of you. So
+     the ear and the eye are in the same place, which is the only reason any of this reads as one car
+     rather than three effects.
+
+     ⚠ SET BACK BY A FRACTION OF THE TRACK, NOT A FIXED NUMBER OF METRES. A real spectator stands
+     ~18 m off the lane — on a quarter mile that is a distant pass, and on the 18 m 60-ft strip it is
+     standing further away than the car ever travels. A fraction keeps the effect the same SHAPE at
+     every distance, which for a game is worth more than a literal metre count. Stated because it is
+     a chosen constant, not a rule of the system.
+
+     ⚠⚠ AND WEBAUDIO'S OWN DOPPLER IS GONE. `PannerNode` carried `dopplerFactor` and `speedOfSound`
+     and both were DEPRECATED AND REMOVED from the spec, so nothing is inherited here — it is
+     computed by hand. Which costs nothing, because the engine's frequency is already ours to set. */
+  var LISTENER_BACK = 0.16;    /* the listener's set-back, as a fraction of the track length */
+  var SOUND_MPH     = 767.269; /* the speed of sound, in the unit the trace already reports */
+  var SPACE = { pan:-0.95, gain:0.30, dop:1 };
+
+  function spatial(frac, mph){
+    /* car at x along the lane, listener at the origin, set back by d */
+    var x = Math.max(0, Math.min(1, frac)) - 0.5, d = LISTENER_BACK;
+    var r = Math.sqrt(x*x + d*d);
+    /* ★ the rate the DISTANCE changes = the component of velocity pointing at the listener.
+       x < 0 (car still short of you) with the car moving on ⇒ negative ⇒ closing ⇒ pitch UP. */
+    var radial = mph * (x / r);
+    var dop = SOUND_MPH / (SOUND_MPH + radial);
+    return {
+      /* ★ pan is the SINE OF THE ANGLE, not a straight line along the track — so it hangs out wide
+         while the car is far off and swings hard through the middle as it passes, which is what a
+         pass-by actually does to your ears. */
+      pan:  Math.max(-0.95, Math.min(0.95, x / r)),
+      gain: Math.min(1, d / r),                       /* inverse distance, 1.0 at closest approach */
+      /* ⚠ CLAMPED. At the 330 mph rev limiter v/c is 0.43, so the true ratio runs 1.75× closing to
+         0.70× receding — genuinely that dramatic, and worth keeping. The clamp only stops the
+         arithmetic running away if a future physics change ever lets a car exceed the limiter. */
+      dop:  Math.max(0.55, Math.min(1.9, dop))
+    };
+  }
+  /** the car's position in the mix — driven from the same fraction that positions the picture */
+  function spatialTo(frac, mph){
+    SPACE = spatial(frac, mph || 0);
+    if(!actx) return;
+    var t = actx.currentTime;
+    if(CARPAN)  CARPAN.pan.setTargetAtTime(SPACE.pan, t, 0.045);
+    if(CARDIST) CARDIST.gain.setTargetAtTime(SPACE.gain, t, 0.045);
+  }
+
+  /* ⚠ THE PAGE IS NOT THE AUTHOR OF THESE. grafverse asks GM.ONE_RACE_REGS for them; this page must
+     not import that bundle, so they are COPIES with their source named — and the copy is stated
+     rather than smuggled. Source: grafverse/mint/src/racerPhysics.ts, ONE_RACE_REGS. */
+  function engMax(){ return 24 }
+  /* BLOW_V is 14.8 m/s in the racers' own units — the CLI prints it as "blows above 14.8 m/s". */
+  function blowMph(){ return 14.8 * 2.23694 }
+
+  /** ⚠ A BROWSER WILL NOT PLAY OUTSIDE A USER GESTURE AND WILL NOT TELL YOU IT REFUSED. So the
+      context is CREATED and RESUMED inside the gesture, exactly as grafverse.html does. */
+  function armAudio(){
+    if(!SND) return null;
+    try{
+      if(!actx){
+        var AC = window.AudioContext || window.webkitAudioContext; if(!AC) return null;
+        actx = new AC();
+        master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination);
+        /* the car's chain:  everything it makes → distance → pan → master
+           ⚠ StereoPannerNode is not universal (older Safari). With none, carBus() falls back to
+           master and the whole page still plays, centred — degraded, never silent. */
+        CARPAN = actx.createStereoPanner ? actx.createStereoPanner() : null;
+        if(CARPAN){
+          CARPAN.pan.value = SPACE.pan; CARPAN.connect(master);
+          CARDIST = actx.createGain(); CARDIST.gain.value = SPACE.gain; CARDIST.connect(CARPAN);
+        }
+        /* ★ the grandstand does NOT move — it sits at the finish line, off to the right, and stays
+           there while the car sweeps past it. That contrast is what sells the pass. */
+        CHEERPAN = actx.createStereoPanner ? actx.createStereoPanner() : null;
+        if(CHEERPAN){ CHEERPAN.pan.value = 0.30; CHEERPAN.connect(master) }
+        ENGINE = buildEngine(); SCREECH = buildScreech();
+      }
+      if(actx.state === 'suspended') actx.resume();
+    }catch(e){ actx = null }
+    return actx;
+  }
+  function noiseBuf(secs){
+    var b = actx.createBuffer(1, Math.floor(actx.sampleRate*secs), actx.sampleRate), d = b.getChannelData(0);
+    for(var i=0;i<d.length;i++) d[i] = Math.random()*2 - 1;
+    return b;
+  }
+
+  /* ★ THE ENGINE. Two sawtooths detuned against each other beat, which is the uneven note of a big
+     reciprocating motor; a square an octave down is the chest thump; a noise bed is induction roar.
+     ⚠ The lowpass OPENING as the revs rise is what makes it sound like it is WORKING — pitch alone
+     just sounds like a tape being wound on. */
+  function buildEngine(){
+    var g = actx.createGain(); g.gain.value = 0;
+    var lp = actx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=400; lp.Q.value=5;
+    var a = actx.createOscillator(); a.type='sawtooth';
+    var b = actx.createOscillator(); b.type='sawtooth'; b.detune.value = 15;
+    var sub = actx.createOscillator(); sub.type='square';
+    var ga = actx.createGain(); ga.gain.value=0.34;
+    var gb = actx.createGain(); gb.gain.value=0.26;
+    var gs = actx.createGain(); gs.gain.value=0.30;
+    var nz = actx.createBufferSource(); nz.buffer = noiseBuf(2); nz.loop = true;
+    var nbp = actx.createBiquadFilter(); nbp.type='bandpass'; nbp.frequency.value=1100; nbp.Q.value=0.7;
+    var gn = actx.createGain(); gn.gain.value=0.13;
+    a.connect(ga); ga.connect(lp); b.connect(gb); gb.connect(lp); sub.connect(gs); gs.connect(lp);
+    nz.connect(nbp); nbp.connect(gn); gn.connect(lp);
+    lp.connect(g); g.connect(carBus());
+    a.start(); b.start(); sub.start(); nz.start();
+    return { gain:g, lp:lp, a:a, b:b, sub:sub };
+  }
+
+  /** ★ SMALL ENGINE HIGHER, BIG ENGINE LOWER — the mapping he asked for, as one line.
+      eng 24 → 58 Hz idle · eng 1 → ~131 Hz, then up to ~3.6× at the rev limiter. */
+  function engHz(size, p){
+    var f0 = 58 + (engMax() - size) * (73 / Math.max(1, engMax() - 1));
+    return f0 * (1 + 2.6 * Math.max(0, Math.min(1.15, p)));
+  }
+  /** p = fraction of BLOW_V · on = the EFFECTIVE throttle is open (false once the tank is dry) */
+  function engineTo(size, p, on){
+    if(!actx || !ENGINE) return;
+    /* ★★ DOPPLER RIDES ON TOP OF THE REV MAPPING — it does not replace it. The revs say how hard the
+       engine is WORKING; the Doppler says where it is relative to YOU. Both land on pitch, and a real
+       trackside pass has both at once: the note climbs as the car launches and falls away as it goes,
+       and the two fighting each other is exactly what a drag strip sounds like from the fence. */
+    var t = actx.currentTime, f = engHz(size, p) * SPACE.dop;
+    ENGINE.a.frequency.setTargetAtTime(f, t, 0.05);
+    ENGINE.b.frequency.setTargetAtTime(f, t, 0.05);
+    ENGINE.sub.frequency.setTargetAtTime(f/2, t, 0.05);
+    ENGINE.lp.frequency.setTargetAtTime(320 + 2700*Math.min(1,p), t, 0.06);
+    /* ⚠ A DYING ENGINE IS NOT A MUTED ONE. Going dry ramps down over ~0.3 s rather than cutting, which
+       is what running out of fuel sounds like — and the car is still moving while it happens. */
+    ENGINE.gain.gain.setTargetAtTime(on ? 0.22 : 0.0, t, on ? 0.04 : 0.10);
+  }
+
+  /* 🛞 TYRES. Two stacked bandpasses on noise — the second narrow and high is the howl. */
+  function buildScreech(){
+    var g = actx.createGain(); g.gain.value = 0;
+    var bp = actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1900; bp.Q.value=6;
+    var bp2 = actx.createBiquadFilter(); bp2.type='bandpass'; bp2.frequency.value=3100; bp2.Q.value=12;
+    var nz = actx.createBufferSource(); nz.buffer = noiseBuf(2); nz.loop = true;
+    nz.connect(bp); bp.connect(bp2); bp2.connect(g); g.connect(carBus()); nz.start();
+    return { gain:g, bp:bp, bp2:bp2 };
+  }
+  /** ⚠ WOBBLE THE BAND. A fixed one reads as a kettle; rubber howls unevenly as it grabs and lets go. */
+  function screechTo(on){
+    if(!actx || !SCREECH) return;
+    var t = actx.currentTime;
+    if(on){
+      /* the tyres shift with the car too — noise has no fundamental, so the BANDS are what move */
+      SCREECH.bp.frequency.setTargetAtTime((1500 + Math.random()*1400) * SPACE.dop, t, 0.03);
+      SCREECH.bp2.frequency.setTargetAtTime((2600 + Math.random()*1700) * SPACE.dop, t, 0.03);
+    }
+    SCREECH.gain.gain.setTargetAtTime(on ? 0.17 : 0, t, on ? 0.02 : 0.07);
+  }
+
+  /** the stage rev — a stab of throttle against no load, so it climbs fast and drops away fast */
+  function rev(size){
+    if(!armAudio() || !ENGINE) return;
+    /* ★ THE STAGING REV IS HEARD FROM THE CAR, NOT FROM THE FENCE — centred and close.
+       ⚠ Found by testing: a staged car sits at frac 0, which trackside means hard-left and a third
+       of the volume. Realistic, and useless for the job this sound does — auditioning the engine
+       tone before you buy it. So you stand AT the car while staging, and take your seat trackside
+       when the race starts, where `place()` takes the position back over. */
+    var t = actx.currentTime, lo = engHz(size, 0.04), hi = engHz(size, 0.78);
+    if(CARPAN)  CARPAN.pan.setTargetAtTime(0, t, 0.03);
+    if(CARDIST) CARDIST.gain.setTargetAtTime(1, t, 0.03);
+    [ENGINE.a, ENGINE.b].forEach(function(o){
+      o.frequency.cancelScheduledValues(t); o.frequency.setValueAtTime(lo, t);
+      o.frequency.exponentialRampToValueAtTime(hi, t+0.20);
+      o.frequency.exponentialRampToValueAtTime(lo, t+0.62);
+    });
+    ENGINE.sub.frequency.cancelScheduledValues(t); ENGINE.sub.frequency.setValueAtTime(lo/2, t);
+    ENGINE.sub.frequency.exponentialRampToValueAtTime(hi/2, t+0.20);
+    ENGINE.sub.frequency.exponentialRampToValueAtTime(lo/2, t+0.62);
+    ENGINE.lp.frequency.cancelScheduledValues(t); ENGINE.lp.frequency.setValueAtTime(420, t);
+    ENGINE.lp.frequency.exponentialRampToValueAtTime(3000, t+0.20);
+    ENGINE.lp.frequency.exponentialRampToValueAtTime(520, t+0.62);
+    var g = ENGINE.gain.gain;
+    g.cancelScheduledValues(t); g.setValueAtTime(0.0001, t);
+    g.exponentialRampToValueAtTime(0.21, t+0.05);
+    g.exponentialRampToValueAtTime(0.0001, t+0.72);
+  }
+
+  /** 💥 metal, not a bang — a filtered slam plus two detuned squares ringing and dying fast */
+  function sndCrash(power){
+    if(!actx) return; var t = actx.currentTime, p = 0.5 + 0.5*power;
+    var nz = actx.createBufferSource(); nz.buffer = noiseBuf(1);
+    var lp = actx.createBiquadFilter(); lp.type='lowpass';
+    lp.frequency.setValueAtTime(5200, t); lp.frequency.exponentialRampToValueAtTime(240, t+0.55);
+    var g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.50*p, t+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+0.70);
+    nz.connect(lp); lp.connect(g); g.connect(carBus()); nz.start(t); nz.stop(t+0.75);
+    [523, 761].forEach(function(f, i){
+      var o = actx.createOscillator(), og = actx.createGain();
+      o.type='square'; o.frequency.setValueAtTime(f*(0.9+0.2*Math.random()), t);
+      og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.09*p, t+0.02+i*0.01);
+      og.gain.exponentialRampToValueAtTime(0.0001, t+0.42);
+      o.connect(og); og.connect(carBus()); o.start(t); o.stop(t+0.45);
+    });
+  }
+
+  /** 💣 the grenade — a sub thump you feel, under a long dark noise decay */
+  function sndExplode(power){
+    if(!actx) return; var t = actx.currentTime, p = 0.55 + 0.45*power;
+    var nz = actx.createBufferSource(); nz.buffer = noiseBuf(2);
+    var lp = actx.createBiquadFilter(); lp.type='lowpass';
+    lp.frequency.setValueAtTime(2600, t); lp.frequency.exponentialRampToValueAtTime(70, t+1.10);
+    var g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.75*p, t+0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+1.25);
+    nz.connect(lp); lp.connect(g); g.connect(carBus()); nz.start(t); nz.stop(t+1.3);
+    var o = actx.createOscillator(), og = actx.createGain(); o.type='sine';
+    o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(28, t+0.50);
+    og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.55*p, t+0.02);
+    og.gain.exponentialRampToValueAtTime(0.0001, t+0.75);
+    o.connect(og); og.connect(carBus()); o.start(t); o.stop(t+0.8);
+  }
+
+  /* 🎉 THE CROWD.
+     ⚠⚠ SAY WHAT THIS IS, because it is the one place synthesis is genuinely weaker than a recording.
+     Synthesis does APPLAUSE well — a crowd clapping IS dense uncorrelated impulses, which is what
+     filtered noise is — and it does VOICES badly. So this is built as applause with a broad roar
+     swelling underneath, which is what a crowd sounds like from the far side of a drag strip. It is
+     not synthesised voices and it is not pretending to be. If it ever needs to be literal cheering,
+     that is the one sound worth a file, and the graph below is where it would swap in. */
+  function sndCheer(){
+    if(!actx) return; var t = actx.currentTime;
+    var nz = actx.createBufferSource(); nz.buffer = noiseBuf(3);
+    var hp = actx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=1400;
+    var bp = actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=2600; bp.Q.value=0.6;
+    var g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.20, t+0.28);
+    g.gain.setValueAtTime(0.20, t+1.05); g.gain.exponentialRampToValueAtTime(0.0001, t+2.6);
+    nz.connect(hp); hp.connect(bp); bp.connect(g); g.connect(cheerBus()); nz.start(t); nz.stop(t+2.7);
+    var n2 = actx.createBufferSource(); n2.buffer = noiseBuf(3);
+    var b2 = actx.createBiquadFilter(); b2.type='bandpass'; b2.Q.value=1.1;
+    /* the roar's centre rising reads as a crowd getting to its feet */
+    b2.frequency.setValueAtTime(620, t); b2.frequency.linearRampToValueAtTime(980, t+1.2);
+    var g2 = actx.createGain();
+    g2.gain.setValueAtTime(0.0001, t); g2.gain.exponentialRampToValueAtTime(0.17, t+0.45);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t+2.6);
+    n2.connect(b2); b2.connect(g2); g2.connect(cheerBus()); n2.start(t); n2.stop(t+2.7);
+  }
+
+  /* ═══ ✨ SPARKS — A CANVAS BURST, GENERATED, NEVER A FILE ════════════════════════════════════════
+     ★★ WHY GENERATED: THE BURST SCALES WITH THE IMPACT. A car that grenades at 329 mph throws further
+     and hotter than one that lets go on the line at tick 1 — and those are different results, which
+     the board reports differently. A single file plays identically for both, which would be the page
+     saying they are the same thing. The physics already knows; the picture should too. */
+  var PART = [], fxRaf = 0, REDUCED = false;
+  try { REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) } catch(e){}
+
+  var FX_PAD = 60;   /* must match `.fx { left:-60px; top:-60px }` */
+
+  return { arm: armAudio, on: function(v){ SND = v; if (v) armAudio(); else if (actx) master.gain.value = 0;
+             if (v && master) master.gain.value = 0.9 },
+           engineTo: engineTo, screechTo: screechTo, spatialTo: spatialTo,
+           crash: sndCrash, explode: sndExplode, cheer: sndCheer, enabled: function(){ return SND } };
+}
+
 import { parseEntry } from './js/entry.mjs'
 import { verifyInclusion } from './js/merkle.mjs'
 import { fromHex, toHex } from './js/sha256.mjs'
@@ -290,6 +620,13 @@ function draw(id, maxS, caption) {
     el, car: el.querySelector('.car'), glyph: el.querySelector('.car b'),
     tel: el.querySelector('.tel'), end: el.querySelector('.end'), fired: false }))
   const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches
+  // ⚠ A browser will not play outside a user gesture and will not tell you it refused — so the context
+  //   is created and resumed inside the click, exactly as grafverse does.
+  const audio = makeAudio(() => host.querySelector('.strip'))
+  const sndBtn = document.getElementById('snd')
+  const sndLabel = () => { sndBtn.textContent = audio.enabled() ? '🔊 sound' : '🔇 sound' }
+  sndLabel()                                   // ⚠ read the state, never assume it
+  sndBtn.onclick = () => { audio.on(!audio.enabled()); sndLabel() }
 
   /**
    * ★ THE ENDING, MADE VISIBLE — ported from grafverse.com/bitcoin-racers.html.
@@ -301,6 +638,8 @@ function draw(id, maxS, caption) {
     const L = lanes[i]
     switch (ENDINGS[i]) {
       case 'OFF': {          // ★ IT REALLY LEAVES — .strip is overflow:visible so it can
+        // the tyres let go FIRST, which is what `off` IS
+        audio.screechTo(true); setTimeout(() => audio.screechTo(false), 300); audio.crash(.7)
         if (REDUCED) { L.car.style.opacity = '.25'; break }
         const up = Math.random() < .5 ? -1 : 1
         L.car.classList.add('off')
@@ -310,11 +649,11 @@ function draw(id, maxS, caption) {
         })
         break }
       case 'BLOWN':
-        L.car.classList.add('told'); L.glyph.textContent = '💥'
+        audio.explode(.8); L.car.classList.add('told'); L.glyph.textContent = '💥'
         setTimeout(() => { L.glyph.textContent = '🔥'; L.car.style.opacity = '.85' }, 260)
         break
       case 'FINISH':
-        L.car.classList.add('told'); L.glyph.textContent = '🏁'
+        audio.cheer(); L.car.classList.add('told'); L.glyph.textContent = '🏁'
         break
       // ⚠ STOPPED gets nothing, deliberately. The drama of running dry is the ABSENCE — the engine
       //   has already died, and dressing that up would be inventing an event the log does not have.
@@ -332,6 +671,13 @@ function draw(id, maxS, caption) {
 
   function render() {
     document.getElementById('tick').textContent = `tick ${t}`
+    // ★ ONE ENGINE, following the car the eye is on — the furthest that is still running. With four
+    //   lanes there is no single car to be, and four engines would be a mix rather than a race.
+    let lead = null
+    races.forEach((r, i) => { if (t < r.length && (!lead || r[t].s > lead.s)) lead = r[t] })
+    if (lead) { audio.spatialTo(Math.min(lead.s, QUARTER) / QUARTER, lead.v * 2.23694)
+                audio.engineTo(8, Math.min(1, lead.v / 14.8), lead.throttle > 0 && lead.fuel > 0) }
+    else audio.engineTo(8, 0, false)
     races.forEach((r, i) => {
       // ⚠ A race shorter than the playhead has ENDED — it holds its last recorded state rather than
       //   drifting on, because that is what the log running out looks like.

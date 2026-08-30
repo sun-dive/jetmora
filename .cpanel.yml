@@ -28,6 +28,7 @@ deployment:
     #   reimplementation. ⚠⚠ They are copied at DEPLOY, never edited in site/js — edit tools/ and
     #   redeploy, or the page and the tests silently diverge, which is the whole failure this avoids.
     - /bin/cp site/bitcoin-racers.html "$DEPLOYPATH/bitcoin-racers.html"
+    - /bin/mkdir -p "$DEPLOYPATH/img" && /bin/cp site/img/racers-shirt-88.webp "$DEPLOYPATH/img/"
     - /bin/mkdir -p "$DEPLOYPATH/js"
     - /bin/cp tools/entry.mjs tools/merkle.mjs tools/sha256.mjs "$DEPLOYPATH/js/"
     - /bin/mkdir -p "$DEPLOYPATH/vectors" && /bin/cp vectors/core.json "$DEPLOYPATH/vectors/core.json"
