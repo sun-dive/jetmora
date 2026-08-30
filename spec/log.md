@@ -19,7 +19,7 @@ chain. That is withdrawn.** Nothing about entries, trees, scripts or verificatio
 
 | **§1** | a log is no longer *defined* as anchored. Anchoring becomes OPTIONAL and chain-agnostic |
 | **§2** | the genesis is NATIVE — derived from the log's own immutable parameters, not from a foreign transaction. ⇒ closes 0.1's ⏭ on serialization, which §11 already recorded as closed while §2 still said open |
-| **§2a** | ✅ **NEW, NORMATIVE** — genesis uniqueness, and what a duplicate can and cannot do |
+| **§2a** | ✅ **NEW, NORMATIVE** — genesis uniqueness. ★ Copying is **encouraged** (it is the archive); extending a copy under the **same** genesis is forbidden; continuing an abandoned one under a **new** genesis is permitted. ⚠ Fragmentation is accepted deliberately, over lock-in |
 | **§2b** | ✅ **NEW, NORMATIVE** — `R` pinning. ⚠ This is load-bearing and was previously assumed |
 | **§2c** | ✅ **NEW, NORMATIVE** — settlement and royalties: **P2PKH on an external rail · the creator PUBLISHES the (chain, address) · the log enforces via a BRC-113 Merkle proof.** ⛔ No chain-specific address may be baked into a covenant |
 | **§4bis.4i** | the operational-key requirement is restated without the BSV premise |
@@ -130,11 +130,37 @@ it makes the harmful case self-defeating and the harmless cases irrelevant.
 covenant is open **within its own log**, whose appends the operator still authorises. A stranger holding
 a copy is not that operator and cannot become one by copying.
 
-★★★ **THE RULE, and its reason:** *a chain cannot be copied and extended.* Permitting it would let
-anyone continue somebody else's history as their own ⇒ **unlimited piracy, and the creator of an asset
-disenfranchised.** ⇒ **The sanctioned path is to create a NEW chain and MIGRATE assets into it** (below,
-and §8) — which preserves the lineage, the creator's terms, and the record of where the asset came from.
-⚠ Copying therefore yields **an archive, never a continuation**, and that is the whole of what it yields.
+★★★ **THREE CASES, AND ONLY THE MIDDLE ONE IS FORBIDDEN.** 0.1.1 first stated this as *"a chain cannot
+be copied and extended"*, which fused two different things and forbade something valuable:
+
+| **copy and hold** | ✅ **encouraged.** §5c already says it: *"Replication is not a leak to be tolerated. It is the archive."* A copier becomes a backup of everything up to the moment they took it |
+| **extend a copy under the SAME genesis, while the original lives** | ⛔ **FORBIDDEN.** Two live histories under one identity is **equivocation** (§4d), not a fork — it lets anyone continue somebody else's history as their own ⇒ unlimited piracy, and the creator disenfranchised |
+| ★ **continue a copy after the original is abandoned** | ✅ **PERMITTED — under a NEW genesis** |
+
+**Normative:**
+1. A copy **MUST NOT** be appended to under the genesis it was copied from. Doing so is equivocation and
+   is provable as such.
+2. A continuation **MUST** take its own genesis, derived from its own parameters (§2). ⇒ The copied
+   history travels as **evidence**, never as **identity**.
+3. Whether an original is truly abandoned is **NOT a protocol question** and **MUST NOT** be decided by
+   one. See the administrative rule below.
+
+★★ **What makes this safe is that a copy CANNOT CAPTURE ANYTHING.** An asset names its log at genesis,
+and migration is an **advance signed by the holder**. A continuation may therefore *offer* continuity;
+every holder decides individually whether to follow. **Nothing is taken. People move.**
+
+⇒ ★★★ **And the copy is what makes migration survivable at all.** Without copies an abandoned log takes
+its history with it, and a holder is left with their own signature chain and nothing else. With them,
+the history outlives its host: **a witness proves what happened; a copy preserves it.**
+⚠ Note the case that motivates it: **a host may abandon a chain, but a copy of it remains valid for the
+creator of a covenant to move to** — and because royalties follow the creator's own published payment
+record (§2c) rather than any chain, moving costs a creator nothing and strands nobody.
+
+⚠⚠ **THE ACCEPTED COST: FRAGMENTATION.** Freely copyable chains will multiply, and a buyer may have to
+ask which lineage is the live one. **That is chosen deliberately over the alternative**, which is lock-in
+to whoever happens to host your assets. ⇒ §2a's coverage pin bounds it — an asset names its log, so
+*"where do I look?"* always has an answer — and it is the same trade as everywhere else here: **the
+user's freedom is the default, and no restriction is added that the system does not require.**
 
 ★ **And anything of value names a key set: advancing it requires a signature ⇒ a key ⇒ a wallet.**
 Unchanged by 0.1.1, and not a limitation to be engineered away — it is what ownership *is* here.
