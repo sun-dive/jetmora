@@ -39,6 +39,10 @@
   .scroll{overflow-x:auto}
   .note{color:var(--dim);font-size:14px}
   a{color:var(--cool)}
+  button,select{background:#12161b;color:var(--ink);border:1px solid var(--edge);border-radius:6px;
+    padding:7px 14px;font:inherit;font-size:14px;cursor:pointer}
+  button:hover,select:hover{border-color:var(--go)}
+  input[type=range]{accent-color:var(--go)}
   .bar{height:6px;background:#0e1216;border:1px solid var(--edge);border-radius:3px;overflow:hidden;margin-top:6px}
   .bar>i{display:block;height:100%;background:var(--go)}
 </style>
@@ -53,6 +57,25 @@
       <div><div class="k">log</div><div class="v" id="size">…</div></div>
       <div><div class="k">root</div><div class="v hash" id="root">…</div></div>
     </div>
+  </div>
+
+  <canvas id="strip" width="1720" height="700"></canvas>
+  <div class="panel" style="margin-top:12px">
+    <div class="row" style="justify-content:space-between">
+      <div class="row" style="gap:14px">
+        <button id="play">▶ play</button>
+        <button id="again">↻ restart</button>
+        <span class="k" id="tick">tick 0</span>
+      </div>
+      <div class="row" style="gap:10px"><span class="k">speed</span>
+        <select id="rate"><option value="60">1×</option><option value="150">2.5×</option>
+          <option value="20">slow</option><option value="600">fast</option></select></div>
+    </div>
+    <input id="scrub" type="range" min="0" value="0" step="1" style="width:100%;margin-top:12px">
+    <p class="note" style="margin:10px 0 0">
+      ⚠ Each frame is one log entry — this is the chain played back, not a simulation re-run. The four
+      races were run <em>separately</em>; four lanes is how they are shown, not a race that happened.
+    </p>
   </div>
 
   <canvas id="c" width="1720" height="820"></canvas>
@@ -139,6 +162,9 @@ for (const t of ticks) { if (t.n === 1) races.push([]); races.at(-1)?.push(t) }
 const NAMES = ['finishes', 'goes off', 'grenades', 'runs dry']
 const COLOURS = ['#31d07a', '#f0a500', '#ff5a5f', '#5ac8fa']
 const QUARTER_ONLY = Math.max(QUARTER, ...ticks.map(t => t.s))
+const ending = r => r.at(-1).s >= QUARTER ? 'FINISH' : r.length === 1 ? 'BLOWN'
+                  : r.at(-1).fuel === 0 ? 'STOPPED' : 'OFF'
+const ENDINGS = races.map(ending)
 
 function draw(id, maxS, caption) {
   const c = document.getElementById(id), g = c.getContext('2d')
@@ -195,6 +221,84 @@ function draw(id, maxS, caption) {
   g.fillText(caption, PAD.l + W / 2, c.height - 16)
 }
 
+// ── THE REPLAY — one log entry per frame ─────────────────────────────────────────────────────────
+// ★ This is the point of the whole design: "a live demo is the log; a replay is that log run backwards."
+//   Nothing here computes a race. It reads what was recorded and shows it at a watchable speed.
+{
+  const sc = document.getElementById('strip'), sg = sc.getContext('2d')
+  const maxT = Math.max(...races.map(r => r.length))
+  // ⚠ R is wide because the ENDING label lives in it — at 90 it sat on top of the ¼-mile line.
+  const L = 150, R = 190, TOP = 70, LANE = (sc.height - TOP - 60) / races.length
+  const px = m => L + (Math.min(m, QUARTER) / QUARTER) * (sc.width - L - R)
+  const scrub = document.getElementById('scrub'), playBtn = document.getElementById('play')
+  scrub.max = maxT - 1
+  let t = 0, running = false, last = 0, acc = 0
+
+  function frame(now) {
+    if (running) {
+      const rate = +document.getElementById('rate').value       // ticks per second
+      acc += (now - last) / 1000 * rate; last = now
+      while (acc >= 1) { acc -= 1; t++ }
+      if (t >= maxT) { t = maxT - 1; running = false; playBtn.textContent = '▶ play' }
+      scrub.value = t
+    }
+    render(); requestAnimationFrame(frame)
+  }
+
+  function render() {
+    document.getElementById('tick').textContent = `tick ${t}`
+    sg.fillStyle = '#0e1216'; sg.fillRect(0, 0, sc.width, sc.height)
+    sg.font = '22px ui-monospace,monospace'
+
+    // the strip: staging lights at 0, the finish at 402.3 m
+    sg.strokeStyle = '#f0a500'; sg.lineWidth = 3; sg.setLineDash([12, 10])
+    sg.beginPath(); sg.moveTo(px(QUARTER), TOP - 26); sg.lineTo(px(QUARTER), sc.height - 44); sg.stroke()
+    sg.setLineDash([]); sg.fillStyle = '#f0a500'; sg.textAlign = 'right'
+    sg.fillText('¼ mile', px(QUARTER) - 12, TOP - 34)
+    sg.strokeStyle = '#31d07a'; sg.beginPath()
+    sg.moveTo(px(0), TOP - 26); sg.lineTo(px(0), sc.height - 44); sg.stroke()
+
+    races.forEach((r, i) => {
+      const y = TOP + LANE * i + LANE / 2
+      sg.strokeStyle = '#1e252d'; sg.lineWidth = 1.5
+      sg.beginPath(); sg.moveTo(L, y + LANE / 2 - 4); sg.lineTo(sc.width - R, y + LANE / 2 - 4); sg.stroke()
+
+      // ⚠ a race shorter than the playhead has ENDED — it holds its last recorded state, it does not
+      //   keep moving. Clamping the index is what "the log ran out" looks like.
+      const done = t >= r.length
+      const cur = r[Math.min(t, r.length - 1)]
+
+      sg.fillStyle = '#8b97a4'; sg.textAlign = 'right'
+      sg.fillText(NAMES[i] ?? `race ${i + 1}`, L - 16, y + 8)
+
+      sg.strokeStyle = COLOURS[i]; sg.lineWidth = 3; sg.globalAlpha = .45
+      sg.beginPath(); sg.moveTo(px(0), y); sg.lineTo(px(cur.s), y); sg.stroke(); sg.globalAlpha = 1
+
+      sg.fillStyle = COLOURS[i]
+      sg.beginPath(); sg.arc(px(cur.s), y, done ? 8 : 11, 0, 7); sg.fill()
+      if (!done && cur.throttle > 0) {                   // ★ a flare while the throttle is open
+        sg.globalAlpha = .35
+        sg.beginPath(); sg.arc(px(cur.s), y, 11 + cur.throttle, 0, 7); sg.fill(); sg.globalAlpha = 1
+      }
+
+      sg.textAlign = 'left'; sg.fillStyle = done ? '#8b97a4' : '#e8edf2'
+      sg.fillText(`${cur.s.toFixed(1)} m   ${cur.v.toFixed(2)} m/s   thr ${cur.throttle}   fuel ${cur.fuel}`,
+                  L, y - LANE / 2 + 24)
+      if (done) { sg.fillStyle = '#8b97a4'; sg.textAlign = 'right'
+                  sg.textAlign = 'left'; sg.fillText(ENDINGS[i], px(QUARTER) + 22, y + 8) }
+    })
+  }
+
+  playBtn.onclick = () => {
+    running = !running; last = performance.now(); acc = 0
+    if (running && t >= maxT - 1) t = 0
+    playBtn.textContent = running ? '❚❚ pause' : '▶ play'
+  }
+  document.getElementById('again').onclick = () => { t = 0; scrub.value = 0 }
+  scrub.oninput = () => { t = +scrub.value; running = false; playBtn.textContent = '▶ play' }
+  requestAnimationFrame(frame)
+}
+
 draw('c', QUARTER_ONLY, 'ticks — the whole quarter mile')
 draw('c2', 20, 'ticks — the first 20 metres, where the three failures are')
 
@@ -202,8 +306,7 @@ draw('c2', 20, 'ticks — the first 20 metres, where the three failures are')
 const tbody = document.querySelector('#races tbody')
 races.forEach((r, i) => {
   const tr = document.createElement('tr')
-  const end = r.at(-1).s >= QUARTER ? 'FINISH' : r.length === 1 ? 'BLOWN'
-            : r.at(-1).fuel === 0 ? 'STOPPED' : 'OFF'
+  const end = ENDINGS[i]
   tr.innerHTML = `<td style="color:${COLOURS[i]}">${NAMES[i] ?? i + 1}</td>
     <td>${r.length}</td><td>${r.at(-1).s.toFixed(1)} m</td>
     <td>${Math.max(...r.map(t => t.v)).toFixed(2)} m/s</td><td>${end}</td>
