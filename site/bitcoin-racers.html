@@ -490,7 +490,16 @@ function makeAudio(getStrip) {
   return { arm: armAudio, on: function(v){ SND = v; if (v) armAudio(); else if (actx) master.gain.value = 0;
              if (v && master) master.gain.value = 0.9 },
            engineTo: engineTo, screechTo: screechTo, spatialTo: spatialTo,
-           crash: sndCrash, explode: sndExplode, cheer: sndCheer, enabled: function(){ return SND } };
+           crash: sndCrash, explode: sndExplode, cheer: sndCheer, enabled: function(){ return SND },
+           /* ⚠ diagnostics: silence has too many possible causes to guess between. */
+           state: function(){ return { snd: SND, ctx: actx && actx.state, master: master && master.gain.value,
+                                       engine: ENGINE && ENGINE.gain.gain.value } },
+           /* ⚠⚠ RESUME IS NOT ONCE-AND-DONE. A context created inside a gesture can still come up
+              suspended, and resume() is a PROMISE — calling it is not the same as it having happened.
+              Measured 30 Aug: after the first play the graph was built and the master gain was 0.9,
+              and ctx was still "suspended". Sound only appeared after a SECOND gesture, which is what
+              toggling off and on was doing. ⇒ Ask again, every gesture, until it is running. */
+           resume: function(){ if (actx && actx.state !== 'running') { try { actx.resume() } catch(e){} } } };
 }
 
 import { parseEntry } from './js/entry.mjs'
@@ -624,6 +633,13 @@ function draw(id, maxS, caption) {
   // ⚠ A browser will not play outside a user gesture and will not tell you it refused — so the context
   //   is created and resumed inside the click, exactly as grafverse does.
   const audio = makeAudio(() => host.querySelector('.strip'))
+  // ⚠ A module closes over everything, so silence could not be inspected from the console — which is
+  //   why two rounds of it were guessed at instead of measured. One handle, for diagnosis only.
+  window.__racers = { audio, state: () => audio.state() }
+  // ⚠ Belt and braces: ANY gesture on the page nudges a stuck context. Costs nothing when it is
+  //   already running, and removes the "it works if you press something twice" class of bug entirely.
+  for (const ev of ['pointerdown', 'keydown'])
+    addEventListener(ev, () => audio.enabled() && audio.resume(), { passive: true })
   const sndBtn = document.getElementById('snd')
   const sndLabel = () => { sndBtn.textContent = audio.enabled() ? '🔊 sound' : '🔇 sound' }
   sndLabel()                                   // ⚠ read the state, never assume it
@@ -708,13 +724,17 @@ function draw(id, maxS, caption) {
   }
 
   playBtn.onclick = () => {
-    // ⚠⚠ A browser will not create or resume an AudioContext outside a user gesture, and will not tell
-    //   you it refused. Sound defaults ON (grafverse persists that), so the toggle is never clicked —
-    //   which meant nothing ever armed it. THIS is the gesture, so this is where it arms.
-    audio.arm()
+    // ⚠⚠ THE TRANSPORT GOES FIRST, AND AUDIO CANNOT STOP IT. Sound is a nicety; the replay is the page.
+    //   With the audio call ahead of this, one throw inside it left `running` unset and the button did
+    //   nothing — which is why play needed pressing more than once before anything moved.
     running = !running; last = performance.now(); acc = 0
     if (running && t >= maxT - 1) { t = 0; scrub.value = 0 }
     playBtn.textContent = running ? '❚❚ pause' : '▶ play'
+    render()                                   // ⚠ show frame 0 now, not at the next rAF
+
+    // ⚠ A browser will not create or resume an AudioContext outside a user gesture and will not tell
+    //   you it refused, so this must happen in the click — but never at the transport's expense.
+    try { if (audio.enabled()) { audio.on(true); audio.resume() } } catch (e) { /* silent, not broken */ }
   }
   document.getElementById('again').onclick = () => { t = 0; scrub.value = 0; render() }
   scrub.oninput = () => { t = +scrub.value; running = false; playBtn.textContent = '▶ play'; render() }
