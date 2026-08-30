@@ -91,8 +91,21 @@ final class LogStore
         return $h === false ? null : $h;
     }
 
-    /** BEGIN IMMEDIATE — see the note in append(). Every writing transaction must use this. */
-    private function begin(): void { $this->db->exec('BEGIN IMMEDIATE'); }
+    /**
+     * BEGIN IMMEDIATE — see the note in append(). Every writing transaction must use this.
+     *
+     * ⚠⚠ AND SO MUST ITS COMMIT AND ITS ROLLBACK. Do NOT mix `exec('BEGIN IMMEDIATE')` with PDO's
+     *   `commit()` / `rollBack()` / `inTransaction()`: those track PDO's OWN flag, which a manual BEGIN
+     *   never sets. Whether that matters is VERSION-DEPENDENT — PHP 8.5's PDO_SQLITE answers
+     *   `inTransaction()` from SQLite's autocommit state and forgives the mix, and 8.1 does not.
+     *   ⇒ MEASURED 30 Aug: every append on a PHP 8.1 host died in `commit()` with
+     *   "There is no active transaction" — a PDOException carrying NO errorInfo, which is what a
+     *   transaction-state error looks like and is how it was finally identified. It passed locally on
+     *   8.5 throughout, 264/264. ★ A green test on a path the host does not take.
+     */
+    private function begin(): void  { $this->db->exec('BEGIN IMMEDIATE'); }
+    private function commit(): void { $this->db->exec('COMMIT'); }
+    private function rollback(): void { try { $this->db->exec('ROLLBACK'); } catch (Throwable) {} }
 
     /**
      * Append one entry. ⚠ Returns its sequence number.
@@ -127,13 +140,12 @@ final class LogStore
                 $this->db->prepare('INSERT OR REPLACE INTO nodes (level, idx, hash) VALUES (?,?,?)')
                          ->execute([$level, $idx, mt_node_hash($left, $right)]);
             }
-            $this->db->commit();
+            $this->commit();
             return $seq;
         } catch (Throwable $e) {
-            // ⚠⚠ NEVER LET THE ROLLBACK EAT THE DIAGNOSIS. If the failure happened before the transaction
-            //   opened, rollBack() throws "There is no active transaction" and the ORIGINAL exception is
-            //   lost — you then debug the mask. ⇒ Roll back only if there is something to roll back.
-            if ($this->db->inTransaction()) { try { $this->db->rollBack(); } catch (Throwable) {} }
+            // ⚠⚠ NEVER LET THE ROLLBACK EAT THE DIAGNOSIS. A rollback that throws replaces the original
+            //   exception, and you then debug the mask. ⇒ rollback() swallows its own failure only.
+            $this->rollback();
             throw $e;
         }
     }
@@ -246,9 +258,9 @@ final class LogStore
             }
             $this->db->prepare('INSERT OR REPLACE INTO meta (k,v) VALUES (\'prune_level\', ?)')->execute([(string)$level]);
             $this->db->prepare('INSERT OR REPLACE INTO meta (k,v) VALUES (\'pruned_to\', ?)')->execute([(string)$upTo]);
-            $this->db->commit();
+            $this->commit();
             return ['bodies' => $bodies, 'nodes' => $nodes];
-        } catch (Throwable $e) { $this->db->rollBack(); throw $e; }
+        } catch (Throwable $e) { $this->rollback(); throw $e; }
     }
 
     public function pruneState(): array
