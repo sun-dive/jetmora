@@ -41,7 +41,10 @@ function out(array $body, int $status = 200): never {
 //   ★ The CLASS is named because it is the whole diagnosis (a PDOException is not a TypeError); the
 //   message is not, because messages carry paths and internals.
 set_exception_handler(static function (Throwable $e): void {
-    out(['error' => 'internal error', 'kind' => $e::class], 500);
+    // ★ SQLSTATE is named for a PDOException because it IS the diagnosis (BUSY is not LOCKED is not
+    //   READONLY) and it carries no path or internal detail. The message still does, so it stays out.
+    $kind = $e::class . ($e instanceof PDOException && is_string($e->getCode()) ? ' ' . $e->getCode() : '');
+    out(['error' => 'internal error', 'kind' => $kind], 500);
 });
 register_shutdown_function(static function (): void {
     $e = error_get_last();
@@ -60,6 +63,7 @@ $unhex = function (string $h, int $bytes = 0): string {
 
 if (!is_dir(dirname(DB_PATH))) @mkdir(dirname(DB_PATH), 0700, true);
 $db = new PDO('sqlite:' . DB_PATH, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+$db->exec('PRAGMA busy_timeout=10000');  // ⚠ match LogStore's ATTR_TIMEOUT — two connections, one file
 $store = new LogStore(DB_PATH);
 $registry = new GenesisRegistry($db);
 $heads = new HeadStore($db);
@@ -72,6 +76,9 @@ switch ($op) {
 case 'info':
     $latest = $heads->latest();
     out(['size' => $n, 'root' => $hex($store->root()),
+         // ⚠ diagnostic: WAL is an optimisation the host may not grant, and knowing which we got
+         //   beats guessing. It is not a protocol field.
+         'journal_mode' => $store->journalMode,
          'head' => $latest ? $hex($latest['head']) : null,
          // ⚠ "witnessed" is not "anchored" and not "confirmed" — see spec §4c
          'state' => 'entries are final on append; anchoring adds objective ordering, not validity']);

@@ -129,7 +129,13 @@ final class LogStore
             }
             $this->db->commit();
             return $seq;
-        } catch (Throwable $e) { $this->db->rollBack(); throw $e; }
+        } catch (Throwable $e) {
+            // ⚠⚠ NEVER LET THE ROLLBACK EAT THE DIAGNOSIS. If the failure happened before the transaction
+            //   opened, rollBack() throws "There is no active transaction" and the ORIGINAL exception is
+            //   lost — you then debug the mask. ⇒ Roll back only if there is something to roll back.
+            if ($this->db->inTransaction()) { try { $this->db->rollBack(); } catch (Throwable) {} }
+            throw $e;
+        }
     }
 
     /**
