@@ -17,9 +17,14 @@ import { readFileSync } from 'node:fs'
 import * as M from '../tools/merkle.mjs'
 import { toHex } from '../tools/sha256.mjs'
 
-const json = process.stdin.isTTY
-  ? execSync('php server/emit-vectors.php', { cwd: new URL('..', import.meta.url).pathname, maxBuffer: 1 << 28 }).toString()
-  : readFileSync(0, 'utf8')
+// ⚠ isTTY is FALSE whenever there is no terminal — a CI job, a tool harness — not only when something
+//   is piped in. Keying on it alone reads an empty stdin and dies in JSON.parse with no clue why.
+//   ⇒ Take stdin only if it actually contained something; otherwise run the PHP side ourselves.
+const repo = new URL('..', import.meta.url).pathname
+let json = ''
+try { if (!process.stdin.isTTY) json = readFileSync(0, 'utf8') } catch { /* nothing on stdin */ }
+if (json.trim() === '')
+  json = execSync('php server/emit-vectors.php', { cwd: repo, maxBuffer: 1 << 28 }).toString()
 
 // ⚠ The SAME leaf construction as emit-vectors.php — chr(i & 0xff) ‖ chr(i >> 8) ‖ 'e'. If this drifts
 //   the test compares two different trees and passes for the wrong reason.
