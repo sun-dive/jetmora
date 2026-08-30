@@ -109,6 +109,9 @@
         <button id="snd" class="ghost" title="engine, tyres and crowd — all synthesised, no files">🔇 sound</button>
         <span class="mono" id="tick" style="color:var(--dim)">tick 0</span>
       </div>
+      <!-- ⚠ #pager is REWRITTEN wholesale by showPage(), so nothing else may live inside it. The tick
+           display did, briefly, and was deleted the moment a single-page log emptied the pager. -->
+      <div class="row" id="pager" style="gap:10px"></div>
       <div class="row" style="gap:10px">
         <select id="rate"><option value="60">1×</option><option value="150">2.5×</option>
           <option value="20">slow</option><option value="600">fast</option></select></div>
@@ -506,7 +509,10 @@ import { parseEntry } from './js/entry.mjs'
 import { verifyInclusion, root as merkleRoot } from './js/merkle.mjs'
 import { fromHex, toHex } from './js/sha256.mjs'
 
-const API = 'https://jetmora.org/log/log.php'
+// ★ ANY jetmora log, not just this one — `?log=<url>` points the page at somebody else's. The design
+//   says a log is one operator among many; a viewer welded to one address would quietly say otherwise.
+//   ⚠ It also makes the multi-page path testable, which four races on the live log never exercise.
+const API = new URLSearchParams(location.search).get('log') || 'https://jetmora.org/log/log.php'
 const S = 2 ** 32                       // ⚠ the racers' fixed-point scale — metres and m/s are v / 2^32
 const QUARTER = 402.336
 const j = async q => (await fetch(`${API}?${q}`)).json()
@@ -544,8 +550,14 @@ for (let i = 0; i < info.size; i += LANES) {
 
 // ⚠ Races are separate covenants but share one log, appended back to back. Each starts its tick count
 //   at 1, so a reset to 1 IS the boundary — no metadata needed, and none is invented.
-const races = []
-for (const t of ticks) { if (t.n === 1) races.push([]); races.at(-1)?.push(t) }
+const ALL = []
+for (const t of ticks) { if (t.n === 1) ALL.push([]); ALL.at(-1)?.push(t) }
+
+// ⚠ FOUR LANES IS THE STRIP'S SHAPE, NOT THE LOG'S. Today the log holds exactly four races, so the
+//   distinction never showed; the next race makes it matter. `races` is the PAGE, `ALL` is the log.
+const PAGE_SIZE = 4
+let page = 0, races = [], first = 0
+let buildLanes = () => {}, showStandings = () => {}
 
 // ── draw ─────────────────────────────────────────────────────────────────────────────────────────
 const NAMES = ['finishes', 'goes off', 'grenades', 'runs dry']
@@ -553,7 +565,10 @@ const COLOURS = ['#5ee08a', '#ffb454', '#ff6b6b', '#31c8ff']   // --good --warm 
 const QUARTER_ONLY = Math.max(QUARTER, ...ticks.map(t => t.s))
 const ending = r => r.at(-1).s >= QUARTER ? 'FINISH' : r.length === 1 ? 'BLOWN'
                   : r.at(-1).fuel === 0 ? 'STOPPED' : 'OFF'
-const ENDINGS = races.map(ending)
+let ENDINGS = []
+// ★ Names belong to the race, not to the lane it happens to be drawn in — the first four came from the
+//   run that seeded the log, and anything after is numbered. Keyed on the ABSOLUTE index for that reason.
+const nameOf = abs => NAMES[abs] ?? `race ${abs + 1}`
 
 function draw(id, maxS, caption) {
   const c = document.getElementById(id), g = c.getContext('2d')
@@ -561,7 +576,7 @@ function draw(id, maxS, caption) {
   //   entirely — which reads as a wrong number rather than a clipped one.
   const PAD = { l: 108, r: 28, t: 26, b: 52 }
   const W = c.width - PAD.l - PAD.r, H = c.height - PAD.t - PAD.b
-  const maxT = Math.max(...races.map(r => r.length))
+  const maxT = Math.max(2, ...races.map(r => r.length))
   const X = i => PAD.l + (i / (maxT - 1)) * W
   const Y = m => PAD.t + H - (Math.min(m, maxS) / maxS) * H
 
@@ -604,7 +619,7 @@ function draw(id, maxS, caption) {
       g.beginPath(); g.moveTo(ex, dotY); g.lineTo(tx, ey + 2); g.stroke(); g.globalAlpha = 1
       g.fillStyle = COLOURS[i]
     }
-    g.fillText(NAMES[i] ?? `race ${i + 1}`, tx, ey + 8)
+    g.fillText(nameOf(first + i), tx, ey + 8)
   })
   g.fillStyle = '#8fa3b8'; g.textAlign = 'center'
   g.fillText(caption, PAD.l + W / 2, c.height - 16)
@@ -617,18 +632,24 @@ function draw(id, maxS, caption) {
 {
   const CARS = ['🏎', '🏎', '🏎', '🏎']    // ⚠ no variation selector — grafverse uses the bare glyph
   const host = document.getElementById('lanes')
-  const maxT = Math.max(...races.map(r => r.length))
+  let maxT = 2, lanes = []
+  buildLanes = () => {
+  maxT = Math.max(2, ...races.map(r => r.length))
   host.innerHTML = races.map((r, i) => `
     <div class="lane" data-i="${i}">
-      <div class="who" style="color:${COLOURS[i]}">${NAMES[i] ?? 'race ' + (i + 1)}</div>
+      <div class="who" style="color:${COLOURS[i]}">${nameOf(first + i)}</div>
       <div class="strip">
         <div class="tel"></div><div class="end"></div>
         <div class="fin"></div><div class="car"><b>${CARS[i]}</b></div>
       </div>
     </div>`).join('')
-  const lanes = [...host.querySelectorAll('.lane')].map(el => ({
+  lanes = [...host.querySelectorAll('.lane')].map(el => ({
     el, car: el.querySelector('.car'), glyph: el.querySelector('.car b'),
     tel: el.querySelector('.tel'), end: el.querySelector('.end'), fired: false }))
+  scrub.max = maxT - 1; t = 0; scrub.value = 0
+  running = false; playBtn.textContent = '▶ play'
+  render()
+  }
   const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches
   // ⚠ A browser will not play outside a user gesture and will not tell you it refused — so the context
   //   is created and resumed inside the click, exactly as grafverse does.
@@ -683,7 +704,6 @@ function draw(id, maxS, caption) {
   }
 
   const scrub = document.getElementById('scrub'), playBtn = document.getElementById('play')
-  scrub.max = maxT - 1
   let t = 0, running = false, last = 0, acc = 0
 
   function render() {
@@ -741,20 +761,43 @@ function draw(id, maxS, caption) {
   render(); requestAnimationFrame(frame)
 }
 
-draw('c', QUARTER_ONLY, 'ticks — the whole quarter mile')
-draw('c2', 20, 'ticks — the first 20 metres, where the three failures are')
+/**
+ * ★ ONE PLACE DECIDES WHAT IS ON SCREEN. Lanes, charts and standings all read `races` and `first`, so
+ *   they cannot disagree about which four they are showing — which is the bug this shape exists to
+ *   make impossible, not merely unlikely.
+ */
+function showPage(p) {
+  page = Math.max(0, Math.min(p, Math.ceil(ALL.length / PAGE_SIZE) - 1))
+  first = page * PAGE_SIZE
+  races = ALL.slice(first, first + PAGE_SIZE)
+  ENDINGS = races.map(ending)
+  buildLanes(); showStandings()
+  draw('c', QUARTER_ONLY, 'ticks — the whole quarter mile')
+  draw('c2', 20, 'ticks — the first 20 metres')
+  proveThisPage()
+  const total = ALL.length
+  document.getElementById('pager').innerHTML = total <= PAGE_SIZE ? '' :
+    `<button class="ghost" id="prev"${page === 0 ? ' disabled' : ''}>◀</button>
+     <span class="mono" style="color:var(--dim)">races ${first + 1}–${Math.min(first + PAGE_SIZE, total)} of ${total}</span>
+     <button class="ghost" id="next"${first + PAGE_SIZE >= total ? ' disabled' : ''}>▶</button>`
+  const prev = document.getElementById('prev'), next = document.getElementById('next')
+  if (prev) prev.onclick = () => showPage(page - 1)
+  if (next) next.onclick = () => showPage(page + 1)
+}
 
 // ── prove every tick, in the page ────────────────────────────────────────────────────────────────
 const tbody = document.querySelector('#races tbody')
-races.forEach((r, i) => {
-  const tr = document.createElement('tr')
-  const end = ENDINGS[i]
-  tr.innerHTML = `<td style="color:${COLOURS[i]}">${NAMES[i] ?? i + 1}</td>
-    <td>${r.length}</td><td>${r.at(-1).s.toFixed(1)} m</td>
-    <td>${Math.max(...r.map(t => t.v)).toFixed(2)} m/s</td><td>${end}</td>
-    <td class="warn" data-p="${i}">checking…</td>`
-  tbody.append(tr)
-})
+showStandings = () => {
+  tbody.innerHTML = ''
+  races.forEach((r, i) => {
+    const tr = document.createElement('tr')
+    tr.innerHTML = `<td style="color:${COLOURS[i]}">${nameOf(first + i)}</td>
+      <td>${r.length}</td><td>${r.at(-1).s.toFixed(1)} m</td>
+      <td>${Math.max(...r.map(t => t.v)).toFixed(2)} m/s</td><td>${ENDINGS[i]}</td>
+      <td class="warn" data-p="${i}">checking…</td>`
+    tbody.append(tr)
+  })
+}
 
 const ROOT = fromHex(info.root)
 // ── verify the whole log, the cheap way and the strong way ───────────────────────────────────────
@@ -776,12 +819,20 @@ document.getElementById('root').style.color = rootOK ? 'var(--good)' : 'var(--ba
 // ★ And one inclusion proof per race, kept because it demonstrates something the recomputation cannot:
 //   that the log SERVES proofs, so a verifier who holds one entry and not the whole log can still check
 //   it. Four requests, not 264.
-races.forEach(async (r, i) => {
-  const t = r[Math.floor(r.length / 2)]
-  const p = await j(`op=inclusion&leaf=${t.seq}&size=${info.size}`)
-  const ok = verifyInclusion(t.seq, info.size, t.bytes, p.proof.map(fromHex), ROOT)
-  const cell = document.querySelector(`[data-p="${i}"]`)
-  cell.textContent = ok ? `entry ${t.seq} ✓` : `entry ${t.seq} ✗`
-  cell.className = ok ? 'ok' : 'bad'
-})
+function proveThisPage() {
+  races.forEach(async (r, i) => {
+    const t = r[Math.floor(r.length / 2)]
+    const p = await j(`op=inclusion&leaf=${t.seq}&size=${info.size}`)
+    const ok = verifyInclusion(t.seq, info.size, t.bytes, p.proof.map(fromHex), ROOT)
+    // ⚠ the page may have moved on while this was in flight — only write into the row it belongs to
+    const cell = document.querySelector(`[data-p="${i}"]`)
+    if (!cell || cell.dataset.seq && cell.dataset.seq !== String(t.seq)) return
+    cell.dataset.seq = t.seq
+    cell.textContent = ok ? `entry ${t.seq} ✓` : `entry ${t.seq} ✗`
+    cell.className = ok ? 'ok' : 'bad'
+  })
+}
+
+// ⚠ LAST, because showPage() drives everything above it and the proof helper must exist first.
+showPage(0)
 </script>
