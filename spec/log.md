@@ -156,6 +156,22 @@ the history outlives its host: **a witness proves what happened; a copy preserve
 creator of a covenant to move to** — and because royalties follow the creator's own published payment
 record (§2c) rather than any chain, moving costs a creator nothing and strands nobody.
 
+★★★ **AND THE PERMISSION IS NOT A CONCESSION — IT IS WHERE THE ANTIFRAGILITY COMES FROM.**
+Copying a chain in order to compete with it is only possible by **preserving** it: the copier cannot
+extend it under its identity (rule 1), so the one thing their copy can do is keep the history alive.
+⇒ **The pirate becomes an archivist**, and a hostile act adds redundancy instead of removing it. Each of
+the three properties arrives the same way:
+
+| **redundancy** | every copy is a backup, and copying needs nobody's permission |
+| **antifragility** | ⇒ pressure on a chain — attack, competition, an unreliable host — **produces more copies**, and reputation sharpens by showing who stayed up |
+| **no lock-in** | a holder can always leave, because leaving needs only their own signature and somewhere to land |
+
+⚠⚠ **The condition, and it is real: a copy is a SNAPSHOT and goes stale.** Redundancy is only as fresh
+as the most recent copy, so one-off copying buys an archive with a date on it. ⇒ **What makes it live is
+CONTINUOUS mirroring, which is exactly what witnessing already is** (§6e). Antifragility here is a
+property of participation, not of permission: permission makes it possible, and only participation makes
+it true.
+
 ⚠⚠ **THE ACCEPTED COST: FRAGMENTATION.** Freely copyable chains will multiply, and a buyer may have to
 ask which lineage is the live one. **That is chosen deliberately over the alternative**, which is lock-in
 to whoever happens to host your assets. ⇒ §2a's coverage pin bounds it — an asset names its log, so
