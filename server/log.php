@@ -205,6 +205,14 @@ case 'append':
     out(['seq' => $r->seq, 'tree_size' => $store->size(), 'root' => $hex($store->root())], 201);
 
 default:
-    out(['log' => 'jetmora', 'spec' => 'https://jetmora.org/spec/log.md',
+    // ⚠ `spec` is always the CURRENT document; `spec_version` says which that is, and every superseded
+    //    version stays fetchable at its own URL. A specification that can be silently replaced has the
+    //    same defect as a log that can.
+    out(['log' => 'jetmora',
+         'spec' => 'https://jetmora.org/spec/log.md',
+         'spec_version' => '0.1.1',
+         'spec_versions' => ['0.1.1' => 'https://jetmora.org/spec/log.md',
+                             '0.1'   => 'https://jetmora.org/spec/log-v0.1.md'],
+         'protocol_version' => 1,   // ⚠ NOT the document version — see spec §6b
          'ops' => ['info', 'head', 'inclusion', 'consistency', 'entry', 'genesis', 'register', 'append', 'port']]);
 }

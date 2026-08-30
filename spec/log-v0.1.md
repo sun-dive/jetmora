@@ -1,37 +1,9 @@
 # jetmora log — specification
 
-**Document version: 0.1.1 — DRAFT, 30 August 2026.**
-**Previous: 0.1 (24–26 August 2026), frozen and citable at `spec/log-v0.1.md`.**
-
-Normative keywords MUST / MUST NOT / SHOULD / MAY are used in the usual sense. ⏭ marks a decision not
-yet made; those are the only parts an implementer may not rely on.
+**Status: DRAFT, 24 August 2026.** Normative keywords MUST / MUST NOT / SHOULD / MAY are used in the
+usual sense. ⏭ marks a decision not yet made; those are the only parts an implementer may not rely on.
 
 This document says **what**. The reasoning lives elsewhere and is not normative.
-
-⚠ **The DOCUMENT version is not the PROTOCOL version.** The protocol version is carried in each entry
-as `nVersion` and is the value `OP_VER` pushes (§3, §6b). **0.1.1 does not change it: protocol version
-remains 1.** Entries, scripts and opcode semantics are untouched by this revision.
-
-## 0. Changes in 0.1.1
-
-⚠⚠ **0.1 described a log whose head is anchored into a proof-of-work chain, and named BSV as that
-chain. That is withdrawn.** Nothing about entries, trees, scripts or verification changes with it.
-
-| **§1** | a log is no longer *defined* as anchored. Anchoring becomes OPTIONAL and chain-agnostic |
-| **§2** | the genesis is NATIVE — derived from the log's own immutable parameters, not from a foreign transaction. ⇒ closes 0.1's ⏭ on serialization, which §11 already recorded as closed while §2 still said open |
-| **§2a** | ✅ **NEW, NORMATIVE** — genesis uniqueness, and what a duplicate can and cannot do |
-| **§2b** | ✅ **NEW, NORMATIVE** — `R` pinning. ⚠ This is load-bearing and was previously assumed |
-| **§2c** | ✅ **NEW, NORMATIVE** — settlement and royalties: **P2PKH on an external rail · the creator PUBLISHES the (chain, address) · the log enforces via a BRC-113 Merkle proof.** ⛔ No chain-specific address may be baked into a covenant |
-| **§4bis.4i** | the operational-key requirement is restated without the BSV premise |
-| **§4.2a** | ✅ **NEW, NORMATIVE** — the authorisation **threshold**. 0.1 named a *"key set"* without saying how many were needed; the shipped log takes **any one**. ⇒ bare list = **1-of-n** (unchanged), explicit `{threshold, keys}` = **k-of-n**. ★ Needs **no `OP_CHECKMULTISIG`** |
-| **§6.0b** | ⛔ *"anchoring is the only place objectivity enters the system"* is **WITHDRAWN**. Objectivity accumulates through **witnesses** |
-| **§6c** | seats move to the **log layer**, so no script-level shared seat is needed ⇒ §4b's `OP_CHECKMULTISIG` stops blocking. ⚠ The credential's **encoding** stays open |
-| **§6e** | witnesses are **other jetmora logs**. The 0.1 chain shortlist is withdrawn |
-| **§11** | open items updated; two closed, two added |
-
-★ **What 0.1.1 does NOT do:** it does not weaken any verification requirement, and it removes no
-capability. A log MAY still commit its head anywhere it likes (§6e) — it is simply no longer *defined*
-by doing so.
 
 ⚠⚠ **SECTION NUMBERS IN THIS DOCUMENT AND IN THE DESIGN NOTES DO NOT MATCH, AND THEY COLLIDE.** This
 specification's §4b is *signature checking*; the design notes' §4b is *portable state*, which is §8
@@ -42,20 +14,10 @@ here. ⇒ **Always cite the document as well as the number.** This bit its own a
 ## 1. What a log is
 
 A **log** is an append-only merkle tree of **entries**, published by one **operator**, whose tree head is
-**witnessed** — by anyone who retains it, and in particular by other logs (§6e).
+periodically **anchored** into a proof-of-work chain.
 
-⚠ **Changed in 0.1.1.** 0.1 defined a log as one *"whose tree head is periodically anchored into a
-proof-of-work chain."* A log MAY still commit its head to any external chain (§6e.5) and SHOULD do so
-where an objective timestamp is wanted, but **a log that never does so is a log.** Nothing in this
-specification requires a foreign chain, and no verification described here depends on one.
-
-★ **A log IS a chain** — append-only and hash-linked. ⚠ **It simply has no blocks**, and therefore no
-proof of work, no reward, and no coin: those three are one thing, and removing any removes all.
-⚠⚠ **Changed in 0.1.1.** 0.1 read *"a log MUST NOT be understood as a chain"*, which overshot. What it
-meant is what stands:
-
-> **A log MUST NOT be understood as a CONSENSUS SYSTEM or a settlement layer. It is a witness.**
-> **It records what it was given. It does not adjudicate.**
+A log MUST NOT be understood as a chain, a consensus system, or a settlement layer. **It is a witness.**
+It records what it was given. It does not adjudicate.
 
 ⇒ Three consequences, each normative and each easy to get wrong:
 
@@ -73,158 +35,13 @@ A genesis commitment MUST contain:
 | `source_hash` | the hash of the covenant's **BASIC source**, canonicalised per §7 |
 | `script` | the compiled locking script |
 | `state` | the initial state |
-| `authorised` | who may append (§4.2): the literal `open`, a **1-of-n** key list, or a **k-of-n** `{threshold, keys}` object (§4.2a) |
+| `authorised` | the key, key set, or the literal `open`, that may append (§4.2) |
 
-**The genesis identity is NATIVE and is derived, never asserted:**
+The genesis commitment SHOULD be timestamped in its own proof-of-work transaction, independent of any
+log. A covenant whose genesis is only witnessed by a log inherits that log's honesty for its identity,
+which the rest of this specification does not otherwise require.
 
-```
-commitment = LP(source_hash) ‖ LP(script) ‖ LP(state) ‖ LP(authorised)
-genesis    = SHA256( SHA256( commitment ) )
-             where LP(b) = uint32be(len(b)) ‖ b
-```
-
-⇒ Canonical by construction: fixed order, length-prefixed, no options. **It is computed by observers
-from the commitment, and MUST NOT be stored inside the thing it identifies** — storing it there is what
-made the 0.1 formulation impossible (§4bis.0).
-
-An implementation:
-- **MUST** treat `authorised` as immutable. There is no update path: *a genesis that could change who
-  may advance it would not be a genesis.*
-- **MUST NOT** overwrite an existing genesis record. Re-registering an identical genesis is idempotent
-  and harmless; replacing one would silently change who may advance a live covenant.
-- **MAY** record an external timestamp reference alongside it (§6e). ⚠ **This is optional and carries no
-  normative weight.** A genesis without one is complete.
-
-⚠ **Changed in 0.1.1.** 0.1 said the commitment *"SHOULD be timestamped in its own proof-of-work
-transaction"* and left serialization ⏭ open — while §11 already recorded it closed. Both are resolved
-here: the identity is native, and the serialization is the four length-prefixed fields above.
-
-### 2a. Genesis uniqueness — what a duplicate can and cannot do ✅ NORMATIVE, new in 0.1.1
-
-⚠ **Copying is free and MUST NOT be treated as an attack to prevent.** The protocol prevents none of it;
-it makes the harmful case self-defeating and the harmless cases irrelevant.
-
-| **an operator publishes two genesis records** | ⇒ ★★ **there is nothing to equivocate about.** The id IS `SHA256d` of the content, so differing content is a **different log**, and identical content is the **same id** — idempotent by §2. ⚠ Equivocation is never a property of a genesis. It has exactly **two** homes, each with its own mechanism: a **holder** signing two successors (§2b, `R` reuse ⇒ key published) and a **log** publishing two heads at one size (§4d, caught by consistency proof and witnesses) |
-| **a stranger copies a log** | ⇒ **they cannot extend the tip.** A copy is frozen at the moment it was taken: a dead replica, not a rival history |
-| **a stranger starts their own log** | ⇒ **not an attack. A peer.** The constructive move is to witness others and ask the same in return (§6e) |
-
-⚠⚠ **TWO SCOPES, AND THEY MUST NOT BE CONFLATED.**
-
-| **a covenant's `authorised`** (§4.2) | who may advance **that covenant** inside a log. MAY be `open` |
-| **a log's append authorisation** | who may extend **the log itself**. ⛔ **NEVER open to a copier** |
-
-⇒ **A COPIED LOG MUST NOT BE EXTENDABLE, and `authorised: open` does not make it so.** An `open`
-covenant is open **within its own log**, whose appends the operator still authorises. A stranger holding
-a copy is not that operator and cannot become one by copying.
-
-★★★ **THE RULE, and its reason:** *a chain cannot be copied and extended.* Permitting it would let
-anyone continue somebody else's history as their own ⇒ **unlimited piracy, and the creator of an asset
-disenfranchised.** ⇒ **The sanctioned path is to create a NEW chain and MIGRATE assets into it** (below,
-and §8) — which preserves the lineage, the creator's terms, and the record of where the asset came from.
-⚠ Copying therefore yields **an archive, never a continuation**, and that is the whole of what it yields.
-
-★ **And anything of value names a key set: advancing it requires a signature ⇒ a key ⇒ a wallet.**
-Unchanged by 0.1.1, and not a limitation to be engineered away — it is what ownership *is* here.
-
-★ And coverage is structural rather than reputational: **an asset names its log at genesis.** That log
-defines what *checked* means; every other log carrying the entry is a **mirror** — valuable as a
-witness, irrelevant to coverage.
-
-> ★★★ **THE BOUNDARY OF THE GUARANTEE**
-> **The protocol guarantees uniqueness WITHIN a lineage.**
-> **It does not guarantee that only one lineage exists for a given real-world thing.**
-
-⚠⚠ **Nobody is locked to one log.** An asset migrates by an ordinary advance naming its successor log.
-⇒ The only stranding case is an operator **abandoning** the log — and **recovery from a dead log is an
-ADMINISTRATIVE process, not a protocol one.** The protocol supplies evidence — the holder's signature
-chain, witnessed proof the head never advanced, witnessed unresponsiveness — and **declines to
-adjudicate, deliberately.** A receiving operator decides whether to accept a re-mint, and bears the
-reputational cost of deciding badly.
-
-★ This is the same refusal as §1's *"it does not adjudicate"* and §4.4's *"a log MUST NOT choose between
-conflicting entries."* **Automating it would install exactly the decider this specification excludes.**
-
-### 2b. `R` pinning ✅ NORMATIVE, new in 0.1.1
-
-⚠⚠ **This was assumed in 0.1 and never specified. It is load-bearing: the replacement for ordering.**
-
-ECDSA leaks the signing key when one nonce signs two messages. This specification **requires** that
-property rather than merely tolerating it:
-
-- On receiving an asset, the holder **MUST** pre-commit the `R` value its next forward-signature will
-  use.
-- A forward-signature that does not use the pinned `R` **MUST** be rejected as invalid.
-- ⇒ Therefore signing two different successors requires **either** an invalid signature **or** nonce
-  reuse, and nonce reuse **publishes the private key**.
-
-★★★ **This is why no ordering rule is needed.** Equivocation is not resolved by deciding who was first;
-it destroys the key and the asset together. ⛔ **"First anchor wins" is retired** — it imported the very
-ordering requirement this removes.
-
-⚠ **Consequence, stated plainly:** an honest buyer facing an equivocating seller does **not** keep the
-asset. **Both buyers lose, and so does the cheat.** That is worse for victims than a first-seen rule and
-requires no consensus whatsoever, and the trade is deliberate.
-
-⚠⚠ **THE BURN IS secp256k1-ONLY, AND THAT IS NOT OPTIONAL DETAIL.** §4.0a's verifier selects a scheme
-by key length — **32 bytes ⇒ Ed25519 · 33 or 65 ⇒ secp256k1** — and **Ed25519 is deterministic: reusing
-it leaks nothing.** ⇒ On the Ed25519 path equivocation is **detectable** (§4d) but carries **no
-penalty**, so the argument above does not hold there.
-
-⇒ Therefore a covenant whose advances carry value **MUST** authorise secp256k1 keys. Ed25519 is
-appropriate for entries where equivocation costs nobody anything — test chains, free game boards — and
-an implementation **MUST NOT** present an Ed25519-authorised covenant as protected by the burn.
-
-⏭ **OPEN: the pin's wire encoding**, and whether the pin is carried in the entry or in the state.
-
-### 2c. Settlement and royalties ✅ NORMATIVE, new in 0.1.1
-
-**jetmora has no coin.** Where value must move, it moves on an **external payment rail**, and this
-specification constrains only how that payment is *proved*, never which rail is used.
-
-> ★★★ **NOTHING COVENANT-SHAPED EVER TOUCHES THE PAYMENT RAIL.**
-> A sale is the seller's output plus the creator's output. **P2PKH. 25 bytes each.**
-
-⚠⚠ **This is decided from observed behaviour, not from published limits.** A `TX_POLICY (39) — "Script
-is too big"` was seen 37 times on a network where every documented value permitted it, and **the size of
-the refused script is not knowable from outside.** ⇒ **The finding is the ABSENCE of a number, so no
-covenant may rely on headroom.** A P2PKH output survives even `RequireStandard = true`, the binary switch
-no amount of headroom protects against.
-
-**⇒ Three things, and each sits where it can do least harm:**
-
-| **the covenant** names | the creator's **IDENTITY** — a key. ⛔ **immutable.** A rotatable identity can be repudiated (§6.0c) |
-| ★ **the creator** publishes | **`(chain, address)`** — where and on which rail to pay them. ✅ **MUTABLE**, signed with that identity key, resolved by scanning the creator's own history, **latest wins**, no indexer |
-| ★★ **the log** enforces | **refuses the advance unless a BRC-113 Merkle proof shows the creator was paid.** ⇒ The enforcement a covenant would otherwise do, **on this side of the boundary, where nobody can quietly retune it** |
-
-★★★ **A payee changing where they are paid is not theft; it is ordinary.** The mutation is authorised by
-the payee's own key, so it is not a redirection vector — and it removes the last thing that could freeze
-an asset: **if a rail dies, the creator publishes an address on a live one and EVERY asset ever minted
-starts paying there.** No re-mint, no new version, no orphaned lineage.
-
-⇒ ⚠ **Baking a rail into the covenant is therefore FORBIDDEN**, not merely discouraged: replicas clone
-their parent's state verbatim, so a baked rail is permanent for that lineage, and one chain's policy
-could strand every asset that named it.
-
-**Normative:**
-1. A covenant **MUST NOT** encode a chain-specific payment address. It names the creator's identity key.
-2. A payment proof **MUST** reference **the creator record it paid against**, not merely the creator.
-   ⇒ Otherwise updating an address retroactively invalidates every past payment. Same rule as entry-bound
-   `nVersion` (§6b): *apply the semantics named in that entry.*
-3. A log **MUST** reject an advance whose royalty proof is absent or does not verify against the record
-   it names. ⚠ It **MUST NOT** attempt to judge whether the amount was *fair* — only whether it matches.
-4. ⚠ **State the exposure; do not prescribe custody.** A stolen identity key redirects all future
-   royalties. That is the price of not being strandable and is accepted deliberately.
-   ⇒ **How a creator holds that key is entirely their own choice** — this specification imposes nothing.
-   ★ Two options exist and compose: an **air-gapped key** (it signs rarely, only to publish a new payment
-   record, so the friction is negligible) and a **k-of-n identity** (§4.2a), which removes the single
-   point of failure rather than merely protecting it.
-5. A **re-mint MUST name the genesis it reconstructs** (§2a). ⇒ A royalty term stripped in a re-mint then
-   becomes **provable**; one that names no source claims no lineage, and has no provenance to trade on.
-
-⏭ **OPEN: denomination across rails.** *"1,000 sat"* has no meaning on another chain. ⚠ Note this is a
-**different question from the address**: a mutable address is authorised by the payee and harms nobody,
-whereas a mutable *amount* could be raised on holders mid-life. ⇒ Whether the creator states an amount
-per rail, or a conversion policy applies, is unsettled.
+⏭ **OPEN: the genesis commitment's serialization and its on-chain envelope.**
 
 ## 3. The entry
 
@@ -375,33 +192,6 @@ interpreter, and this specification does not require one in a log.
 
 The genesis `authorised` field governs. A covenant MAY declare `open`, in which case any signature is
 permitted and the operator's own policy (§4.5) is the only limit.
-
-### 4.2a Threshold ✅ NORMATIVE, new in 0.1.1
-
-⚠⚠ **0.1 named a *"key set"* and never said how many of it were required.** The shipped log accepts
-**any one** listed key, while §4bis.4i discusses n-of-n owners — so two conforming implementations could
-disagree about whether one signature suffices. **That ambiguity sits on the authorisation boundary and is
-closed here.**
-
-| `"open"` | any signature. ⚠ **MUST NOT** be used by a covenant holding value (§2a) |
-| `["<key>", …]` | ⇒ **1-of-n.** Any one listed key authorises. ★ This is what 0.1 implementations do, and the bare-list form keeps meaning it |
-| `{"threshold": k, "keys": ["<key>", …]}` | ⇒ **k-of-n.** k distinct listed keys MUST each sign |
-
-An implementation:
-- **MUST** treat a bare array as `threshold: 1`. ⇒ Existing genesis records keep their current meaning.
-- **MUST** reject `k < 1` or `k > n` at registration, and **MUST NOT** count one key twice toward `k`.
-- **MUST** apply the threshold recorded **at genesis**. `authorised` is immutable (§2); a threshold that
-  could be lowered later is not a threshold.
-
-★★ **No `OP_CHECKMULTISIG` is required for any of this.** Append authorisation is checked by the log, not
-by a script (§4.0a) — so a multi-key covenant owner, a multi-key log operator, and a multi-key creator
-identity (§2c) all work with the opcode set exactly as §4b leaves it. ⚠ Only a covenant verifying
-signatures **in script** would need it, and §11 tracks that separately.
-
-⇒ ★ Recommended, and the reason: **§2c's creator identity is the strongest case for `k > 1`.** A stolen
-single key redirects all future royalties; a k-of-n identity means one compromised key does not. It
-composes with an air-gapped key rather than replacing it — the air gap protects one key, the threshold
-removes the single point of failure.
 
 ### 4.3 Invalid transitions — recorded, and NOT honoured
 
@@ -594,17 +384,13 @@ public key and assumes that identifies the history. **It must take `(genesis, br
 
 ⚠⚠⚠ **A FORK MUST BE DECLARED AT OR BEFORE THE DIVERGENCE, NEVER CLAIMED AFTERWARDS.** Otherwise an
 operator signs two incompatible histories, is caught, and says *"that was a fork."*
-⇒ **The declaration MUST be published to the log's witnesses at or before the divergence**, so the
-claim cannot be backdated: witnesses holding the earlier head are what makes a retrospective fork claim
-refutable. ⚠ **Changed in 0.1.1** — 0.1 said the declaration *"SHOULD live in an anchor, so the claim
-costs proof of work."* Where an external commitment is used (§6e.2) it serves equally, but it is no
-longer the mechanism relied upon.
+⇒ **The declaration SHOULD live in an anchor**, so the claim costs proof of work and cannot be
+backdated. ★ Same shape as everything else here: the escape hatch is real, and it is safe only because
+it cannot be applied retrospectively.
 
-### 4bis.4a ★★★ A BRANCH MAY GROW ON ANY HOST — identity is held by the genesis, not by location
+### 4bis.4a ★★★ A BRANCH MAY GROW ON ANY HOST — the chain holds identity, not location
 
-**The genesis is native and derived (§2). The tree may grow anywhere.**
-⚠ **Changed in 0.1.1** — 0.1 read *"the genesis and the anchors live on BSV."* They do not: identity is
-`SHA256d` of the log's own commitment and depends on no chain.
+**The genesis and the anchors live on BSV. The tree may grow anywhere.**
 
 ⇒ §8 already states the principle for covenants — *"a covenant's script MUST NOT reference the log it
 runs in"*. ⚠ **It extends by one word: an ANCHOR's script MUST NOT reference the HOST.** A covenant that
@@ -797,24 +583,15 @@ scripts. ⇒ It is CHEAP, not free, and cheap replication is the design rather t
 
 ### 4bis.4i ⚠★★ THE OWNER KEY IS OPERATIONAL, NOT COLD — and why it cannot be avoided
 
-**A log signs its heads (§5.2), and that key is operational — hot, on the machine that publishes,
-used routinely. ⚠ Not cold, and not pretended to be.**
+**An anchor requires a signature, and that signature must be over THE TRANSACTION.**
 
-⚠ **Restated in 0.1.1 without its former premise.** 0.1 derived this from a foreign chain's opcode set:
-*"the better design does not exist on BSV… BSV has no `OP_CHECKDATASIG`."* That reasoning is withdrawn —
-this specification defines its own opcode set (§4b) and is not bound by another chain's policy.
-⏭ **OPEN: whether the opcode set gains `OP_CHECKDATASIG`**, which would allow a covenant to check a
-log's head signature directly and let **anyone** publish on its behalf.
+⚠⚠ **The better design does not exist on BSV.** A log already signs its heads (§5.2), so the natural
+move is for the covenant to check THAT signature and let **anyone** pay to anchor — no ceremony, no key
+operation, and a third party could anchor a log they care about. ⇒ **It cannot be built: BSV has no
+`OP_CHECKDATASIG`**, so a script can verify a signature over its own transaction and over nothing else.
 
-★★ **And a head-signing key MUST NOT be conflated with a spending key.** They fail differently:
-
-| a **holder's** key | ⛔ signs an asset forward ⇒ compromise takes **the asset** |
-| a **head-signing** key | ⚠ cannot forge a transfer — advances are single-writer (§4.4) — but **can equivocate and withhold**, which attacks the record valuable assets depend on |
-
-⇒ So it is narrower, **not harmless.** An implementation SHOULD mitigate it the ordinary way: a **cold
-identity key authorising a bounded, revocable signing key**, and heads signed at intervals rather than
-per entry. ★ And witnesses **date** any compromise, because they hold the true earlier heads —
-**revocation becomes evidence rather than a promise.**
+⇒ Therefore **the anchorer signs, and the owner key is the LOG'S OPERATIONAL KEY** — hot, on the
+machine that anchors, used routinely. ⚠ **Not cold, and not pretended to be.**
 
 ★★ **The protection is architectural rather than ceremonial, and it is already built:**
 
@@ -961,9 +738,8 @@ MUST NOT be duplicated and hashed with itself.**
 (`i2 = min(i+1, nSize-1)`, 0.1.3 `main.h`), so distinct entry lists can produce identical roots
 (CVE-2012-2459); and it applies no domain separation, so an internal node can be presented as a leaf.
 
-⚠ **Two tree types exist in this system and MUST NOT be conflated:** RFC 6962 for jetmora logs — **always
-required** — and, **only where an external commitment is used** (§6.1, §6e.2), that carrying chain's own
-tree for its inclusion proofs.
+⚠ **Two tree types exist in this system and MUST NOT be conflated:** RFC 6962 for jetmora logs, and the
+carrying chain's own tree for anchor inclusion proofs (§6.1, and BRC-113 for BSV).
 
 ### 5.2 Heads
 
@@ -1120,64 +896,38 @@ hashes; everything below is somebody else's electricity.
 
 ### 6.0a ⇒ Therefore BRC-113 applies at two levels, not one
 
-| **entry → log root** | jetmora's own tree — **the layer MPT never had.** ✅ Always present |
-| **anchor → block root → header** | **MPT's original job, completely unchanged.** ⚠ **Only where an external commitment is used** (§6e.2) — optional since 0.1.1 |
-
-★ **Merkle proofs are unaffected by 0.1.1 and remain mandatory.** §5.1's RFC 6962 construction, §5.3's
-inclusion and consistency proofs, and §4d's equivocation test all operate on the log's **own** tree and
-never on a foreign one. Removing the anchor removed the **second** row, and nothing else.
+| **entry → log root** | jetmora's own tree — **the layer MPT never had** |
+| **anchor → block root → header** | **MPT's original job, completely unchanged** |
 
 ★ A port entry (§8) is an MPT with one extra tree stacked underneath it. That is not an analogy; it is
 the same construction, applied twice.
 
 ### 6.0b ⚠⚠ Two consequences that follow immediately
 
-⛔⛔ **WITHDRAWN IN 0.1.1.** 0.1 stated here that *"anchoring is the only place objectivity enters the
-system"*, and required in §6.3 that a log which stops anchoring be treated as failing. **Both are
-withdrawn.** They followed from defining a log as anchored (§1), which no longer holds.
+**A log that never anchors has no headers at all.** Its entire history is the operator's word, provable
+against nothing. ⇒ This is why §6.3 requires that a log which stops anchoring be treated as failing —
+not as a health heuristic, but because **anchoring is the only place objectivity enters the system.**
 
-★★★ **Objectivity accumulates through WITNESSES, not through work.**
+★★ **Multi-anchoring borrows headers from several chains.** A log's objectivity then rests on no single
+chain surviving, and on no single chain's fee policy. ⇒ The same escape as portable state (§8), one
+level up: **do not depend on a party who can change the terms.**
 
-| | depth accumulates | reversing it costs |
-|---|---|---|
-| a proof-of-work chain | **work** | energy — thermodynamic |
-| **a log** | **witnesses** | **evidence** — every party holding an older head can prove the contradiction |
+### 6.0c A log may therefore have an unforgeable identity
 
-⚠ Rewriting a log entry is computationally **free.** What makes it impractical is that others already
-hold the earlier head. ⇒ **Proof-of-work depth is self-evident from headers alone; log depth is only as
-good as the witness set.**
+If a log's first anchor is taken as its genesis in the BRC-113 sense — identity derived from that
+transaction plus the log's immutable parameters — then **the log itself is a token whose identity is
+anchored in a block header.**
 
-★★★ Therefore **depth is a function of independent observers, not of entries.** A million entries with
-one observer is **shallow**; ten entries with ten thousand observers is **deep**. ⇒ **Appending secures
-nothing. Being seen appending does.**
+⇒ Forging a log's identity would mean rewriting proof of work, which is the same difficulty as forging
+a transaction. ★ Not *"unforgeable"* by assertion — unforgeable **for a stated reason**.
 
-⚠ A log with no witnesses is an honest launch state, not a defect — but an implementation **MUST NOT**
-present it as more than the operator's word. See §6e.
+⚠ **And it closes a gap in §8.** A port entry currently names its source log by **public key**, and a
+hostile source could rotate keys and deny the port came from it. **An identity anchored at genesis
+cannot be rotated away from.**
 
-### 6.0c A log's identity is unforgeable without a foreign chain
-
-The identity is the genesis of §2 — derived by observers from the log's immutable parameters, computed
-and never stored (BRC-113's model). ⇒ **Forging it means finding a second preimage of `SHA256d`**, which
-is not a matter of policy, fees, or anyone's permission.
-
-⚠ **Changed in 0.1.1.** 0.1 derived identity from a log's first *anchor transaction*, making it
-unforgeable *"because rewriting proof of work is hard."* That was true and is no longer available, and
-it is not needed: **the commitment's own collision resistance is a stronger and cheaper guarantee than
-a borrowed header, because it depends on nobody.**
-
-★ **And it still closes the gap in §8.** A port entry names its source log by **public key**, and a
-hostile source could rotate keys and deny the port came from it. **An identity fixed at genesis cannot
-be rotated away from** — §2's `authorised` is immutable by construction.
+⏭ **OPEN: whether a log SHOULD have such an identity, and what its immutable parameters are.**
 
 
-
-> ⚠⚠ **§6.1 THROUGH §6.1c ARE OPTIONAL IN 0.1.1, AND THEIR WORKED FORM IS BSV-SPECIFIC.**
-> A log MAY commit its head to an external chain; **nothing requires it** (§1, §6.0b). What follows is a
-> complete, tested design for doing so on a chain with covenants and permissive standardness — kept
-> because it is correct and was built, **not because an implementation must provide it.**
-> ★ Note in particular §6.1a: the commitment lives in a **spendable** output, not `OP_RETURN`, because
-> **spendability is what makes a series of commitments a chain.** That property is the reason a plain
-> data output is not an equivalent substitute.
 
 ### 6.1 What an anchor is
 
@@ -1382,18 +1132,13 @@ obtained**, or it has not pruned, it has deleted.
 
 ### 6.3 Cadence
 
-**Head-publication cadence** is operator policy and SHOULD be published. It bounds, simultaneously:
+Anchor cadence is operator policy and SHOULD be published. It bounds, simultaneously:
 
 - how far a signed head may be backdated
 - how long two conflicting heads may both appear current
 - **how much history is stranded if the operator turns hostile** (§8)
 
-⚠ **Changed in 0.1.1.** 0.1 read *"a log that stops **anchoring** SHOULD be treated as failing."* Since
-a log is no longer defined as anchored (§1), the test is now on **publication and witnessing**:
-
-⇒ A log that stops publishing signed heads to its witnesses SHOULD be treated as failing, whatever else
-it continues to serve. ★ A log that never commits to an external chain is **not** failing — it simply
-carries no timestamp anyone else vouches for (§6.0b).
+⇒ A log that stops anchoring SHOULD be treated as failing, whatever else it continues to serve.
 
 ## 4b. Signature checking
 
@@ -1727,57 +1472,10 @@ open** — no seats at all — and it survives because a proof-of-work fee makes
 remains shared even then is **who starts the race and who declares it finished**, and those need 6c.5.
 
 
-## 6e. Witnessing — and why no chain is required at all
+## 6e. The anchor is chain-agnostic — and that is the answer to being locked out
 
-⚠⚠ **Substantially revised in 0.1.1.** 0.1 treated witnessing as *anchoring into somebody's blocks*,
-and shortlisted chains to anchor to. **The primary witness of a jetmora log is another jetmora log.**
-An external commitment remains available (§6e.2, §6e.5) and buys one specific thing — a timestamp from
-a party with no stake in this log. It is an addition, never a prerequisite.
-
-### 6e.0 ★★★ Logs merge; chains do not — new in 0.1.1
-
-A blockchain fork produces two internally consistent histories and **forces a choice between them.**
-Overlapping logs produce **partial views of one history the signatures already determined** ⇒ union them
-and you simply hold more of it. **There is nothing to choose between.**
-
-⇒ Therefore mutual witnessing **MUST NOT** be understood as membership in a set that decides validity:
-
-| **coverage** — what you have heard | ✅ what witnessing affects |
-| **validity** — what is true | ⛔ never. Validity is self-contained in the entry |
-
-★★ A party excluded from every log still holds valid signatures; they merely have fewer witnesses. **An
-in-group can only form where belonging decides what is true**, and here it cannot. ⇒ Refusing to listen
-to a spammer costs **information, not truth**, and because order comes from the data dependency,
-**hearing something late changes nothing.**
-
-⚠ **Two situations look alike from outside and MUST NOT be confused:**
-
-| the **same** successor appearing in several logs | ✅ **replication.** Strictly good — it is the archive |
-| **different** successors in different logs | ⚠ **equivocation** ⇒ pinned `R` reused (§2b) ⇒ **the key is published and both die** |
-
-⇒ The second is not a fork to resolve. **It is self-destroying.**
-
-### 6e.0a What witnessing provides that nothing else does
-
-★★★ **A provable absence.** Log A witnessed an entry; the asset's own log head does not contain it; both
-are hash-linked. ⇒ **Withholding becomes visible** — and withholding is the failure that actually harms
-a holder, the one no covenant and no anchor can reach.
-
-⚠ Honest residual: **eclipse.** A log everyone declines to witness reaches no observer and cannot prove
-it published. That is **censorship, not theft** — the holder's signatures remain valid — and the
-mitigation is federation, not consensus.
-
-⚠ **Nothing rate-limits spam without fees.** ⇒ **Selective listening is the rate limiter**, administered
-by whoever a party chooses to peer with. Precedents that use no consensus to decide who may speak: **BGP
-peering · Certificate Transparency trusted-log lists · email reputation.**
-
-### 6e.0b ⚠ Reputation — what it does and does not decide
-
-Trust in an operator accrues from **being a good actor over time**, and covers exactly three things:
-**uptime · honesty about contents · care in accepting re-mints** (§2a).
-
-⚠⚠ Reputation **MUST NOT** be relied on for anything §2a already makes structural. It does not decide
-whether a log is *real*; it decides whether an operator is worth pinning a **new** asset to.
+⚠ This section exists because of a question worth answering once: *"maybe we'll have to launch our own
+main chain too in the end?"* ⇒ **No — and this is why.**
 
 ### 6e.1 ★★★ What an anchor actually buys
 
@@ -1820,12 +1518,7 @@ offer, at a fraction of the cost.
    chain with different mining, different tooling and a different community from the first.
 4. **Cheap and unremarkable.** Anchoring is routine; it must not be an event.
 
-⚠⚠ **Demoted in 0.1.1.** These criteria govern an **optional external commitment** only (§6e.2). They
-do **not** govern a log's witnesses, which are other logs (§6e.0) and are chosen by mutual agreement,
-not by hashrate. ⇒ **A second independent log is worth more than any external commitment**, because
-logs merge and chains do not.
-
-⇒ **Shortlist considered (26 Aug 2026) — retained as a record, NOT as a recommendation:**
+⇒ **Shortlist considered (26 Aug 2026):**
 
 | | |
 |---|---|
@@ -1851,15 +1544,13 @@ fails 1 does not, however friendly its community.
 ## 11. Version 1 summary of open items
 
 | ~~§2~~ | ~~genesis commitment serialization and on-chain envelope~~ ⇒ ✅ **CLOSED 25 Aug: there is none.** Identity is one derived field and every immutable setting is an enforced field in the covenant (§4bis.0) |
-| ~~§6.1~~ | ~~anchor transaction output format~~ ⇒ ✅ **CLOSED 25 Aug**: a PushDrop covenant, 1,285 B, 26/26 (§6.1a-i). ⚠ **0.1.1: retained as a WORKED DESIGN, not a requirement** — §1 no longer defines a log as anchored |
-| ⏭ **§2c** | ✅ **NEW** — denomination across rails. ⚠ A mutable *address* is authorised by the payee; a mutable *amount* is not the same question |
-| ⚠⚠ **§2b** | ✅ **NEW AND BLOCKING** — the `R` pin's wire encoding, and whether it is carried in the entry or in the state. **The rule is normative in 0.1.1; the format is not.** Nothing should transfer value before this is settled |
-| ★ **§6e** | ✅ **NEW** — the witness protocol: how a log offers its head to another, and how mutual witnessing is recorded. ⇒ Replaces 0.1's *"which chains are adopted"*, which assumed anchoring |
-| ~~§6.2~~ | ~~recommended anchor depth~~ ⇒ **moot in 0.1.1**: anchoring is optional (§1). Reopens only if an external commitment is adopted |
+| ~~§6.1~~ | ~~anchor transaction output format~~ ⇒ ✅ **CLOSED 25 Aug**: a PushDrop covenant, 1,285 B, 26/26 (§6.1a-i) |
+| §6.2 | recommended anchor depth |
 | §7 | AST node encoding |
 | §9 | the `ERROR` statement's spelling in BASIC — the encoding is settled (§9.1–9.2) |
-| §4b | `OP_CODESEPARATOR`'s effect on `scriptCode`. ⚠ **`OP_CHECKMULTISIG` no longer blocks anything** — §6c's seats moved to the log layer, so no script-level shared seat is required. ⏭ And whether the set gains `OP_CHECKDATASIG` (§4bis.4i) |
-| §6c | the seat credential's **encoding**, and whether a deadline counts in entries or in wall-clock seconds. ⇒ The **mechanism** is settled in 0.1.1 — seating is a log-layer admission decision, not a script rule — and §6c.3–6c.5's rules stand |
+| §6e | which chains are actually adopted as second witnesses, and the reference format for a non-BSV anchor — the RULES are settled (§6e.4–6e.5), the choice is not |
+| §4b | `OP_CHECKMULTISIG`, and `OP_CODESEPARATOR`'s effect on `scriptCode` |
+| §6c | the seat credential's encoding, and whether a deadline counts in entries or in wall-clock seconds — the RULES are settled (§6c.3–6c.5), the wire format is not |
 | ~~§4d~~ | ~~the equivocation detector takes a key where it needs `(genesis, branch, key)`~~ ⇒ ✅ **CLOSED 25 Aug**: `log_id` added to the head, detector is branch-aware, 18/18 (§4d.5) |
 
 An implementation MUST NOT claim conformance to version 1 while any of these remain open.

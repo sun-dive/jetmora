@@ -2,6 +2,8 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://jetmora.org/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
   <url><loc>https://jetmora.org/light-speed-transfers.html</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
-  <url><loc>https://jetmora.org/spec/log.md</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <!-- ⚠ The spec is DELIBERATELY NOT LISTED (30 Aug). It stays fetchable for anyone given the link, but
+       is not offered to crawlers while the first test chain is being brought up. Re-list it at launch —
+       for a standard, being findable is the point, and until then it is work in progress. -->
   <url><loc>https://jetmora.org/vectors/core.json</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
 </urlset>
