@@ -41,9 +41,14 @@ function out(array $body, int $status = 200): never {
 //   ★ The CLASS is named because it is the whole diagnosis (a PDOException is not a TypeError); the
 //   message is not, because messages carry paths and internals.
 set_exception_handler(static function (Throwable $e): void {
-    // ★ SQLSTATE is named for a PDOException because it IS the diagnosis (BUSY is not LOCKED is not
-    //   READONLY) and it carries no path or internal detail. The message still does, so it stays out.
-    $kind = $e::class . ($e instanceof PDOException && is_string($e->getCode()) ? ' ' . $e->getCode() : '');
+    // ★ For a PDOException the SQLSTATE and the DRIVER CODE are the whole diagnosis — 5 is BUSY, 8 is
+    //   READONLY, 14 is CANTOPEN, 1 is a plain SQL error — and neither carries a path.
+    //   ⚠ getCode() is NOT reliable here: it returns an int for driver-level failures, which is why the
+    //   first attempt at this printed nothing. `errorInfo` is the property that always has it.
+    $kind = $e::class;
+    if ($e instanceof PDOException && is_array($e->errorInfo ?? null)) {
+        $kind .= ' sqlstate=' . (string)($e->errorInfo[0] ?? '?') . ' driver=' . (string)($e->errorInfo[1] ?? '?');
+    }
     out(['error' => 'internal error', 'kind' => $kind], 500);
 });
 register_shutdown_function(static function (): void {
