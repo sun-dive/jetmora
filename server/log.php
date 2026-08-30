@@ -91,6 +91,9 @@ case 'info':
          'journal_mode' => $store->journalMode,
          // ⚠ shared hosting. Visible here so it is known LONG before it bites, not discovered at it.
          'bytes' => $store->bytes(), 'capacity_bytes' => LogStore::MAX_DB_BYTES,
+         // ★ The battery, in entries rather than bytes — measured from this log's own consumption.
+         //   ⚠ null until there is enough history for the average to mean anything.
+         'charge' => $store->charge(),
          'head' => $latest ? $hex($latest['head']) : null,
          // ⚠ "witnessed" is not "anchored" and not "confirmed" — see spec §4c
          'state' => 'entries are final on append; anchoring adds objective ordering, not validity']);

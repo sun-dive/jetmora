@@ -95,6 +95,30 @@ final class LogStore
         ');
     }
 
+    /**
+     * ★★★ THE BATTERY, IN THE ONLY UNIT THAT MEANS ANYTHING HERE.
+     *
+     * A BRC-226 battery bounds SATOSHIS — how much an agent may spend before it is refuelled. This log
+     * has no satoshis, so what it bounds is ENTRIES, and what that buys is RACES. Same mechanism, the
+     * resource swapped. ⇒ Bytes are the implementation; entries are the charge.
+     *
+     * ⚠ MEASURED, NEVER ASSUMED: the cost per entry is taken from this log's own consumption so far, so
+     *   it self-corrects as the shape of the entries changes. A hardcoded constant would drift silently,
+     *   and the whole point of a fuel gauge is that it is not a guess.
+     * ⚠ Returns null below a floor — with a handful of entries the average is dominated by the schema
+     *   and page overhead, and a confident wrong number is worse than an honest absence.
+     *
+     * @return array{bytes_per_entry:int, entries_remaining:int}|null
+     */
+    public function charge(): ?array
+    {
+        $n = $this->size();
+        if ($n < 32) return null;
+        $per = max(1, intdiv($this->bytes(), $n));
+        return ['bytes_per_entry' => $per,
+                'entries_remaining' => max(0, intdiv(self::MAX_DB_BYTES - $this->bytes(), $per))];
+    }
+
     /** Bytes on disk. ⚠ Under WAL the newest writes are in -wal, so counting the .db alone under-reads. */
     public function bytes(): int
     {
