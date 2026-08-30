@@ -30,6 +30,8 @@ class PrunedException extends RuntimeException {}
 final class LogStore
 {
     private PDO $db;
+    /** The journal mode actually in force — "wal" where the host allows it, otherwise the fallback. */
+    public string $journalMode = 'unknown';
 
     public function __construct(string $path)
     {
@@ -40,8 +42,15 @@ final class LogStore
         // ⚠ WAL lets readers proceed during a write. NORMAL sync is safe under WAL and much faster.
         //   ⚠ WAL needs shared memory — on some network filesystems it silently is not available,
         //   which is why probe.php tests a real transaction rather than assuming.
-        $this->db->exec('PRAGMA journal_mode=WAL');
-        $this->db->exec('PRAGMA synchronous=NORMAL');
+        // ⚠⚠ ANTICIPATED ABOVE AND THEN ASSUMED ANYWAY — which is what actually happened: appends
+        //   returned 500 with an empty body on the first host they met (30 Aug), while registers, which
+        //   never touch this connection, worked. ⇒ WAL is an OPTIMISATION; failing to get it must cost
+        //   speed, never correctness. `journalMode` records what we ended up with, so nobody has to guess.
+        try { $this->db->exec('PRAGMA journal_mode=WAL'); }
+        catch (Throwable) { /* stays in the default rollback journal — slower, still correct */ }
+        $this->journalMode = (string)($this->db->query('PRAGMA journal_mode')->fetchColumn() ?: 'unknown');
+        // ⚠ NORMAL sync is only safe under WAL. Without it, fall back to FULL rather than keep the speed.
+        $this->db->exec('PRAGMA synchronous=' . (strtolower($this->journalMode) === 'wal' ? 'NORMAL' : 'FULL'));
         $this->db->exec('PRAGMA foreign_keys=ON');
         $this->migrate();
     }

@@ -35,6 +35,21 @@ function out(array $body, int $status = 200): never {
     echo json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), "\n";
     exit;
 }
+// ⚠⚠ AN ENDPOINT MUST NEVER ANSWER WITH AN EMPTY BODY. On 30 Aug an uncaught PDOException in the store
+//   returned a bare 500, and every client died in `JSON.parse` with nothing to go on — the failure was
+//   indistinguishable from a network fault. ⇒ Whatever happens, the answer is JSON.
+//   ★ The CLASS is named because it is the whole diagnosis (a PDOException is not a TypeError); the
+//   message is not, because messages carry paths and internals.
+set_exception_handler(static function (Throwable $e): void {
+    out(['error' => 'internal error', 'kind' => $e::class], 500);
+});
+register_shutdown_function(static function (): void {
+    $e = error_get_last();
+    if ($e !== null && ($e['type'] & (E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR)) !== 0) {
+        if (!headers_sent()) out(['error' => 'internal error', 'kind' => 'fatal'], 500);
+    }
+});
+
 $hex = fn(string $b) => bin2hex($b);
 $unhex = function (string $h, int $bytes = 0): string {
     if (!preg_match('/^[0-9a-fA-F]*$/', $h) || strlen($h) % 2) out(['error' => 'not hex'], 400);
