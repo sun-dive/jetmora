@@ -27,14 +27,31 @@ require_once __DIR__ . '/merkle.php';
 /** ⚠ Distinct from a generic failure: the data is not wrong, it is ABSENT and recoverable (§5c.2). */
 class PrunedException extends RuntimeException {}
 
+/** ⚠ The log is FULL, not broken. Everything already recorded stays readable and provable. */
+class LogFullException extends RuntimeException {}
+
 final class LogStore
 {
+    /**
+     * ⚠⚠ SHARED HOSTING, SO THE LOG HAS A CEILING — 100 MB, about 293,000 entries at a measured 341
+     *   bytes each (body + tree nodes + index), or roughly 3,250 races.
+     *
+     * ★ Reaching it is not a failure mode, it is THE failure mode we want: the log declines to record
+     *   and can still prove everything it already recorded. *An operator who can only refuse.*
+     * ⚠ This is NOT a defence against abuse — appending is free by design (§6c.1) and a log that
+     *   throttled strangers would be solving the wrong problem. It exists so that filling this log
+     *   cannot fill the ACCOUNT, which hosts other things that have nothing to do with jetmora.
+     */
+    public const MAX_DB_BYTES = 100 * 1024 * 1024;
+
     private PDO $db;
+    private string $path;
     /** The journal mode actually in force — "wal" where the host allows it, otherwise the fallback. */
     public string $journalMode = 'unknown';
 
     public function __construct(string $path)
     {
+        $this->path = $path;
         $this->db = new PDO('sqlite:' . $path, null, null, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_TIMEOUT => 10,
@@ -76,6 +93,16 @@ final class LogStore
             ) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v BLOB);
         ');
+    }
+
+    /** Bytes on disk. ⚠ Under WAL the newest writes are in -wal, so counting the .db alone under-reads. */
+    public function bytes(): int
+    {
+        clearstatcache();                                   // ⚠ filesize() is cached; stale here is wrong
+        $t = 0;
+        foreach (['', '-wal'] as $suffix)
+            if (is_file($this->path . $suffix)) $t += (int)filesize($this->path . $suffix);
+        return $t;
     }
 
     public function size(): int
@@ -121,6 +148,10 @@ final class LogStore
         //    locked'. IMMEDIATE takes the write lock up front so busy_timeout can actually wait.
         //    ★ The tree was never corrupted either way — seq is a PRIMARY KEY, so the race could only
         //    ever refuse, not corrupt. This is an availability fix, not an integrity one.
+        // ⚠ Checked BEFORE the write lock: refusing early costs nothing, and refusing late holds a lock
+        //   while doing it. ⇒ The overshoot is one entry, which is 341 bytes.
+        if ($this->bytes() >= self::MAX_DB_BYTES)
+            throw new LogFullException('log is at its storage ceiling: ' . self::MAX_DB_BYTES . ' bytes');
         $this->begin();
         try {
             $seq = $this->size();

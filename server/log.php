@@ -41,6 +41,11 @@ function out(array $body, int $status = 200): never {
 //   ★ The CLASS is named because it is the whole diagnosis (a PDOException is not a TypeError); the
 //   message is not, because messages carry paths and internals.
 set_exception_handler(static function (Throwable $e): void {
+    // ★ FULL IS NOT BROKEN. The log declines to record and still proves everything it recorded —
+    //   "an operator who can only refuse". 507 says exactly that; 500 would say something false.
+    if ($e instanceof LogFullException)
+        out(['error' => 'log is full', 'note' => $e->getMessage(),
+             'still_provable' => 'every entry already appended remains readable and provable'], 507);
     // ★ For a PDOException the SQLSTATE and the DRIVER CODE are the whole diagnosis — 5 is BUSY, 8 is
     //   READONLY, 14 is CANTOPEN, 1 is a plain SQL error — and neither carries a path.
     //   ⚠ getCode() is NOT reliable here: it returns an int for driver-level failures, which is why the
@@ -84,6 +89,8 @@ case 'info':
          // ⚠ diagnostic: WAL is an optimisation the host may not grant, and knowing which we got
          //   beats guessing. It is not a protocol field.
          'journal_mode' => $store->journalMode,
+         // ⚠ shared hosting. Visible here so it is known LONG before it bites, not discovered at it.
+         'bytes' => $store->bytes(), 'capacity_bytes' => LogStore::MAX_DB_BYTES,
          'head' => $latest ? $hex($latest['head']) : null,
          // ⚠ "witnessed" is not "anchored" and not "confirmed" — see spec §4c
          'state' => 'entries are final on append; anchoring adds objective ordering, not validity']);
