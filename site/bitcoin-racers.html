@@ -757,24 +757,39 @@ races.forEach((r, i) => {
 })
 
 const ROOT = fromHex(info.root)
-let good = 0
-for (const [i, r] of races.entries()) {
-  let ok = 0
-  for (let k = 0; k < r.length; k += LANES) {
-    const batch = r.slice(k, k + LANES)
-    const results = await Promise.all(batch.map(async t => {
-      const p = await j(`op=inclusion&leaf=${t.seq}&size=${info.size}`)
-      // ★ verified HERE, against the root shown at the top — not trusted because the server said so.
-      // ⚠ verifyInclusion takes the leaf DATA and hashes it itself. Handing it a leafHash() double-hashes
-      //   and fails every proof — which is exactly what this page did until a browser said 0/78.
-      return verifyInclusion(t.seq, info.size, t.bytes, p.proof.map(fromHex), ROOT)
-    }))
-    ok += results.filter(Boolean).length
+// ── prove every tick, WITHOUT starving the replay ────────────────────────────────────────────────
+// ⚠⚠ THIS USED TO BLOCK THE PAGE FOR SECONDS. 264 proofs × ~8 hashes is ~2,000 SHA-256 rounds, and ours
+//   is plain JavaScript and synchronous — so requestAnimationFrame got no slots, pressing play appeared
+//   to do nothing for five to ten seconds, and the sound only arrived once the loop finished. The proofs
+//   are the point of the page, so they stay; what changes is that they YIELD.
+// ★ One animation frame between batches. The renderer gets its slot, the verification still finishes in
+//   about the same wall-clock, and the difference is entirely in whether the page feels alive while it
+//   happens. ⇒ Correctness that blocks the thing it is describing is a poor advertisement for itself.
+const nextFrame = () => new Promise(r => requestAnimationFrame(r))
+
+;(async () => {
+  let good = 0
+  for (const [i, r] of races.entries()) {
+    let ok = 0
+    for (let k = 0; k < r.length; k += LANES) {
+      const batch = r.slice(k, k + LANES)
+      const results = await Promise.all(batch.map(async t => {
+        const p = await j(`op=inclusion&leaf=${t.seq}&size=${info.size}`)
+        // ★ verified HERE, against the root shown at the top — not trusted because the server said so.
+        // ⚠ verifyInclusion takes the leaf DATA and hashes it itself. Handing it a leafHash() double-hashes
+        //   and fails every proof — which is exactly what this page did until a browser said 0/78.
+        return verifyInclusion(t.seq, info.size, t.bytes, p.proof.map(fromHex), ROOT)
+      }))
+      ok += results.filter(Boolean).length
+      const cell = document.querySelector(`[data-p="${i}"]`)
+      cell.textContent = `${Math.min(k + LANES, r.length)}/${r.length}…`   // ⚠ show progress, not a freeze
+      await nextFrame()
+    }
+    good += ok
+    const cell = document.querySelector(`[data-p="${i}"]`)
+    cell.textContent = `${ok}/${r.length}`
+    cell.className = ok === r.length ? 'ok' : 'bad'
   }
-  good += ok
-  const cell = document.querySelector(`[data-p="${i}"]`)
-  cell.textContent = `${ok}/${r.length}`
-  cell.className = ok === r.length ? 'ok' : 'bad'
-}
-document.getElementById('size').textContent = `${info.size} entries · ${good} proved here`
+  document.getElementById('size').textContent = `${info.size} entries · ${good} proved here`
+})()
 </script>
