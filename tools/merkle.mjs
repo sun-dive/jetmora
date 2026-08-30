@@ -8,12 +8,13 @@
 //   · And RFC 6962 gives CONSISTENCY proofs, which no proof-of-work chain provides: proof that one
 //     tree is an append-only extension of another. That is what makes "append-only" checkable
 //     rather than trusted.
-import { createHash } from 'node:crypto'
+// ⚠ See entry.mjs — ours, so this runs in a browser unchanged. test/sha256.mjs is the comparison.
+import { sha256 } from './sha256.mjs'
 
-const sha = (...parts) => [...createHash('sha256').update(Buffer.concat(parts.map(Buffer.from))).digest()]
+const sha = (...parts) => sha256(parts.flatMap(p => Array.from(p)))
 export const leafHash = d => sha([0x00], d)
 export const nodeHash = (l, r) => sha([0x01], l, r)
-const EMPTY = () => [...createHash('sha256').update(Buffer.alloc(0)).digest()]
+const EMPTY = () => sha256([])
 
 /** ⚠ k = the largest power of two STRICTLY LESS than n. This is the whole shape of the tree. */
 export function splitPoint(n) {

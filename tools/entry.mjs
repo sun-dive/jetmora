@@ -11,9 +11,10 @@
 // would let a signer push a preimage that does not describe what they actually did. So: varints are
 // minimally encoded, and parsing REFUSES a non-minimal one rather than accepting it charitably.
 
-import { createHash } from 'node:crypto'
+// ⚠ Our own SHA-256, not node's: this module must run unchanged in a browser so a page verifies
+//   with the SAME code the fuzzer exercises. Cross-checked against node's in test/sha256.mjs.
+import { sha256 } from './sha256.mjs'
 
-const sha256 = b => [...createHash('sha256').update(Buffer.from(b)).digest()]
 const u32 = n => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]
 const u64 = n => { const o = []; let v = BigInt(n); for (let i = 0; i < 8; i++) { o.push(Number(v & 0xffn)); v >>= 8n } return o }
 
