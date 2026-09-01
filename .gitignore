@@ -11,3 +11,11 @@ server/logB.php
 # ⚠ Local dev copies only. The DEPLOY takes these from tools/ — see .cpanel.yml. Committing them
 #   would create a second copy that can drift from the tested one, which is the whole thing we avoid.
 site/js/
+
+# ⚠⚠⚠ THE WORKING SPEC IS NOT PUBLISHED. This repo is PUBLIC.
+#   0.1.1 was meant to be a working draft and was committed and pushed here on 30 Aug — it is out, and
+#   it cannot be recalled. Everything after it drafts in here instead, and is published only when the
+#   version is deliberately cut over to spec/log.md.
+#   ⚠ This ignores the DIRECTORY on purpose: a per-file ignore is how 0.1.1 escaped — it relies on
+#     somebody remembering to add a line. Put every new draft version in here and it is covered.
+spec/draft/
