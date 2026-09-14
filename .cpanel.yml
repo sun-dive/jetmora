@@ -48,4 +48,6 @@ deployment:
     - /bin/cp LICENSE "$DEPLOYPATH/LICENSE"                  # Apache-2.0
     - /bin/cp NOTICE "$DEPLOYPATH/NOTICE"                    # derivation + the Open BSV position + provenance
     - /bin/cp PROVENANCE.md "$DEPLOYPATH/PROVENANCE.md"      # the mint ledger
+    - /bin/mkdir -p "$DEPLOYPATH/provenance"
+    - /bin/cp provenance/*.ots "$DEPLOYPATH/provenance/"     # OpenTimestamps proofs
     - echo "jetmora.org ← $(git rev-parse --short HEAD)"

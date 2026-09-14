@@ -41,4 +41,8 @@ PROVENANCE
     Anyone can pull the archive from TX1, hash it and match the SHA-256
     above. The on-chain copy of this NOTICE predates the mint, so it
     carries no txid; the authoritative record is this repository plus the
-    transactions above. The running ledger is in PROVENANCE.md.
+    transactions above.
+
+    The same SHA-256 is stamped with OpenTimestamps on the Bitcoin (BTC)
+    blockchain; the proof is provenance/jetmora-448b796.tar.gz.ots.
+    The running ledger is in PROVENANCE.md.
