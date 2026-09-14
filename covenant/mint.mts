@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ★★★ MINT THE GENESIS COVENANT — dry-run by default, and it says NO unless you mean it.
 //

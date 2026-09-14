@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // Graded by BIP-350's OWN test vectors, verbatim — including every invalid case, because an address
 // decoder that only accepts the right answers has not been tested at all.

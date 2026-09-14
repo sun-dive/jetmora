@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 // ⚠ USES the grafverse BASIC compiler; never edits it, and never rebuilds any bundle a page loads.
 import { compileState, BASIC_VERSION } from '../../grafverse/mint/src/basic.ts'
 import { LockingScript } from '../../grafverse/mint/node_modules/@bsv/sdk/dist/esm/mod.js'

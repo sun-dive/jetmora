@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ⚠⚠ THE COMPARISON, NOT A SELF-TEST. `tools/sha256.mjs` exists so a browser can verify a proof with
 //   the same code the fuzzer runs — and an implementation agreeing with itself proves nothing. So this

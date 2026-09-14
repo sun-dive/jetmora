@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 // Emit tree data from the PHP implementation so the JS one can be checked against it, byte for byte.
 // ⚠ Two implementations each agreeing with THEMSELVES proves nothing. This is the comparison.
 declare(strict_types=1);

@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ★★★ FUZZ THE ENTRY PARSER. Canonical serialization (spec §3.1) is a SECURITY property, not a tidiness
 // one: OP_PUSH_TX is secure only because a verifier recomputes the preimage and compares, so if two

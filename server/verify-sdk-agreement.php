@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ── OUR secp256k1 vs @bsv/sdk 2.1.4 — FROZEN, AND IT RUNS ANYWHERE ─────────────────────────────────
 //

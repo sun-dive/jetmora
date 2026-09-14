@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // Run the `SV` interpreter against the conformance vectors and report.
 // ⚠ Only oracle=bsv vectors are this set's contract. oracle=013 belongs to `BT`; oracle=jetmora to

@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ── THE `BT` SET: the interpreter ────────────────────────────────────────────────────────────────────
 // **Bitcoin 0.1.3.** Its purpose is one thing: so that script from 2009 and 2010 executes AS WRITTEN.

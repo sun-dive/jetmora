@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ── SLIP-0010 ed25519, GRADED BY THE SPEC'S OWN VECTORS ──────────────────────────────────────────────
 //

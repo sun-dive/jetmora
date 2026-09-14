@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ⚠⚠⚠ THE WALLET IS TWO ISOLATED CODE SETS, ONE PER CHAIN (his call, 7 Sept).
 //   `server/wallet/jetmora/` · `server/wallet/bsv/` · `server/wallet/shared/`

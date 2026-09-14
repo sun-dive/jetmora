@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ── VERSION DISPATCH (spec §6b) ──────────────────────────────────────────────────────────────────────
 // §6b: "A verifier replaying an entry MUST apply the semantics of the version named IN THAT ENTRY, and

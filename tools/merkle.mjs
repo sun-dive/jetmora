@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // RFC 6962 MERKLE TREE — spec §5.1.  ⚠⚠ NOT Bitcoin's tree, and the difference is not cosmetic:
 //   · Bitcoin duplicates the last node on an odd count (`i2 = min(i+1, nSize-1)`, 0.1.3 main.h:878),

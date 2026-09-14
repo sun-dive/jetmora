@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 // Run the conformance vectors against our own interpreter. This is the test that matters:
 // an implementation is conformant if and only if it reproduces vectors/core.json.
 import { readFileSync } from 'node:fs'

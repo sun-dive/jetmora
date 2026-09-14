@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // secp256k1 ECDSA VERIFICATION — no dependencies. Node's crypto has the curve natively; what it does
 // not have is Bitcoin's packaging, which is what this file supplies.

@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ★★★ THE ACID TEST. A REAL covenant — the lane, 212 lines of BASIC, the physics of a slot car —
 // compiled ONCE and executed on THREE independent implementations:

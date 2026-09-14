@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE. Emit vectors/core.json with the O(1) comparison hash of §2b.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE. Emit vectors/core.json with the O(1) comparison hash of §2b.
 //   H(result) = sha256( for each stack item: varint(len) ‖ bytes )
 // ⚠ CANONICAL BY CONSTRUCTION: one byte string per stack, no optional fields (doc §4c.3).
 import { writeFileSync } from 'node:fs'

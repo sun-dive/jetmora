@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // THE SIGHASH PREIMAGE, computed over an ENTRY.  spec §3, doc §3.2.
 //

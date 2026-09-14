@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // THE LOG ENDPOINT — spec §5.3, §4.1. One file, deliberately thin: the store does the work and this
 // only translates HTTP to it. ⚠ A log serves PROOFS. It does not adjudicate, does not execute Script,

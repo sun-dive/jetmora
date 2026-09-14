@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE. The §2b comparison hash.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE. The §2b comparison hash.
 //   H(result) = sha256( for each stack item: varint(len) ‖ bytes )
 // ⚠ CANONICAL BY CONSTRUCTION — one byte string per stack, no optional fields (doc §4c.3).
 import { createHash } from 'node:crypto'

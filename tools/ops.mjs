@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE. Opcode numbering: **Bitcoin 0.1.3**, from src/script.h of
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE. Opcode numbering: **Bitcoin 0.1.3**, from src/script.h of
 // github.com/trottier/original-bitcoin, cross-checked against ~/Documents/bitcoin-01-opcodes.md.
 // ⚠ 0x7f/0x80/0x81 are SUBSTR/LEFT/RIGHT here — NOT SPLIT/NUM2BIN/BIN2NUM (that is BCH/BSV).
 // Jetmora's own data ops live at 0xb0–0xef; loops and archive ops in the two-byte space.

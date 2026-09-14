@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 // ★★★ Try to fool the equivocation detector. A MALICIOUS log does not run our code, so this one does
 // not either: it builds trees in memory and signs whatever it likes.
 import { generateKeyPairSync, sign as nodeSign } from 'node:crypto'

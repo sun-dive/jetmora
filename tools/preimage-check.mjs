@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ⚠⚠ THE CLAIM UNDER TEST: "an entry IS a transaction" (spec §3). If that is true, the preimage
 // computed over an entry must be BYTE-IDENTICAL to the preimage a transaction implementation produces

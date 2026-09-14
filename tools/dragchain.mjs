@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 // ⛔⛔⛔ THIS TOOL BUILT THE CHAIN THAT WAS NOT A CHAIN. It is stopped, deliberately, 7 Sept.
 //
 //   It passes `unlocking: []` (line ~75), and until 7 Sept `serializeEntry` allowed that. ⇒ Every one

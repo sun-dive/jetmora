@@ -205,7 +205,14 @@ is derived from BSV-licensed software.
 
 ## Licence
 
-**Apache License 2.0** — see `LICENSE`. © 2026 sun-dive.
+**The code: Business Source License 1.1** — see `LICENSE`. © 2026 sun-dive. Source-available now;
+the Additional Use Grant permits running it as a host, witness or mirror for anyone, free or paid, and
+building and operating applications on it. What it holds back until the Change Date, **2030-09-14**, is
+offering the code itself as a competing hosted product. On that date it becomes Apache 2.0.
+
+**The specification and the papers: Apache License 2.0**, as first published. A specification that could
+not be implemented freely would not be one.
+
 **`vectors/core.json` is CC0 / public domain** (`vectors/LICENSE`): the vectors ARE the specification,
 so reproducing them must not make an implementation a derivative work of it.
 
@@ -214,12 +221,13 @@ so reproducing them must not make an implementation a derivative work of it.
 > **Licensing jetmora under Open BSV would forbid running it on jetmora.**
 
 Open BSV clause 2 restricts use to the BSV blockchains. Jetmora is not one. The same split already
-applies elsewhere in this author's work — portable components MIT/Apache, BSV-specific components
-Open BSV — and jetmora is entirely the portable half.
+applies elsewhere in this author's work — portable components under permissive or source-available
+terms, BSV-specific components Open BSV — and jetmora is entirely the portable half.
 
-### Why Apache rather than MIT
+### Why BSL, and why it converts to Apache
 
-Both say *do what you like*. Apache also says **you cannot turn a patent on the project afterwards**:
-an explicit patent grant, with the licence terminating for anyone who brings a patent claim. For a
-protocol intended for institutional implementers, that clause is what their counsel looks for — and it
-protects the author as much as the adopter.
+Two things at once. Nobody may close a fork before the Change Date, because every copy carries the same
+terms; so the author cannot be locked out of improvements to his own design. And nobody is stopped from
+building on it, because the grant names the uses the design depends on. Apache follows, with its patent
+grant and its termination for anyone who brings a patent claim; contributions are accepted under Apache
+2.0 from the start (see `CONTRIBUTING.md`), so nothing added later can bind the author either.

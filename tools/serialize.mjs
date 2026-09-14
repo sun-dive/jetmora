@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // CHUNKS → BYTES. This is the job `@bsv/sdk`'s LockingScript does, and the reason it cannot do it here:
 // ⚠ it cannot represent a two-byte opcode. Bounded loops need one, so this had to exist regardless of

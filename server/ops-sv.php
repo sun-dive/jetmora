@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // ── THE `SV` SET: opcode numbering ───────────────────────────────────────────────────────────────────
 // BSV numbering. ⚠ This is NOT jetmora's set and NOT Bitcoin 0.1.3's: BSV placed SPLIT/NUM2BIN/BIN2NUM

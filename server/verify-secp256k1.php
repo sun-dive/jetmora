@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // DIFFERENTIAL TEST: our secp256k1 against openssl, on the SAME inputs.
 //

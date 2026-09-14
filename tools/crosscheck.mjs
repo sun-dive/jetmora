@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE. DIFFERENTIAL CHECK against an independent BSV interpreter.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE. DIFFERENTIAL CHECK against an independent BSV interpreter.
 //
 // ⚠⚠ LICENCE POSITION (doc §5.0): `@bsv/sdk` is Open BSV Licensed and may only be used ON BSV.
 // This tool is used for exactly that: establishing which of our vectors describe behaviour BSV

@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.  JETMORA CONFORMANCE VECTORS — the specification itself.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.  JETMORA CONFORMANCE VECTORS — the specification itself.
 // ⚠ Expected results are HAND-DERIVED from Bitcoin 0.1.3's script.cpp, never computed by our own
 // evaluator (that would be circular). `crosscheck.mjs` confirms the BSV-agreeing subset independently.
 //

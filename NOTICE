@@ -1,9 +1,11 @@
 jetmora
 Copyright 2026 sun-dive
 
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-this work except in compliance with the License. You may obtain a copy of the
-License in the LICENSE file, or at http://www.apache.org/licenses/LICENSE-2.0
+The code is licensed under the Business Source License 1.1 (see LICENSE):
+source-available now, with an Additional Use Grant that permits running hosts,
+witnesses and mirrors for anyone and building on the work, and converting to the
+Apache License 2.0 on 2030-09-14. The specification and the papers stay under
+the Apache License 2.0 as first published; vectors/core.json is CC0.
 
 ────────────────────────────────────────────────────────────────────────────────
 THIRD-PARTY AND DERIVED MATERIAL

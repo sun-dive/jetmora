@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE. ⚠ NOT Open BSV: see NOTICE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE. ⚠ NOT Open BSV: see NOTICE.
 // Script number encoding, as Bitcoin 0.1.3 does it: little-endian sign-magnitude,
 // sign in the high bit of the LAST byte. ⚠ 0.1.3 applies NO size limit and NO minimal-encoding
 // rule — operands are OpenSSL BIGNUMs (`CBigNum bn1(stacktop(-2))`, script.cpp:567).

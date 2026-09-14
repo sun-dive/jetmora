@@ -1,4 +1,4 @@
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // DIFFERENTIAL FUZZING against an independent BSV interpreter.
 // ⚠ The conformance vectors were hand-written and the interpreter was written to satisfy them. That is

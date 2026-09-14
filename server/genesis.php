@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // GENESIS REGISTRY — spec §2. ⏭ PROPOSED, not settled: §2's serialization is still an open item, and
 // this is the smallest thing that lets the append rule work. Marked so it is revised deliberately.

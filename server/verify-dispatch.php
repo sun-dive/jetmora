@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 // Version dispatch (§6b) — the cases that matter, including the ones that must FAIL.
 declare(strict_types=1);
 require_once __DIR__ . '/dispatch.php';

@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // Run the `SV` interpreter against the conformance vectors and report.
 // ⚠ `BT`'s contract is bsv + 013 — everything 0.1.3 does, including the 12 where BSV differs.

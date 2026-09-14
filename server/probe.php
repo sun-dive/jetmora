@@ -1,5 +1,5 @@
 <?php
-// © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // HOST CAPABILITY PROBE. Answers what a host's PHP can actually do, before anything is built on an
 // assumption about it. ⚠ Everything after this in phase 2 depends on the answers.
