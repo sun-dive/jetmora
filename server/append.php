@@ -19,6 +19,7 @@
 // ⚠ PAYMENT IS NOT HERE AND MUST NOT BE (spec §3.4-0b). The operator's billing hooks in through
 //   $authorise; the protocol defines no price, no currency and no settlement.
 declare(strict_types=1);
+require_once __DIR__ . '/secp256k1.php';
 require_once __DIR__ . '/store.php';
 require_once __DIR__ . '/genesis.php';
 
@@ -85,8 +86,23 @@ final class Appender
     }
 
     /**
-     * ⚠ Key length selects the scheme, so a host without sodium can still run a log on openssl.
-     *   32 bytes ⇒ Ed25519 · 33 or 65 bytes ⇒ secp256k1.
+     * ⚠ Key length selects the scheme: 32 bytes ⇒ Ed25519 · 33 or 65 bytes ⇒ secp256k1.
+     *
+     * ⚠⚠ secp256k1 WAS verified through `openssl_verify` and is now verified by `Secp256k1`, which
+     * depends on nothing. ⇒ Two reasons, and the second is the bigger one:
+     *   1. The chain core must give the same answer on every host forever. A system crypto library is
+     *      the wrong thing for that to rest on — it varies by build, and its absence silently turned
+     *      every secp256k1 signature into a REFUSAL rather than an error.
+     *   2. ⚖ A dependency you have to argue about is an attack surface even when the argument is
+     *      sound. Removing it is cheaper than winning it.
+     *
+     * ⚠⚠⚠ THE TRAP IN THIS SWAP, AND IT WAS MEASURED, NOT GUESSED:
+     *   `openssl_verify(..., OPENSSL_ALGO_SHA256)` HASHES the message internally; `verifyDigest` takes
+     *   the digest already computed. Hence the explicit `hash('sha256', ...)` below — without it every
+     *   existing signature fails, and with the direction reversed invalid ones could pass.
+     *   ⇒ `server/verify-secp256k1.php` sweeps 200 keypairs x 9 cases against openssl as an ORACLE and
+     *     requires total agreement. It caught a real divergence on the first run: our DER parser
+     *     tolerated a trailing byte that openssl refused.
      */
     public static function verifySignature(string $msg, string $pubkey, string $sig): bool
     {
@@ -98,18 +114,10 @@ final class Appender
             catch (Throwable) { return false; }             // ⚠ malformed input is a failed check, not a crash
         }
         if ($n === 33 || $n === 65) {
-            if (!extension_loaded('openssl')) return false;
-            $prefix = $n === 33
-                ? "\x30\x36\x30\x10\x06\x07\x2a\x86\x48\xce\x3d\x02\x01\x06\x05\x2b\x81\x04\x00\x0a\x03\x22\x00"
-                : "\x30\x56\x30\x10\x06\x07\x2a\x86\x48\xce\x3d\x02\x01\x06\x05\x2b\x81\x04\x00\x0a\x03\x42\x00";
-            $key = @openssl_pkey_get_public(self::pemOf($prefix . $pubkey));
-            if ($key === false) return false;
-            return openssl_verify($msg, $sig, $key, OPENSSL_ALGO_SHA256) === 1;
+            // ⚠ STRICT DER: a chain entry signature carries no sighash-type byte, so nothing may follow
+            //   the sequence. That leniency belongs to Bitcoin signatures and is opt-in, not default.
+            return Secp256k1::verifyDigest($sig, $pubkey, hash('sha256', $msg, true));
         }
         return false;
-    }
-    private static function pemOf(string $der): string
-    {
-        return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END PUBLIC KEY-----\n";
     }
 }

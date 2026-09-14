@@ -20,11 +20,14 @@ function goodEntry() {
   return { version: Math.floor(rnd() * 1000),
     inputs: Array.from({ length: nIn }, (_, i) => ({
       prevEntry: Array.from({ length: 32 }, byte), index: Math.floor(rnd() * 5),
-      unlocking: Array.from({ length: Math.floor(rnd() * 40) }, byte),
+      // ⚠ 1..40, never 0: an entry with no unlocking script is a LOG RECORD, and serializeEntry now
+      //   refuses it (7 Sept). A fuzzer that generates unserializable "good" entries tests its own
+      //   generator, not the parser.
+      unlocking: Array.from({ length: 1 + Math.floor(rnd() * 40) }, byte),
       sequence: Math.floor(rnd() * 0xffffffff) >>> 0 })),
     outputs: Array.from({ length: nOut }, () => ({
       value: BigInt(Math.floor(rnd() * 1e6)),
-      locking: Array.from({ length: Math.floor(rnd() * 60) }, byte) })),
+      locking: Array.from({ length: 1 + Math.floor(rnd() * 60) }, byte) })),
     locktime: 0 }
 }
 

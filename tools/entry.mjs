@@ -53,10 +53,26 @@ export function serializeEntry(e) {
   const out = [...u32(e.version), ...varint(e.inputs.length)]
   for (const i of e.inputs) {
     if (i.prevEntry.length !== 32) throw new Error('prevEntry must be 32 bytes')
+    // ⛔⛔⛔ THE GUARD THIS FILE LACKED, AND WHAT IT COST.
+    //   Until 7 Sept `unlocking.length` could be 0, because a LOG RECORD has no unlocking script and
+    //   never needed one — and one serializer served both layers. ⇒ 528 log rows were serialized as
+    //   covenant entries and called a chain. Parsed from the live database, every entry read:
+    //     version 103 · inputs 1 · unlocking 0 BYTES · outputs 1 · locking 24 bytes of STATE
+    //   No signature, no OP_PUSH_TX preimage, no proof the transition was permitted.
+    // ⇒ A covenant entry without an unlocking script is not a covenant entry. Matches
+    //   server/covenant-entry.php, which enforces the same on encode AND decode.
+    if (!i.unlocking.length) throw new Error(
+      'an input with NO UNLOCKING SCRIPT is not a spend — it proves nothing about whether the ' +
+      'transition was permitted. That is a LOG RECORD, not a covenant entry.')
     out.push(...i.prevEntry, ...u32(i.index), ...varint(i.unlocking.length), ...i.unlocking, ...u32(i.sequence))
   }
   out.push(...varint(e.outputs.length))
-  for (const o of e.outputs) out.push(...u64(o.value), ...varint(o.locking.length), ...o.locking)
+  for (const o of e.outputs) {
+    // ⚠ Same defect, other end: a successor with no locking script carries state, not a covenant.
+    if (!o.locking.length) throw new Error(
+      'an output with NO LOCKING SCRIPT carries state, not a covenant — that is a LOG RECORD')
+    out.push(...u64(o.value), ...varint(o.locking.length), ...o.locking)
+  }
   out.push(...u32(e.locktime))
   return out
 }

@@ -41,12 +41,15 @@ if (is_file(__DIR__ . '/merkle.php')) {
     $r['rfc6962_note'] = 'merkle.php not deployed alongside this probe — copy both or ignore this line';
 }
 
-// ── secp256k1 via openssl — CHECKSIG needs it if sodium is absent ─────────────────────────────
-$r['secp256k1'] = false;
-if (extension_loaded('openssl')) {
-    $curves = openssl_get_curve_names() ?: [];
-    $r['secp256k1'] = in_array('secp256k1', $curves, true);
-}
+// ── secp256k1 — ⚠ NO LONGER A HOST CAPABILITY QUESTION ────────────────────────────────────────
+// This probe used to ask whether openssl had the curve, because `append.php` verified through
+// `openssl_verify`. It no longer does: `server/secp256k1.php` implements SEC1 verification over GMP
+// and depends on nothing. ⇒ **secp256k1 is available wherever ext-gmp is**, which the probe already
+// reports. Leaving the old line in would tell an operator to look for something that no longer
+// decides anything.
+$r['secp256k1'] = extension_loaded('gmp');
+$r['secp256k1_via'] = $r['secp256k1'] ? 'own implementation (server/secp256k1.php, needs ext-gmp)'
+                                      : 'UNAVAILABLE — ext-gmp is missing';
 
 // ── ⚠ CAN IT WRITE? An append-only log is not much use otherwise. ────────────────────────────
 $dir = __DIR__ . '/_probe_tmp';
@@ -82,7 +85,12 @@ foreach (['memory_limit','max_execution_time','post_max_size','upload_max_filesi
 // ── ⇒ THE VERDICT: can the log server be built here as designed? ─────────────────────────────
 $must = $r['ext']['hash'] && $r['sha256'] && $r['rfc6962'] && $r['write']['dir'];
 $store = $r['write']['sqlite_file'] ? 'sqlite' : ($r['write']['flock'] ? 'file+flock (fallback)' : 'NONE');
-$sig = $r['ext']['sodium'] ? 'sodium' : ($r['secp256k1'] ? 'openssl secp256k1' : 'NONE');
+// ⚠ BOTH schemes matter: ed25519 keys are what every live genesis currently authorises, and
+//   secp256k1 is what a BSV-shaped key uses. Report them separately rather than picking one.
+$sig = implode(' + ', array_filter([
+    $r['ext']['sodium'] ? 'ed25519 (sodium)' : null,
+    $r['secp256k1']     ? 'secp256k1 (own, ext-gmp)' : null,
+])) ?: 'NONE';
 $r['verdict'] = [
     'merkle'    => $must ? 'yes' : 'NO — needs ext/hash, sha256 and a writable directory',
     'storage'   => $store,

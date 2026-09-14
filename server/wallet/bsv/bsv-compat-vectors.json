@@ -1,0 +1,43 @@
+{
+ "_": "FROZEN GROUND TRUTH from @bsv/sdk 2.1.4 via PharLap, captured 8 Sept 2026. The SDK is being REMOVED (Open BSV v6 clause 2), so these vectors CANNOT be regenerated later. They pin that our PHP derives byte-identical keys to what the live BSV apps use.",
+ "path": "m/44'/236'/0'/0/0",
+ "source": "@bsv/sdk 2.1.4 (PharLap/node_modules)",
+ "vectors": [
+  {
+   "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+   "passphrase": "",
+   "wif": "KxU83MzcLXP1WJtoFJXMDMcN3z5ykAa9xLdFTDY5XpV4e6Zit9BA",
+   "pub": "03ded5f2bd986575aa364aafdf80756d8e215752f38a6ab217923a9dc314d37c71",
+   "address": "1K6LZdwpKT5XkEZo2T2kW197aMXYbYMc4f",
+   "xprv_master": "xprv9s21ZrQH143K3GJpoapnV8SFfukcVBSfeCficPSGfubmSFDxo1kuHnLisriDvSnRRuL2Qrg5ggqHKNVpxR86QEC8w35uxmGoggxtQTPvfUu",
+   "wif_index1": "KwS5Ds6zSxwXZEzcBrY4XjQhRKdQtYHaxQ6LoNkQsrgqyktkYBq7"
+  },
+  {
+   "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+   "passphrase": "extra",
+   "wif": "KwVQ9dEKcEET3oWzd7WQiKaTNwK3FHDjpYsee8DASfrrULc7zMxD",
+   "pub": "02d6f28f48521ae64548a92a9d1c6dafef5acccfa58e99c67c27ad4217d1ee08c3",
+   "address": "1Cm4y6LCAKc8HYQJdTg9e3ZffNQVUQ1tMQ",
+   "xprv_master": "xprv9s21ZrQH143K2yjmBWiBMYHJsgBWD6adWF79AvoV6kyqNS4FRPn82peCtAxqvLShMfVoQR9FhPmGjTkyc6VJBDQEQfxEoK4yecMqz7ki4D9",
+   "wif_index1": "KyMHdL5HmRJJCssLCQjZVsHg7TdcuJeHbExaNvoXgk2ShXqCJBCs"
+  },
+  {
+   "mnemonic": "legal winner thank year wave sausage worth useful legal winner thank yellow",
+   "passphrase": "",
+   "wif": "L4pUL1qZeYEReWF2E4eEGfRAZyr2wugdgGsEy3ZZqL7UdmczbYDC",
+   "pub": "0372e08194f0b99901c5503639a3e31a174ba3bba3402cc9ed17ca9c0a81694959",
+   "address": "1JGjCTwutGEevsyASM7CZs7exm52epHx9K",
+   "xprv_master": "xprv9s21ZrQH143K2x4gnzRB1eZDq92Uuvy9CXbvgQGdvykXZ9mkkot6LBjzDpgaAfvzkuxJe9JKJXQ38VoPutxvACA5MsyoBs5UyQ4HZKGshGs",
+   "wif_index1": "L4YVr2E9atPopPznSWXeHdCsnCUiuPFmjvTwXm8T1aYSvoS5npbg"
+  },
+  {
+   "mnemonic": "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
+   "passphrase": "",
+   "wif": "L1jqCBSUqZbacqfriXmUnBmoxTyJB7bLTpNDHxcuQRaQ8vykSV7D",
+   "pub": "03d833a8c3414412f91aa914d7d2d1146a78d8b39bbfed4197fe103ea69f8ef05d",
+   "address": "1DrqLUHsDEFWQU41JvNVjASeQdJQTUS1wW",
+   "xprv_master": "xprv9s21ZrQH143K2PfMvkNViFc1fgumGqBew45JD8SxA59Jc5M66n3diqb92JjvaR61zT9P89Grys12kdtV4EFVo6tMwER7U2hcUmZ9VfMYPLC",
+   "wif_index1": "L5SroH9x5nrqsDyFHSZLWTgFR73NBLpypXocrd3GK5PiDvYR4VEJ"
+  }
+ ]
+}

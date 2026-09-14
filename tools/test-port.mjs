@@ -1,4 +1,19 @@
 // © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// ⛔⛔ STOPPED 7 Sept — the test is RIGHT and its entries are WRONG.
+//
+//   This file calls §4b *"the most specified and least exercised thing in the design"*, and that is
+//   still true. ⚠ But it builds `unlocking: []` (lines ~40, ~67), so what it ports between hosts is a
+//   LOG ROW, not a covenant. ⇒ It has been demonstrating that **a chain will carry bytes from one host
+//   to another** — which is worth knowing and is not what §4b claims. §4b claims a COVENANT survives a
+//   censoring operator.
+//
+// ★★ THE SHAPE OF THE TEST IS SOUND AND SHOULD BE KEPT: sign a head, go hostile, port, and check the
+//   receiving host refuses a stranger's covenant, a forged source-head signature, a proof for a
+//   different leaf, and an entry that was never in A. **Only the entries need replacing.**
+//
+// ⏭ TO REVIVE IT: build the entries with `CovenantThread::tick()` (server/wallet/jetmora/thread.php),
+//   which now exists and did not when this was written. ⇒ Then the port test finally exercises the
+//   property the whole design rests on, rather than its shadow.
 //
 // ★★★ TEST: PORTABLE STATE DEFEATS A CENSORING OPERATOR — spec §4b, §4a.1.
 //
@@ -10,6 +25,9 @@
 import { createHash, generateKeyPairSync, sign as nodeSign } from 'node:crypto'
 import { serializeEntry, entryHash } from './entry.mjs'
 import * as M from './merkle.mjs'
+
+console.error(`\n⛔ the port test is sound; its ENTRIES are log rows, not covenants\n   This tool is stopped. Read the banner at the top of ${import.meta.url.split('/').pop()} — it explains\n   what it produced, why that was the wrong layer, and the two ways to revive it.\n`)
+process.exit(2)
 
 const A = process.env.LOG_A ?? 'http://127.0.0.1:8787/log.php'
 const B = process.env.LOG_B ?? 'http://127.0.0.1:8788/log.php'

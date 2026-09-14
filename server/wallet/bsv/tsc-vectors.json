@@ -1,0 +1,81 @@
+{
+    "_": "REAL TSC merkle proofs, fetched 8 Sept 2026 from BOTH sources and frozen. \u2605\u2605\u2605 These grade our verifier against what the services ACTUALLY return, not against our own path builder. \u26a0\u26a0 THE TWO SOURCES DISAGREE IN FORMAT: BananaBlocks emits '*' for a duplicate-up node; WhatsOnChain expands it to the explicit hash. Both are valid TSC and a verifier must handle BOTH \u2014 PharLap's tscPath() skips '*', which rejects BananaBlocks' valid proofs (fails closed).",
+    "proofs": [
+        {
+            "source": "banana",
+            "height": 210000,
+            "index": 0,
+            "txId": "76a30f7eefb41cd01733b23218faea8a1a1a2f6bbf1a2c11e4bc77f62c8e7ce9",
+            "merkleRoot": "3cdd40a60823b1c7356d0987078e9426724c5b3ab439c2d80ad2bdd620e603d8",
+            "nodes": [
+                "12fb554e126757eb61bd7eee6561529ff341dbba1034f0b22ef46a050033c61c",
+                "92609922758bd958e4127344d7e8025843894344f9afeea62eda5e28d37c8144",
+                "1ff4a37bc3be86bab37b180f80e0757b52f4f815d7e727c7d355d5320683f50a",
+                "aa8bdc8eb8964e3bae6d2dcb56b02dd5257d6207d5ccb6c89e7841bd64cb6305",
+                "f5dd857ba9a76d3b8a834e95c2d281fd07461c2831799bd0f9bfc2194af5abbe",
+                "0f45eceaa2043783e1e8ed7ee014bd2ca46046a2cc7b1608dfd57b6a5c4891f0",
+                "bdd5e8d377cfab6966fa093efdc1a7b0ca13989e33419489a502a1afd215a43f",
+                "8488e3fa90972fee2438086ba62f0517b07ebb59affbd0535ed1e394f7e2744b",
+                "2e9f4680304c1c0a5b9fb75301bb1f59a79aec0a673a6384d2a8d6c6667f27a9"
+            ],
+            "stars": 0
+        },
+        {
+            "source": "banana",
+            "height": 210000,
+            "index": 456,
+            "txId": "ac8bcc72dea570b76e9d248a0a0e8e977a74e74b872f25dc2a68df3521607bd5",
+            "merkleRoot": "3cdd40a60823b1c7356d0987078e9426724c5b3ab439c2d80ad2bdd620e603d8",
+            "nodes": [
+                "*",
+                "*",
+                "*",
+                "f1136db073a15349c3be97f307323dd823f832f77b144a22f63be1f2c56771bd",
+                "*",
+                "*",
+                "0fba03167959f1b0420e17e769afbd3cd62efb005aa81e0d59dd111b7d57a14c",
+                "24ed044ef89582c5a0a9aed5ff562326317d623f75d74e0e3d6ad6582e7015b1",
+                "4475c097d0be79b10c3916a1090dc4ff3e10e3adf93585e66be1048b8b149751"
+            ],
+            "stars": 5
+        },
+        {
+            "source": "woc",
+            "height": 210000,
+            "index": 0,
+            "txId": "76a30f7eefb41cd01733b23218faea8a1a1a2f6bbf1a2c11e4bc77f62c8e7ce9",
+            "merkleRoot": "3cdd40a60823b1c7356d0987078e9426724c5b3ab439c2d80ad2bdd620e603d8",
+            "nodes": [
+                "12fb554e126757eb61bd7eee6561529ff341dbba1034f0b22ef46a050033c61c",
+                "92609922758bd958e4127344d7e8025843894344f9afeea62eda5e28d37c8144",
+                "1ff4a37bc3be86bab37b180f80e0757b52f4f815d7e727c7d355d5320683f50a",
+                "aa8bdc8eb8964e3bae6d2dcb56b02dd5257d6207d5ccb6c89e7841bd64cb6305",
+                "f5dd857ba9a76d3b8a834e95c2d281fd07461c2831799bd0f9bfc2194af5abbe",
+                "0f45eceaa2043783e1e8ed7ee014bd2ca46046a2cc7b1608dfd57b6a5c4891f0",
+                "bdd5e8d377cfab6966fa093efdc1a7b0ca13989e33419489a502a1afd215a43f",
+                "8488e3fa90972fee2438086ba62f0517b07ebb59affbd0535ed1e394f7e2744b",
+                "2e9f4680304c1c0a5b9fb75301bb1f59a79aec0a673a6384d2a8d6c6667f27a9"
+            ],
+            "stars": 0
+        },
+        {
+            "source": "woc",
+            "height": 210000,
+            "index": 456,
+            "txId": "ac8bcc72dea570b76e9d248a0a0e8e977a74e74b872f25dc2a68df3521607bd5",
+            "merkleRoot": "3cdd40a60823b1c7356d0987078e9426724c5b3ab439c2d80ad2bdd620e603d8",
+            "nodes": [
+                "ac8bcc72dea570b76e9d248a0a0e8e977a74e74b872f25dc2a68df3521607bd5",
+                "c3b1359ef915f4102844bdd93366b29c64cbf6593902f41fa47919e8f6720d9a",
+                "fc4b9e2e18b78f6ccc7fe4469d35ac1ebca73a4b0ac5c1537a27c624486932cc",
+                "f1136db073a15349c3be97f307323dd823f832f77b144a22f63be1f2c56771bd",
+                "c5de8c8cde0c013bacc20afcd4be40e7cc6cdb6b9c8e9ca92f4cfc2cd6380f32",
+                "880d46aced1502218456dc766e62f044b6f1f15af47a848869cbfacc42d5215b",
+                "0fba03167959f1b0420e17e769afbd3cd62efb005aa81e0d59dd111b7d57a14c",
+                "24ed044ef89582c5a0a9aed5ff562326317d623f75d74e0e3d6ad6582e7015b1",
+                "4475c097d0be79b10c3916a1090dc4ff3e10e3adf93585e66be1048b8b149751"
+            ],
+            "stars": 0
+        }
+    ]
+}

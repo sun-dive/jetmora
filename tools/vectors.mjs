@@ -6,8 +6,55 @@
 //   'bsv'    — 0.1.3 and BSV agree; @bsv/sdk can confirm it
 //   '013'    — ⚠ 0.1.3 ONLY. BSV differs. @bsv/sdk is NOT an oracle here.
 //   'jetmora'— our own decision, no external oracle exists
-import { OP, JET, push } from './ops.mjs'
-import { toNum } from './scriptnum.mjs'
+// ── ⚠⚠⚠ ISOLATED ON PURPOSE — THIS FILE IMPORTS NOTHING ──────────────────────────────────────────────
+// The vectors are the ONE thing that crosses the set boundary (gaps §10.9): `BT`, `SV` and `JF` live in
+// separate files and are pinned to one answer by this contract alone. ⇒ A contract generated from one
+// implementation's tables is not a contract — it moves when that implementation moves.
+//
+// ⚠ It was worse than a numbering dependency. `push` and `toNum` were imported too, so the vectors'
+//   INPUTS were built by the code under test: a bug in `toNum` would encode itself into the vector and
+//   the buggy implementation would pass its own exam. The header already promised the expected RESULTS
+//   are hand-derived and never computed by our evaluator — this extends that to the scripts.
+//
+// ★ These constants are FROZEN. They are Bitcoin 0.1.3's numbering, which §5b.1 makes authoritative, and
+//   they must never be "kept in sync" with any ops table. If a set disagrees with a number here, the set
+//   is what changed. ⇒ `0x7f`–`0x81` are SUBSTR/LEFT/RIGHT; the vectors that use them are oracle=013.
+const OP = Object.freeze({
+  OP_0:0x00, OP_1NEGATE:0x4f,
+  OP_1:0x51, OP_2:0x52, OP_3:0x53, OP_4:0x54, OP_5:0x55, OP_6:0x56, OP_7:0x57, OP_8:0x58, OP_9:0x59,
+  OP_16:0x60,
+  OP_VER:0x62, OP_IF:0x63, OP_VERIF:0x65, OP_ELSE:0x67, OP_ENDIF:0x68, OP_VERIFY:0x69, OP_RETURN:0x6a,
+  OP_TOALTSTACK:0x6b, OP_FROMALTSTACK:0x6c, OP_DEPTH:0x74, OP_DUP:0x76, OP_PICK:0x79, OP_ROLL:0x7a,
+  OP_ROT:0x7b, OP_SWAP:0x7c,
+  OP_CAT:0x7e, OP_SUBSTR:0x7f, OP_LEFT:0x80, OP_RIGHT:0x81, OP_SIZE:0x82,
+  OP_INVERT:0x83, OP_AND:0x84, OP_OR:0x85, OP_XOR:0x86,
+  OP_1ADD:0x8b, OP_2MUL:0x8d, OP_2DIV:0x8e, OP_NEGATE:0x8f, OP_ABS:0x90,
+  OP_ADD:0x93, OP_SUB:0x94, OP_MUL:0x95, OP_DIV:0x96, OP_MOD:0x97, OP_LSHIFT:0x98, OP_RSHIFT:0x99,
+  OP_EQUAL:0x87, OP_NUMEQUAL:0x9c, OP_LESSTHAN:0x9f, OP_MIN:0xa3, OP_WITHIN:0xa5,
+  OP_SHA256:0xa8, OP_HASH256:0xaa,
+})
+/** jetmora's own additions — 0.1.3 leaves 0xb0–0xef empty. Used only by oracle=jetmora vectors. */
+const JET = Object.freeze({ OP_SPLIT:0xb0, OP_NUM2BIN:0xb1, OP_BIN2NUM:0xb2 })
+
+/** Push arbitrary bytes, 0.1.3 rules: len<=0x4b direct, else PUSHDATA1/2. */
+function push(b) {
+  if (b.length <= 0x4b) return [b.length, ...b]
+  if (b.length < 0x100) return [0x4c, b.length, ...b]
+  if (b.length < 0x10000) return [0x4d, b.length & 0xff, b.length >> 8, ...b]
+  throw new Error('PUSHDATA4 not needed in vectors')
+}
+/** BigInt → script-number bytes: little-endian sign-magnitude, sign in the high bit of the LAST byte. */
+function toNum(n) {
+  n = BigInt(n)
+  if (n === 0n) return []
+  const neg = n < 0n
+  let v = neg ? -n : n
+  const out = []
+  while (v > 0n) { out.push(Number(v & 0xffn)); v >>= 8n }
+  if (out[out.length - 1] & 0x80) out.push(neg ? 0x80 : 0x00)
+  else if (neg) out[out.length - 1] |= 0x80
+  return out
+}
 
 const N = n => push(toNum(n))
 const S = (...parts) => parts.flat()
@@ -71,6 +118,11 @@ export const VECTORS = [
   { id:'substr',          oracle:'013', script:S(push([1,2,3,4,5]), OP.OP_1, OP.OP_3, OP.OP_SUBSTR), stack:['020304'] },
   { id:'left',            oracle:'013', script:S(push([1,2,3,4,5]), OP.OP_2, OP.OP_LEFT),  stack:['0102'] },
   { id:'right',           oracle:'013', script:S(push([1,2,3,4,5]), OP.OP_2, OP.OP_RIGHT), stack:['030405'] },
+  // ★★ ADDED 4 Sept — found by mutation testing. The only SUBSTR vector was IN RANGE, so an
+  //    implementation that checked `end` but extracted by `count` (two expressions for one intent)
+  //    silently returned a SHORT READ instead of failing: begin=3 count=4 on 5 bytes gave `0405`.
+  //    ⚠ A short read that does not complain is the wrong-answer class this set exists to prevent.
+  { id:'substr.overrun',  oracle:'013', script:S(push([1,2,3,4,5]), OP.OP_3, OP.OP_4, OP.OP_SUBSTR), error:'SUBSTR out of range' },
   { id:'size',            oracle:'bsv', script:S(push([1,2,3]), OP.OP_SIZE),           stack:['010203','03'] },
 
   // ── JETMORA'S OWN DATA OPS at 0xb0–0xb2 ────────────────────────────────────────────────────
@@ -100,6 +152,11 @@ export const VECTORS = [
   { id:'min',             oracle:'bsv', script:S(OP.OP_2, OP.OP_3, OP.OP_MIN),        stack:['02'] },
   { id:'within.in',       oracle:'bsv', script:S(OP.OP_3, OP.OP_2, OP.OP_5, OP.OP_WITHIN), stack:['01'] },
   { id:'within.out',      oracle:'bsv', script:S(OP.OP_6, OP.OP_2, OP.OP_5, OP.OP_WITHIN), stack:[''] },
+  // ★★ ADDED 4 Sept — OP_EQUAL was in NO vector at all, found by mutation testing: an implementation
+  //    comparing only LENGTH passed all 75. ⚠ 0.1.3 compares the BYTE VECTORS (`vch1 == vch2`,
+  //    script.cpp), so same-length-different-content is the case that separates the two.
+  { id:'equal.true',      oracle:'bsv', script:S(push([0xaa,0xbb]), push([0xaa,0xbb]), OP.OP_EQUAL), stack:['01'] },
+  { id:'equal.samelen',   oracle:'bsv', script:S(push([0xaa,0xbb]), push([0xaa,0xcc]), OP.OP_EQUAL), stack:[''] },
 
   // ── stack ──────────────────────────────────────────────────────────────────────────────────
   { id:'dup',             oracle:'bsv', script:S(OP.OP_7, OP.OP_DUP),                 stack:['07','07'] },
@@ -113,6 +170,10 @@ export const VECTORS = [
   // ── control ────────────────────────────────────────────────────────────────────────────────
   { id:'if.taken',        oracle:'bsv', script:S(OP.OP_1, OP.OP_IF, OP.OP_7, OP.OP_ELSE, OP.OP_8, OP.OP_ENDIF), stack:['07'] },
   { id:'if.nottaken',     oracle:'bsv', script:S(OP.OP_0, OP.OP_IF, OP.OP_7, OP.OP_ELSE, OP.OP_8, OP.OP_ENDIF), stack:['08'] },
+  // ★★ ADDED 4 Sept — found by mutation testing: making negative zero cast TRUE passed all 75.
+  //    ⚠ `num.negzero` proves 0x80 SURVIVES as data; nothing put it through a truth test.
+  //    CastToBool scans the bytes and returns false when the only set bit is the sign of the LAST one.
+  { id:'negzero.isfalse', oracle:'bsv', script:S(push([0x80]), OP.OP_IF, OP.OP_7, OP.OP_ELSE, OP.OP_8, OP.OP_ENDIF), stack:['08'] },
   { id:'verify.pass',     oracle:'bsv', script:S(OP.OP_1, OP.OP_1, OP.OP_VERIFY),     stack:['01'] },
   { id:'verify.fail',     oracle:'bsv', script:S(OP.OP_0, OP.OP_VERIFY),              error:'VERIFY failed' },
   // ★★★ ALSO FOUND BY FUZZING. 0.1.3's EvalScript does NOT check that OP_IF was balanced — it ends and

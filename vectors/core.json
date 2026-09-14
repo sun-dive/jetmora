@@ -326,6 +326,12 @@
       "result_hash": "e42013bf131b537052493dc0f96afd8af62fef49392b29f6933d541f5acdd905"
     },
     {
+      "id": "substr.overrun",
+      "oracle": "013",
+      "script": "05010203040553547f",
+      "error": "SUBSTR out of range"
+    },
+    {
       "id": "size",
       "oracle": "bsv",
       "script": "0301020382",
@@ -486,6 +492,24 @@
       "result_hash": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
     },
     {
+      "id": "equal.true",
+      "oracle": "bsv",
+      "script": "02aabb02aabb87",
+      "stack": [
+        "01"
+      ],
+      "result_hash": "9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2"
+    },
+    {
+      "id": "equal.samelen",
+      "oracle": "bsv",
+      "script": "02aabb02aacc87",
+      "stack": [
+        ""
+      ],
+      "result_hash": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+    },
+    {
       "id": "dup",
       "oracle": "bsv",
       "script": "5776",
@@ -572,6 +596,15 @@
       "id": "if.nottaken",
       "oracle": "bsv",
       "script": "006357675868",
+      "stack": [
+        "08"
+      ],
+      "result_hash": "9e6282e4f25e370ce617e21d6fe265e88b9e7b8682cf00059b9d128d9381f09d"
+    },
+    {
+      "id": "negzero.isfalse",
+      "oracle": "bsv",
+      "script": "01806357675868",
       "stack": [
         "08"
       ],

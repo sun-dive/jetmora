@@ -19,3 +19,11 @@ site/js/
 #   ⚠ This ignores the DIRECTORY on purpose: a per-file ignore is how 0.1.1 escaped — it relies on
 #     somebody remembering to add a line. Put every new draft version in here and it is covered.
 spec/draft/
+
+# ⚠ Python bytecode from tools/. Untracked-but-not-ignored is the shape that gets swept in by a bulk
+#   `git add -A`, which is how an accidental commit happens in the first place.
+__pycache__/
+*.pyc
+
+# Comparison vectors produced by another implementation: LOCAL test data, never shipped.
+server/wallet/bsv/sdk-signature-vectors.json

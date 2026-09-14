@@ -1,4 +1,23 @@
 // © 2026 sun-dive. Apache License 2.0 — see LICENSE.
+// ⛔⛔⛔ THIS TOOL BUILT THE CHAIN THAT WAS NOT A CHAIN. It is stopped, deliberately, 7 Sept.
+//
+//   It passes `unlocking: []` (line ~75), and until 7 Sept `serializeEntry` allowed that. ⇒ Every one
+//   of the 528 entries it produced was **84 bytes with a zero-byte unlocking script**: no signature, no
+//   OP_PUSH_TX preimage, no proof any transition was permitted. A §3-conformant entry needs 181 minimum.
+//
+// ★★ AND IT WAS NOT A BAD TOOL — IT WAS THE WRONG LAYER. What it records is race OUTCOMES: a previous
+//   hash, a counter, a value and some state. **That is a LOG RECORD, and a perfectly good one.** jetmora
+//   HAS a log layer (his call, 7 Sept): *"append only immutable entries of inputs, outputs and errors...
+//   a secondary part of the design, not the primary."* This tool belongs THERE.
+//   ⇒ Its root-reproduction result stands and was real — byte-identical on a $1.87 host — but it is a
+//     result about STORAGE, not about covenants.
+//
+// ⏭ TO REVIVE IT, pick one and say which:
+//   A · rewrite against `server/log-record.php`'s format ⇒ it becomes an honest log-layer tool, and the
+//       racers root-reproduction test can be redone as exactly what it always was.
+//   B · rewrite against `CovenantThread::tick()` ⇒ real entries with real unlocking scripts, which is a
+//       different and much larger job: the racers covenant would have to actually run.
+// ⛔ What it must NOT do is what it did: build log rows and call the result a covenant chain.
 //
 // ★★★ BITCOIN RACERS ON A JETMORA TEST CHAIN — the quarter mile, tick by tick.
 //
@@ -12,6 +31,9 @@
 import { createHash, generateKeyPairSync, sign as nodeSign } from 'node:crypto'
 import { serializeEntry, entryHash } from './entry.mjs'
 import * as M from './merkle.mjs'
+
+console.error(`\n⛔ dragchain built LOG ROWS and they were called a covenant chain\n   This tool is stopped. Read the banner at the top of ${import.meta.url.split('/').pop()} — it explains\n   what it produced, why that was the wrong layer, and the two ways to revive it.\n`)
+process.exit(2)
 
 const BASE = process.env.LOG ?? 'http://127.0.0.1:8787/log.php'
 const MINT = process.env.BASIC ?? '/home/sundive/Documents/GitHub/grafverse/mint'
