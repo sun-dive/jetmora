@@ -25,3 +25,20 @@ PUBLIC DOMAIN CARVE-OUT
 vectors/core.json is dedicated to the public domain under CC0 1.0 (see
 vectors/LICENSE). The vectors ARE the specification: an implementation that
 reproduces them must not thereby become a derivative work of it.
+
+────────────────────────────────────────────────────────────────────────────────
+PROVENANCE
+
+    jetmora-codebase.tar.gz  (the source at commit 448b796)
+    SHA-256  8f3884e2a2ddfad74ce2ac4bc0c769b85a0ee45613c7d1a600b28fa28d03ce90
+
+    Timestamped on the BSV blockchain by a two-transaction genesis mint,
+    made with Phar Lap 2 - All Rights Reserved, unencrypted, authored by
+    sun-dive:
+      TX1  482539529bdc7d17b1818562bd85aeecdc6f54bf754d6fcae543ec1a9e4f564a
+      TX2  95d5ffb13ac8851b945042061b249b747ed0fd56840afa1766e343971f7e3111
+
+    Anyone can pull the archive from TX1, hash it and match the SHA-256
+    above. The on-chain copy of this NOTICE predates the mint, so it
+    carries no txid; the authoritative record is this repository plus the
+    transactions above. The running ledger is in PROVENANCE.md.

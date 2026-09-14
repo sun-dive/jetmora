@@ -46,5 +46,6 @@ deployment:
     - /bin/cp server/head.php "$DEPLOYPATH/log/head.php"
     # ⚠ emit-vectors.php and probe.php are development tools and are deliberately NOT deployed.
     - /bin/cp LICENSE "$DEPLOYPATH/LICENSE"                  # Apache-2.0
-    - /bin/cp NOTICE "$DEPLOYPATH/NOTICE"                    # derivation + the Open BSV position
+    - /bin/cp NOTICE "$DEPLOYPATH/NOTICE"                    # derivation + the Open BSV position + provenance
+    - /bin/cp PROVENANCE.md "$DEPLOYPATH/PROVENANCE.md"      # the mint ledger
     - echo "jetmora.org ← $(git rev-parse --short HEAD)"
