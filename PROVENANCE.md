@@ -25,6 +25,6 @@ file is re-committed with the block height below.
 
 | Date | Commit | Archive SHA-256 | Proof | BTC block |
 |------|--------|-----------------|-------|-----------|
-| 2026-09-14 | `448b796` | `8f3884e2a2ddfad74ce2ac4bc0c769b85a0ee45613c7d1a600b28fa28d03ce90` | `provenance/jetmora-448b796.tar.gz.ots` | pending |
+| 2026-09-14 | `448b796` | `8f3884e2a2ddfad74ce2ac4bc0c769b85a0ee45613c7d1a600b28fa28d03ce90` | `provenance/jetmora-448b796.tar.gz.ots` | 966979, 966981 |
 
 <!-- append-only: one row per stamped archive, newest at the bottom -->
