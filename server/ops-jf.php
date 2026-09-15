@@ -34,49 +34,67 @@ const JF_LIT = [
 /** jetForth words: name => single byte. */
 const JF_WORD = [
   // stack (21)
-  'DUP'=>0x89, 'DROP'=>0x88, 'SWAP'=>0xa6, 'OVER'=>0x9d, 'ROT'=>0xa2, '?DUP'=>0x7a, 'NIP'=>0x9b,
-  'TUCK'=>0xa8, 'DEPTH'=>0x87, 'PICK'=>0x9e, 'ROLL'=>0xa1, '2DUP'=>0x70, '2DROP'=>0x6f,
-  '2SWAP'=>0x74, '2OVER'=>0x71, '>R'=>0x79, 'R>'=>0x9f, 'R@'=>0xa0, '2>R'=>0x6d, '2R>'=>0x72,
-  '2R@'=>0x73,
+  '2>R'=>0x5b, '2DROP'=>0x5c, '2DUP'=>0x5d, '2OVER'=>0x5e, '2R>'=>0x5f, '2R@'=>0x60, '2SWAP'=>0x61,
+  '>R'=>0x62, '?DUP'=>0x63, 'DEPTH'=>0x64, 'DROP'=>0x65, 'DUP'=>0x66, 'NIP'=>0x67, 'OVER'=>0x68,
+  'PICK'=>0x69, 'R>'=>0x6a, 'R@'=>0x6b, 'ROLL'=>0x6c, 'ROT'=>0x6d, 'SWAP'=>0x6e, 'TUCK'=>0x6f,
   // arithmetic (22)
-  '+'=>0x5f, '-'=>0x61, '*'=>0x5c, '/'=>0x62, 'MOD'=>0x98, '/MOD'=>0x63, '*/'=>0x5d, '*/MOD'=>0x5e,
-  '1+'=>0x68, '1-'=>0x69, '2*'=>0x6b, '2/'=>0x6c, 'ABS'=>0x7d, 'NEGATE'=>0x9a, 'MIN'=>0x97,
-  'MAX'=>0x96, 'FM/MOD'=>0x8f, 'SM/REM'=>0xa5, 'UM*'=>0xab, 'UM/MOD'=>0xac, 'M*'=>0x95,
-  'S>D'=>0xa4,
+  '*'=>0x70, '*/'=>0x71, '*/MOD'=>0x72, '+'=>0x73, '-'=>0x74, '/'=>0x75, '/MOD'=>0x76, '1+'=>0x77,
+  '1-'=>0x78, '2*'=>0x79, '2/'=>0x7a, 'ABS'=>0x7b, 'FM/MOD'=>0x7c, 'M*'=>0x7d, 'MAX'=>0x7e,
+  'MIN'=>0x7f, 'MOD'=>0x80, 'NEGATE'=>0x81, 'S>D'=>0x82, 'SM/REM'=>0x83, 'UM*'=>0x84,
+  'UM/MOD'=>0x85,
   // logic (6)
-  'AND'=>0x7f, 'OR'=>0x9c, 'XOR'=>0xaf, 'INVERT'=>0x91, 'LSHIFT'=>0x94, 'RSHIFT'=>0xa3,
+  'AND'=>0x86, 'INVERT'=>0x87, 'LSHIFT'=>0x88, 'OR'=>0x89, 'RSHIFT'=>0x8a, 'XOR'=>0x8b,
   // compare (11)
-  '='=>0x77, '<>'=>0x76, '<'=>0x75, '>'=>0x78, 'U<'=>0xa9, 'U>'=>0xaa, '0='=>0x66, '0<>'=>0x65,
-  '0<'=>0x64, '0>'=>0x67, 'WITHIN'=>0xae,
+  '0<'=>0x8c, '0<>'=>0x8d, '0='=>0x8e, '0>'=>0x8f, '<'=>0x90, '<>'=>0x91, '='=>0x92, '>'=>0x93,
+  'U<'=>0x94, 'U>'=>0x95, 'WITHIN'=>0x96,
   // constant (3)
-  'TRUE'=>0xa7, 'FALSE'=>0x8d, 'BL'=>0x80,
+  'BL'=>0x97, 'FALSE'=>0x98, 'TRUE'=>0x99,
   // memory (15)
-  '@'=>0x7b, '!'=>0x5b, 'C@'=>0x82, 'C!'=>0x81, '+!'=>0x60, '2@'=>0x6e, '2!'=>0x6a, 'MOVE'=>0x99,
-  'FILL'=>0x8e, 'ERASE'=>0x8a, 'CELLS'=>0x84, 'CELL+'=>0x83, 'CHARS'=>0x86, 'CHAR+'=>0x85,
-  'ALIGNED'=>0x7e,
+  '!'=>0x9a, '+!'=>0x9b, '2!'=>0x9c, '2@'=>0x9d, '@'=>0x9e, 'ALIGNED'=>0x9f, 'C!'=>0xa0,
+  'C@'=>0xa1, 'CELL+'=>0xa2, 'CELLS'=>0xa3, 'CHAR+'=>0xa4, 'CHARS'=>0xa5, 'ERASE'=>0xa6,
+  'FILL'=>0xa7, 'MOVE'=>0xa8,
   // loop runtime (6)
-  'I'=>0x90, 'J'=>0x92, 'UNLOOP'=>0xad, 'LEAVE'=>0x93, 'EXIT'=>0x8c, 'EXECUTE'=>0x8b,
+  'EXECUTE'=>0xa9, 'EXIT'=>0xaa, 'I'=>0xab, 'J'=>0xac, 'LEAVE'=>0xad, 'UNLOOP'=>0xae,
   // abort (1)
-  'ABORT'=>0x7c,
-  // branch (jetmora) (8)
-  'BRANCH'=>0xbb, '0BRANCH'=>0xb9, '(DO)'=>0xb3, '(?DO)'=>0xb1, '(LOOP)'=>0xb7, '(+LOOP)'=>0xb0,
-  'CALL'=>0xbd, 'RET'=>0xce,
+  'ABORT'=>0xaf,
+  // branch (8)
+  '(+LOOP)'=>0xb0, '(?DO)'=>0xb1, '(DO)'=>0xb2, '(LOOP)'=>0xb3, '0BRANCH'=>0xb4, 'BRANCH'=>0xb5,
+  'CALL'=>0xb6, 'RET'=>0xb7,
   // tier boundary (1)
-  'INVOKE'=>0xc5,
-  // locals runtime (jetmora) (4)
-  '(FRAME)'=>0xb4, '(LOCAL@)'=>0xb6, '(LOCAL!)'=>0xb5, '(UNFRAME)'=>0xb8,
-  // abort runtime (jetmora) (1)
-  '(ABORT")'=>0xb2,
+  'INVOKE'=>0xb8,
+  // locals runtime (4)
+  '(FRAME)'=>0xb9, '(LOCAL!)'=>0xba, '(LOCAL@)'=>0xbb, '(UNFRAME)'=>0xbc,
+  // abort runtime (1)
+  '(ABORT")'=>0xbd,
   // crypto (9)
-  'CHECKMULTISIG'=>0xbf, 'CHECKMULTISIGVERIFY'=>0xc0, 'CHECKSIG'=>0xc1, 'CHECKSIGVERIFY'=>0xc2,
-  'HASH160'=>0xc3, 'HASH256'=>0xc4, 'RIPEMD160'=>0xd0, 'SHA1'=>0xd3, 'SHA256'=>0xd4,
+  'CHECKMULTISIG'=>0xbe, 'CHECKMULTISIGVERIFY'=>0xbf, 'CHECKSIG'=>0xc0, 'CHECKSIGVERIFY'=>0xc1,
+  'HASH160'=>0xc2, 'HASH256'=>0xc3, 'RIPEMD160'=>0xc4, 'SHA1'=>0xc5, 'SHA256'=>0xc6,
   // transaction (13)
-  'LOCKTIME'=>0xc7, 'NSEQUENCE'=>0xc8, 'OUTPOINT'=>0xca, 'OUTPUTS-HASH'=>0xcb, 'PREIMAGE'=>0xcc,
-  'PREVOUTS-HASH'=>0xcd, 'SCRIPTCODE'=>0xd1, 'SEQUENCES-HASH'=>0xd2, 'TXVALUE'=>0xd8,
-  'TXVERSION'=>0xd9, 'VER'=>0xda, 'VERIF'=>0xdb, 'VERNOTIF'=>0xdc,
+  'LOCKTIME'=>0xc7, 'NSEQUENCE'=>0xc8, 'OUTPOINT'=>0xc9, 'OUTPUTS-HASH'=>0xca, 'PREIMAGE'=>0xcb,
+  'PREVOUTS-HASH'=>0xcc, 'SCRIPTCODE'=>0xcd, 'SEQUENCES-HASH'=>0xce, 'TXVALUE'=>0xcf,
+  'TXVERSION'=>0xd0, 'VER'=>0xd1, 'VERIF'=>0xd2, 'VERNOTIF'=>0xd3,
   // byte strings (9)
-  'BIN2NUM'=>0xba, 'BYTES='=>0xbc, 'CAT'=>0xbe, 'LEFT'=>0xc6, 'NUM2BIN'=>0xc9, 'RIGHT'=>0xcf,
-  'SIZE'=>0xd5, 'SPLIT'=>0xd6, 'SUBSTR'=>0xd7,
+  'BIN2NUM'=>0xd4, 'BYTES='=>0xd5, 'CAT'=>0xd6, 'LEFT'=>0xd7, 'NUM2BIN'=>0xd8, 'RIGHT'=>0xd9,
+  'SIZE'=>0xda, 'SPLIT'=>0xdb, 'SUBSTR'=>0xdc,
+];
+
+/** the declared section order the bytes follow: section => words, alphabetical within. */
+const JF_SECTION = [
+  'stack' => ['2>R', '2DROP', '2DUP', '2OVER', '2R>', '2R@', '2SWAP', '>R', '?DUP', 'DEPTH', 'DROP', 'DUP', 'NIP', 'OVER', 'PICK', 'R>', 'R@', 'ROLL', 'ROT', 'SWAP', 'TUCK'],
+  'arithmetic' => ['*', '*/', '*/MOD', '+', '-', '/', '/MOD', '1+', '1-', '2*', '2/', 'ABS', 'FM/MOD', 'M*', 'MAX', 'MIN', 'MOD', 'NEGATE', 'S>D', 'SM/REM', 'UM*', 'UM/MOD'],
+  'logic' => ['AND', 'INVERT', 'LSHIFT', 'OR', 'RSHIFT', 'XOR'],
+  'compare' => ['0<', '0<>', '0=', '0>', '<', '<>', '=', '>', 'U<', 'U>', 'WITHIN'],
+  'constant' => ['BL', 'FALSE', 'TRUE'],
+  'memory' => ['!', '+!', '2!', '2@', '@', 'ALIGNED', 'C!', 'C@', 'CELL+', 'CELLS', 'CHAR+', 'CHARS', 'ERASE', 'FILL', 'MOVE'],
+  'loop runtime' => ['EXECUTE', 'EXIT', 'I', 'J', 'LEAVE', 'UNLOOP'],
+  'abort' => ['ABORT'],
+  'branch' => ['(+LOOP)', '(?DO)', '(DO)', '(LOOP)', '0BRANCH', 'BRANCH', 'CALL', 'RET'],
+  'tier boundary' => ['INVOKE'],
+  'locals runtime' => ['(FRAME)', '(LOCAL!)', '(LOCAL@)', '(UNFRAME)'],
+  'abort runtime' => ['(ABORT")'],
+  'crypto' => ['CHECKMULTISIG', 'CHECKMULTISIGVERIFY', 'CHECKSIG', 'CHECKSIGVERIFY', 'HASH160', 'HASH256', 'RIPEMD160', 'SHA1', 'SHA256'],
+  'transaction' => ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE', 'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'TXVERSION', 'VER', 'VERIF', 'VERNOTIF'],
+  'byte strings' => ['BIN2NUM', 'BYTES=', 'CAT', 'LEFT', 'NUM2BIN', 'RIGHT', 'SIZE', 'SPLIT', 'SUBSTR'],
 ];
 
 /** first escape byte; 0xff is the PLANE escape and is never a wordset. */
@@ -321,19 +339,19 @@ const JF_CORE_KIND = [
 
 /** words promoted to jetForth: their two-byte form MUST be refused. */
 const JF_PROMOTED = [
-  '!'=>0x5b, '*'=>0x5c, '*/'=>0x5d, '*/MOD'=>0x5e, '+'=>0x5f, '+!'=>0x60, '-'=>0x61, '/'=>0x62,
-  '/MOD'=>0x63, '0<'=>0x64, '0<>'=>0x65, '0='=>0x66, '0>'=>0x67, '1+'=>0x68, '1-'=>0x69,
-  '2!'=>0x6a, '2*'=>0x6b, '2/'=>0x6c, '2>R'=>0x6d, '2@'=>0x6e, '2DROP'=>0x6f, '2DUP'=>0x70,
-  '2OVER'=>0x71, '2R>'=>0x72, '2R@'=>0x73, '2SWAP'=>0x74, '<'=>0x75, '<>'=>0x76, '='=>0x77,
-  '>'=>0x78, '>R'=>0x79, '?DUP'=>0x7a, '@'=>0x7b, 'ABORT'=>0x7c, 'ABS'=>0x7d, 'ALIGNED'=>0x7e,
-  'AND'=>0x7f, 'BL'=>0x80, 'C!'=>0x81, 'C@'=>0x82, 'CELL+'=>0x83, 'CELLS'=>0x84, 'CHAR+'=>0x85,
-  'CHARS'=>0x86, 'DEPTH'=>0x87, 'DROP'=>0x88, 'DUP'=>0x89, 'ERASE'=>0x8a, 'EXECUTE'=>0x8b,
-  'EXIT'=>0x8c, 'FALSE'=>0x8d, 'FILL'=>0x8e, 'FM/MOD'=>0x8f, 'I'=>0x90, 'INVERT'=>0x91, 'J'=>0x92,
-  'LEAVE'=>0x93, 'LSHIFT'=>0x94, 'M*'=>0x95, 'MAX'=>0x96, 'MIN'=>0x97, 'MOD'=>0x98, 'MOVE'=>0x99,
-  'NEGATE'=>0x9a, 'NIP'=>0x9b, 'OR'=>0x9c, 'OVER'=>0x9d, 'PICK'=>0x9e, 'R>'=>0x9f, 'R@'=>0xa0,
-  'ROLL'=>0xa1, 'ROT'=>0xa2, 'RSHIFT'=>0xa3, 'S>D'=>0xa4, 'SM/REM'=>0xa5, 'SWAP'=>0xa6,
-  'TRUE'=>0xa7, 'TUCK'=>0xa8, 'U<'=>0xa9, 'U>'=>0xaa, 'UM*'=>0xab, 'UM/MOD'=>0xac, 'UNLOOP'=>0xad,
-  'WITHIN'=>0xae, 'XOR'=>0xaf,
+  '!'=>0x9a, '*'=>0x70, '*/'=>0x71, '*/MOD'=>0x72, '+'=>0x73, '+!'=>0x9b, '-'=>0x74, '/'=>0x75,
+  '/MOD'=>0x76, '0<'=>0x8c, '0<>'=>0x8d, '0='=>0x8e, '0>'=>0x8f, '1+'=>0x77, '1-'=>0x78,
+  '2!'=>0x9c, '2*'=>0x79, '2/'=>0x7a, '2>R'=>0x5b, '2@'=>0x9d, '2DROP'=>0x5c, '2DUP'=>0x5d,
+  '2OVER'=>0x5e, '2R>'=>0x5f, '2R@'=>0x60, '2SWAP'=>0x61, '<'=>0x90, '<>'=>0x91, '='=>0x92,
+  '>'=>0x93, '>R'=>0x62, '?DUP'=>0x63, '@'=>0x9e, 'ABORT'=>0xaf, 'ABS'=>0x7b, 'ALIGNED'=>0x9f,
+  'AND'=>0x86, 'BL'=>0x97, 'C!'=>0xa0, 'C@'=>0xa1, 'CELL+'=>0xa2, 'CELLS'=>0xa3, 'CHAR+'=>0xa4,
+  'CHARS'=>0xa5, 'DEPTH'=>0x64, 'DROP'=>0x65, 'DUP'=>0x66, 'ERASE'=>0xa6, 'EXECUTE'=>0xa9,
+  'EXIT'=>0xaa, 'FALSE'=>0x98, 'FILL'=>0xa7, 'FM/MOD'=>0x7c, 'I'=>0xab, 'INVERT'=>0x87, 'J'=>0xac,
+  'LEAVE'=>0xad, 'LSHIFT'=>0x88, 'M*'=>0x7d, 'MAX'=>0x7e, 'MIN'=>0x7f, 'MOD'=>0x80, 'MOVE'=>0xa8,
+  'NEGATE'=>0x81, 'NIP'=>0x67, 'OR'=>0x89, 'OVER'=>0x68, 'PICK'=>0x69, 'R>'=>0x6a, 'R@'=>0x6b,
+  'ROLL'=>0x6c, 'ROT'=>0x6d, 'RSHIFT'=>0x8a, 'S>D'=>0x82, 'SM/REM'=>0x83, 'SWAP'=>0x6e,
+  'TRUE'=>0x99, 'TUCK'=>0x6f, 'U<'=>0x94, 'U>'=>0x95, 'UM*'=>0x84, 'UM/MOD'=>0x85, 'UNLOOP'=>0xae,
+  'WITHIN'=>0x96, 'XOR'=>0x8b,
 ];
 
 /** single byte => name, for errors and for `SEE`-style rendering. */
@@ -354,4 +372,4 @@ function jf_op_name(int $n): string {
 /** bank escape => wordset, or null when the byte is not an escape. */
 function jf_bank_name(int $esc): ?string { return JF_BANK[$esc] ?? null; }
 
-// generated 2026-09-07
+// generated 2026-09-15

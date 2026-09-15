@@ -65,14 +65,16 @@ def main():
     A('')
     A('/** jetForth words: name => single byte. */')
     A('const JF_WORD = [')
-    groups = list(jfmap.HOT.items()) + [
-        ('branch (jetmora)', jfmap.BRANCH), ('tier boundary', jfmap.INVOKE),
-        ('locals runtime (jetmora)', jfmap.LOCALS), ('abort runtime (jetmora)', jfmap.ABORTS),
-        ('crypto', jfmap.CRYPTO),
-        ('transaction', jfmap.TX), ('byte strings', jfmap.BYTES)]
-    for name, ws in groups:
+    # ★ Emitted in byte order: the sections ARE the numbering (sections by category, alphabetical within).
+    for name, ws in m['sections']:
         A(f'  // {name} ({len(ws)})')
         A(table([(w, code[w]) for w in ws]))
+    A('];')
+    A('')
+    A('/** the declared section order the bytes follow: section => words, alphabetical within. */')
+    A('const JF_SECTION = [')
+    for name, ws in m['sections']:
+        A(f'  {q(name)} => [' + ', '.join(q(w) for w in ws) + '],')
     A('];')
     A('')
     A(f'/** first escape byte; 0x{m["plane"]:02x} is the PLANE escape and is never a wordset. */')

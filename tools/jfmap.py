@@ -171,19 +171,22 @@ def assign(src=SRC):
     if clash:
         raise SystemExit(f'⛔ jetmora word collides with a Forth name: {sorted(clash)}')
 
-    # ★★★ TWO ALPHABETICAL RUNS, and the ordering is therefore DERIVABLE rather than my taste.
-    #   §10.5e's rule — *"the initial fill is alphabetical"* — was true of the BANKS (generated from the
-    #   standard's own alphabetical index) and was NEVER true of the single-byte set, which I had written
-    #   in "natural" order: DUP DROP SWAP OVER ROT... ⚠ Nine of fifteen groups were unsorted, and his
-    #   question about `BYTES=` found it.
-    # ⇒ Sorted 7 Sept, while NOTHING IS RELEASED — the last moment renumbering is free. After a
-    #   conformance vector or a deployed covenant pins these bytes, the rule becomes APPEND-ONLY and a
-    #   new word goes at the end however unalphabetical that looks.
-    # ★ WHY TWO RUNS AND NOT ONE: the promoted Forth words have a bank slot that is RESERVED-ILLEGAL
-    #   (§10.5e); jetmora's own words have no bank at all. Keeping them in distinct ranges makes that
-    #   difference visible in the numbering instead of only in a table.
+    # ★★★ SECTIONS BY CATEGORY, ALPHABETICAL WITHIN EACH — his rule, 15 Sept: a single alphabetical run
+    #   is inferior for a person looking through the list, because the word they want sits between
+    #   unrelated ones. The section order is the declared order below, so the bytes are still DERIVABLE:
+    #   anyone holding this file and the standard regenerates the same numbers.
+    # ⇒ Two runs kept: promoted Forth words first (each has a bank slot that is RESERVED-ILLEGAL),
+    #   then jetmora's own (no bank at all), so that difference stays visible in the numbering.
+    # ⚠ Renumbered 15 Sept while nothing permanent pins these bytes (no JF conformance vector, no
+    #   chain entry; foen's threads keep no chain behind the tip and redeploy with it). After a
+    #   conformance vector or a deployed covenant pins them, the rule becomes APPEND-ONLY: a new word
+    #   goes at 0xDD upward, whatever its category.
+    SECTIONS = [(name, sorted(g)) for name, g in HOT.items()] + [
+        ('branch', sorted(BRANCH)), ('tier boundary', sorted(INVOKE)), ('locals runtime', sorted(LOCALS)),
+        ('abort runtime', sorted(ABORTS)), ('crypto', sorted(CRYPTO)), ('transaction', sorted(TX)),
+        ('byte strings', sorted(BYTES))]
     jetmora_own = BRANCH + INVOKE + LOCALS + ABORTS + CRYPTO + TX + BYTES
-    words = sorted(hot) + sorted(jetmora_own)
+    words = [w for _, ws in SECTIONS for w in ws]
     n_lit = len(SMALL_INTS) + len(LITFORMS)
     # ⚠⚠ THE RESERVE IS THE REMAINDER, NEVER A RANGE. Letting the push range absorb
     #    the slack is exactly how 0.1.3 ended up with no room to append.
@@ -208,7 +211,7 @@ def assign(src=SRC):
             raise SystemExit(f'⛔ bank {w} needs {len(ws)} slots')
 
     return {
-        'code': code, 'words': words, 'promoted': set(hot), 'banks': banks,
+        'code': code, 'words': words, 'sections': SECTIONS, 'promoted': set(hot), 'banks': banks,
         'sets': sets, 'dups': dups, 'allnames': allnames,
         'n_push': N_PUSH, 'n_lit': n_lit, 'reserve': reserve,
         'resv_at': at, 'esc0': ESC0, 'plane': PLANE,

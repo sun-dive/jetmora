@@ -302,18 +302,20 @@ tf('core.evaluateIsOpEval', 'INVOKE#0', 'this is OP_EVAL', $D12);
 // APPEND-ONLY**, and a new word goes at the end however unalphabetical that looks.
 // ⚠ ORDER BY CODE, not by the array's key order — the generator EMITS grouped (for the reader) while
 //   ASSIGNING alphabetically. Testing the key order tests the comment layout, not the protocol.
+// ⇒ 15 Sept, his rule: SECTIONS BY CATEGORY in the declared order, ALPHABETICAL WITHIN each section —
+//   a single alphabetical run puts the word a reader wants between unrelated ones. JF_SECTION carries
+//   the declared order; the bytes must follow it exactly, section after section, with no gaps.
 $byCode = JF_WORD; asort($byCode);
 $W = array_keys($byCode);
 $promoted = array_values(array_filter($W, fn($w) => isset(JF_PROMOTED[$w])));
 $own      = array_values(array_filter($W, fn($w) => !isset(JF_PROMOTED[$w])));
-$sortedP = $promoted; sort($sortedP, SORT_STRING);
-$sortedO = $own;      sort($sortedO, SORT_STRING);
 $codesP = array_map(fn($w) => JF_WORD[$w], $promoted);
 $codesO = array_map(fn($w) => JF_WORD[$w], $own);
-$T[] = ['order.promotedAlphabetical', '', null, null, null,
-        fn() => $promoted === $sortedP];
-$T[] = ['order.jetmoraAlphabetical', '', null, null, null,
-        fn() => $own === $sortedO];
+$T[] = ['order.sectionsAlphabeticalWithin', '', null, null, null,
+        function () { foreach (JF_SECTION as $ws) { $s = $ws; sort($s, SORT_STRING); if ($s !== $ws) return false; } return true; }];
+$T[] = ['order.sectionsInDeclaredOrder', '', null, null, null,
+        function () { $expect = []; foreach (JF_SECTION as $ws) foreach ($ws as $w) $expect[] = $w;
+                      global $W; return $expect === $W; }];
 $T[] = ['order.runsAreContiguous', '', null, null, null,
         fn() => $codesP === range($codesP[0], $codesP[0] + count($codesP) - 1)
              && $codesO === range($codesO[0], $codesO[0] + count($codesO) - 1)];
