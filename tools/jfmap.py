@@ -68,6 +68,14 @@ TX = ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE',
 #   ⚠ Constant time by construction: it must not leak where two hashes first differ.
 BYTES = ['BIN2NUM', 'BYTES=', 'CAT', 'LEFT', 'NUM2BIN', 'RIGHT', 'SIZE', 'SPLIT', 'SUBSTR']
 
+# ★ APPENDED after the sectioned fill was pinned (15 Sept, revision 2). In order of addition, from
+#   0xDD upward, never sorted and never moved: an insert would renumber everything above it.
+#   ED25519-CHECKSIG ( a-sig u-sig a-pub u-pub a-msg u-msg -- flag ): Ed25519 over the message as given
+#   (the scheme hashes internally, so no digest word precedes it). 32-byte key, 64-byte signature;
+#   any other length is a failed check, never an error. CHECKSIG itself stays secp256k1: a word that
+#   mirrors a Bitcoin opcode keeps Bitcoin's meaning, and another scheme is another word.
+APPENDED = ['ED25519-CHECKSIG', 'ED25519-CHECKSIGVERIFY']
+
 LITFORMS = [('LIT8',   'next 1 byte, signed  -> integer'),
             ('LIT16',  'next 2 bytes, signed -> integer'),
             ('LIT32',  'next 4 bytes, signed -> integer'),
@@ -166,7 +174,7 @@ def assign(src=SRC):
     if len(set(hot)) != len(hot):
         raise SystemExit('⛔ duplicate in the hot list: '
                          f'{[w for w, c in collections.Counter(hot).items() if c > 1]}')
-    jm = set(BRANCH + INVOKE + LOCALS + ABORTS + CRYPTO + TX + BYTES)
+    jm = set(BRANCH + INVOKE + LOCALS + ABORTS + CRYPTO + TX + BYTES + APPENDED)
     clash = jm & allnames
     if clash:
         raise SystemExit(f'⛔ jetmora word collides with a Forth name: {sorted(clash)}')
@@ -184,8 +192,8 @@ def assign(src=SRC):
     SECTIONS = [(name, sorted(g)) for name, g in HOT.items()] + [
         ('branch', sorted(BRANCH)), ('tier boundary', sorted(INVOKE)), ('locals runtime', sorted(LOCALS)),
         ('abort runtime', sorted(ABORTS)), ('crypto', sorted(CRYPTO)), ('transaction', sorted(TX)),
-        ('byte strings', sorted(BYTES))]
-    jetmora_own = BRANCH + INVOKE + LOCALS + ABORTS + CRYPTO + TX + BYTES
+        ('byte strings', sorted(BYTES)),
+        ('appended', list(APPENDED))]          # ⚠ in order of addition, never sorted
     words = [w for _, ws in SECTIONS for w in ws]
     n_lit = len(SMALL_INTS) + len(LITFORMS)
     # ⚠⚠ THE RESERVE IS THE REMAINDER, NEVER A RANGE. Letting the push range absorb

@@ -80,6 +80,8 @@ const JF_WORD = [
   // byte strings (9)
   'BIN2NUM'=>0xd4, 'BYTES='=>0xd5, 'CAT'=>0xd6, 'LEFT'=>0xd7, 'NUM2BIN'=>0xd8, 'RIGHT'=>0xd9,
   'SIZE'=>0xda, 'SPLIT'=>0xdb, 'SUBSTR'=>0xdc,
+  // appended (2)
+  'ED25519-CHECKSIG'=>0xdd, 'ED25519-CHECKSIGVERIFY'=>0xde,
 ];
 
 /** the declared section order the bytes follow: section => words, alphabetical within. */
@@ -99,13 +101,14 @@ const JF_SECTION = [
   'crypto' => ['CHECKMULTISIG', 'CHECKMULTISIGVERIFY', 'CHECKSIG', 'CHECKSIGVERIFY', 'HASH160', 'HASH256', 'RIPEMD160', 'SHA1', 'SHA256'],
   'transaction' => ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE', 'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'TXVERSION', 'VER', 'VERIF', 'VERNOTIF'],
   'byte strings' => ['BIN2NUM', 'BYTES=', 'CAT', 'LEFT', 'NUM2BIN', 'RIGHT', 'SIZE', 'SPLIT', 'SUBSTR'],
+  'appended' => ['ED25519-CHECKSIG', 'ED25519-CHECKSIGVERIFY'],
 ];
 
 /** first escape byte; 0xff is the PLANE escape and is never a wordset. */
 const JF_ESC0 = 0xf0;
 const JF_PLANE = 0xff;
-/** reserved single-byte slots, append-only: 0xdd..0xef (19). */
-const JF_RESERVED0 = 0xdd;
+/** reserved single-byte slots, append-only: 0xdf..0xef (17). */
+const JF_RESERVED0 = 0xdf;
 
 /** escape byte => wordset name. An unimplemented bank must be refused BY NAME. */
 const JF_BANK = [

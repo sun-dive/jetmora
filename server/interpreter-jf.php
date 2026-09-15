@@ -622,6 +622,17 @@ final class InterpreterJF
         } else $this->flag($ok);
         return $i; }
 
+      // `( a-sig u-sig a-pub u-pub a-msg u-msg -- flag )` — Ed25519 over the message as given; the
+      // scheme hashes internally, so no digest word precedes it. A wrong key or signature length is a
+      // failed check, never an error. Appended 15 Sept at 0xDD/0xDE; CHECKSIG above stays secp256k1.
+      case $W['ED25519-CHECKSIG']: case $W['ED25519-CHECKSIGVERIFY']: {
+        $msg = $this->popSpan(); $pub = $this->popSpan(); $sig = $this->popSpan();
+        $ok  = self::ed25519Verify($sig, $pub, $msg);
+        if ($op === $W['ED25519-CHECKSIGVERIFY']) {
+          if (!$ok) throw new JfScriptError('ED25519-CHECKSIGVERIFY failed');
+        } else $this->flag($ok);
+        return $i; }
+
       // `( a-msg u-msg n a-pub u-pub ... m a-sig u-sig ... -- flag )` — m sigs, n keys, sigs in key order.
       // ⛔ NO dummy element. BTC's off-by-one is a bug `BT` carries for fidelity; `JF` is not trying to
       //    be Bitcoin, and reproducing a known bug in a new set would be an amputation in reverse.
@@ -885,6 +896,15 @@ final class InterpreterJF
   public static function ecdsaVerify(string $sig, string $pub, string $digest32): bool
   {
     return Secp256k1::verifyDigest($sig, $pub, $digest32);
+  }
+
+  /** Ed25519 (RFC 8032) via ext/sodium. A host without sodium cannot answer and must say so rather
+   *  than guess: that is a refusal of the script, not a FALSE. */
+  public static function ed25519Verify(string $sig, string $pub, string $msg): bool
+  {
+    if (strlen($pub) !== 32 || strlen($sig) !== 64) return false;
+    if (!extension_loaded('sodium')) throw new JfScriptError('ED25519-CHECKSIG needs ext/sodium on this host');
+    try { return sodium_crypto_sign_verify_detached($sig, $msg, $pub); } catch (\Throwable) { return false; }
   }
 }
 

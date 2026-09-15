@@ -144,6 +144,21 @@ t('sig.verifies',   '$' . VEC_SIG . ' $' . VEC_PUB . ' $' . VEC_DIG . ' CHECKSIG
 t('sig.uncompressed','$' . VEC_SIG . ' $' . VEC_UNC . ' $' . VEC_DIG . ' CHECKSIG', [-1]);
 t('sig.badDigest',  '$' . VEC_SIG . ' $' . VEC_PUB . ' $' . $flip(VEC_DIG, 0) . ' CHECKSIG', [0]);
 t('sig.tampered',   '$' . $flip(VEC_SIG, 20) . ' $' . VEC_PUB . ' $' . VEC_DIG . ' CHECKSIG', [0]);
+
+// ── ED25519-CHECKSIG, appended at 0xDD. Graded by RFC 8032 §7.1 test vectors 2 and 3. ──────────────
+const ED_PUB2 = '3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c';   // TEST 2, msg 72
+const ED_SIG2 = '92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00';
+const ED_PUB3 = 'fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025';   // TEST 3, msg af82
+const ED_SIG3 = '6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a';
+t('ed.verifies2',   '$' . ED_SIG2 . ' $' . ED_PUB2 . ' $72 ED25519-CHECKSIG', [-1]);
+t('ed.verifies3',   '$' . ED_SIG3 . ' $' . ED_PUB3 . ' $af82 ED25519-CHECKSIG', [-1]);
+t('ed.badMessage',  '$' . ED_SIG3 . ' $' . ED_PUB3 . ' $af83 ED25519-CHECKSIG', [0]);
+t('ed.tampered',    '$' . $flip(ED_SIG3, 10) . ' $' . ED_PUB3 . ' $af82 ED25519-CHECKSIG', [0]);
+t('ed.wrongKey',    '$' . ED_SIG3 . ' $' . ED_PUB2 . ' $af82 ED25519-CHECKSIG', [0]);
+t('ed.keyLength',   '$' . ED_SIG3 . ' $' . ED_PUB3 . '00 $af82 ED25519-CHECKSIG', [0]);      // 33 bytes: failed, not an error
+t('ed.notSecp',     '$' . ED_SIG3 . ' $' . ED_PUB3 . ' $af82 CHECKSIG', [0]);                // CHECKSIG stays secp256k1
+t('ed.verify',      '$' . ED_SIG3 . ' $' . ED_PUB3 . ' $af82 ED25519-CHECKSIGVERIFY 7', [7]);
+tf('ed.verifyFails','$' . ED_SIG3 . ' $' . ED_PUB3 . ' $af83 ED25519-CHECKSIGVERIFY', 'ED25519-CHECKSIGVERIFY failed');
 t('sig.wrongKey',   '$' . VEC_SIG . ' $' . $flip(VEC_PUB, 10) . ' $' . VEC_DIG . ' CHECKSIG', [0]);
 t('sig.garbageDer', '$30020000 $' . VEC_PUB . ' $' . VEC_DIG . ' CHECKSIG', [0]);
 tf('sig.verifyFails','$' . VEC_SIG . ' $' . VEC_PUB . ' $' . $flip(VEC_DIG, 0) . ' CHECKSIGVERIFY',
@@ -312,7 +327,10 @@ $own      = array_values(array_filter($W, fn($w) => !isset(JF_PROMOTED[$w])));
 $codesP = array_map(fn($w) => JF_WORD[$w], $promoted);
 $codesO = array_map(fn($w) => JF_WORD[$w], $own);
 $T[] = ['order.sectionsAlphabeticalWithin', '', null, null, null,
-        function () { foreach (JF_SECTION as $ws) { $s = $ws; sort($s, SORT_STRING); if ($s !== $ws) return false; } return true; }];
+        function () { foreach (JF_SECTION as $name => $ws) { if ($name === 'appended') continue;   // in order of addition
+                        $s = $ws; sort($s, SORT_STRING); if ($s !== $ws) return false; } return true; }];
+$T[] = ['order.appendedFromDD', '', null, null, null,
+        fn() => JF_WORD['ED25519-CHECKSIG'] === 0xdd && JF_WORD['ED25519-CHECKSIGVERIFY'] === 0xde && JF_RESERVED0 === 0xdf];
 $T[] = ['order.sectionsInDeclaredOrder', '', null, null, null,
         function () { $expect = []; foreach (JF_SECTION as $ws) foreach ($ws as $w) $expect[] = $w;
                       global $W; return $expect === $W; }];
