@@ -329,8 +329,14 @@ $codesO = array_map(fn($w) => JF_WORD[$w], $own);
 $T[] = ['order.sectionsAlphabeticalWithin', '', null, null, null,
         function () { foreach (JF_SECTION as $name => $ws) { if ($name === 'appended') continue;   // in order of addition
                         $s = $ws; sort($s, SORT_STRING); if ($s !== $ws) return false; } return true; }];
-$T[] = ['order.appendedFromDD', '', null, null, null,
-        fn() => JF_WORD['ED25519-CHECKSIG'] === 0xdd && JF_WORD['ED25519-CHECKSIGVERIFY'] === 0xde && JF_RESERVED0 === 0xdf];
+// ★ crypto is the LAST section, directly before the reserve: it is the one that grows, so an append lands
+//   next to it. Ed25519 sits inside it alphabetically.
+$T[] = ['order.cryptoLastBeforeReserve', '', null, null, null,
+        fn() => max(array_map(fn($w) => JF_WORD[$w], JF_SECTION['crypto'])) === JF_RESERVED0 - 1
+             && array_key_last(JF_SECTION) === 'crypto'];
+$T[] = ['order.ed25519InCrypto', '', null, null, null,
+        fn() => in_array('ED25519-CHECKSIG', JF_SECTION['crypto'], true)
+             && JF_WORD['ED25519-CHECKSIG'] === JF_WORD['CHECKSIGVERIFY'] + 1];
 $T[] = ['order.sectionsInDeclaredOrder', '', null, null, null,
         function () { $expect = []; foreach (JF_SECTION as $ws) foreach ($ws as $w) $expect[] = $w;
                       global $W; return $expect === $W; }];

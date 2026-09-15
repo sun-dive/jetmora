@@ -55,7 +55,12 @@ LOCALS = ['(FRAME)', '(LOCAL@)', '(LOCAL!)', '(UNFRAME)']
 ABORTS = ['(ABORT")']
 
 CRYPTO = ['CHECKMULTISIG', 'CHECKMULTISIGVERIFY', 'CHECKSIG', 'CHECKSIGVERIFY',
+          'ED25519-CHECKSIG', 'ED25519-CHECKSIGVERIFY',
           'HASH160', 'HASH256', 'RIPEMD160', 'SHA1', 'SHA256']
+# ED25519-CHECKSIG ( a-sig u-sig a-pub u-pub a-msg u-msg -- flag ): Ed25519 over the message as given
+#   (the scheme hashes internally, so no digest word precedes it). 32-byte key, 64-byte signature; any
+#   other length is a failed check, never an error. CHECKSIG itself stays secp256k1: a word that
+#   mirrors a Bitcoin opcode keeps Bitcoin's meaning, and another scheme is another word.
 TX = ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE',
       'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'TXVERSION',
       'VER', 'VERIF', 'VERNOTIF']
@@ -68,13 +73,12 @@ TX = ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE',
 #   ⚠ Constant time by construction: it must not leak where two hashes first differ.
 BYTES = ['BIN2NUM', 'BYTES=', 'CAT', 'LEFT', 'NUM2BIN', 'RIGHT', 'SIZE', 'SPLIT', 'SUBSTR']
 
-# ★ APPENDED after the sectioned fill was pinned (15 Sept, revision 2). In order of addition, from
-#   0xDD upward, never sorted and never moved: an insert would renumber everything above it.
-#   ED25519-CHECKSIG ( a-sig u-sig a-pub u-pub a-msg u-msg -- flag ): Ed25519 over the message as given
-#   (the scheme hashes internally, so no digest word precedes it). 32-byte key, 64-byte signature;
-#   any other length is a failed check, never an error. CHECKSIG itself stays secp256k1: a word that
-#   mirrors a Bitcoin opcode keeps Bitcoin's meaning, and another scheme is another word.
-APPENDED = ['ED25519-CHECKSIG', 'ED25519-CHECKSIGVERIFY']
+# ★ APPENDED: words added after the sectioned fill is pinned. In order of addition, from the first
+#   reserved byte upward, never sorted and never moved: an insert would renumber everything above it.
+#   ⚠ The crypto section is LAST in the own run (his call, 15 Sept: it is the section most likely to
+#   grow — SHA512 is the obvious next word), so a crypto append lands adjacent to it and the section
+#   simply grows. Empty at revision 3.
+APPENDED = []
 
 LITFORMS = [('LIT8',   'next 1 byte, signed  -> integer'),
             ('LIT16',  'next 2 bytes, signed -> integer'),
@@ -185,15 +189,15 @@ def assign(src=SRC):
     #   anyone holding this file and the standard regenerates the same numbers.
     # ⇒ Two runs kept: promoted Forth words first (each has a bank slot that is RESERVED-ILLEGAL),
     #   then jetmora's own (no bank at all), so that difference stays visible in the numbering.
-    # ⚠ Renumbered 15 Sept while nothing permanent pins these bytes (no JF conformance vector, no
-    #   chain entry; foen's threads keep no chain behind the tip and redeploy with it). After a
-    #   conformance vector or a deployed covenant pins them, the rule becomes APPEND-ONLY: a new word
-    #   goes at 0xDD upward, whatever its category.
+    # ★ CRYPTO IS LAST, directly before the reserve (his call, 15 Sept): it is the section that will
+    #   grow, so an appended crypto word sits next to its section instead of in a second, unsorted one.
+    # ⚠ This layout is `JF` REVISION 3. A renumber is always a new revision, never a redefinition.
+    #   Made while nothing permanent pins the bytes (no JF conformance vector, no chain entry; foen's
+    #   threads keep no chain behind the tip and redeploy with it). From here the rule is APPEND-ONLY.
     SECTIONS = [(name, sorted(g)) for name, g in HOT.items()] + [
         ('branch', sorted(BRANCH)), ('tier boundary', sorted(INVOKE)), ('locals runtime', sorted(LOCALS)),
-        ('abort runtime', sorted(ABORTS)), ('crypto', sorted(CRYPTO)), ('transaction', sorted(TX)),
-        ('byte strings', sorted(BYTES)),
-        ('appended', list(APPENDED))]          # ⚠ in order of addition, never sorted
+        ('abort runtime', sorted(ABORTS)), ('byte strings', sorted(BYTES)), ('transaction', sorted(TX)),
+        ('crypto', sorted(CRYPTO))] + ([('appended', list(APPENDED))] if APPENDED else [])
     words = [w for _, ws in SECTIONS for w in ws]
     n_lit = len(SMALL_INTS) + len(LITFORMS)
     # ⚠⚠ THE RESERVE IS THE REMAINDER, NEVER A RANGE. Letting the push range absorb

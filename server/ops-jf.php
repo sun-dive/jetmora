@@ -6,9 +6,10 @@
 //    The human table is ~/Documents/jetmora-jf-wordmap.md, generated from the SAME map, so the
 //    two cannot drift. Conformance vectors pin behaviour, not numbering — they would not catch it.
 //
-// ⚠ THIS NUMBERING IS `JF` REVISION 2 (sections by category, alphabetical within, 15 Sept).
-//    Revision 1 was a single alphabetical run; it never reached a chain and is not served.
-//    A renumber is a new revision, never a redefinition: nVersion names the semantics (§6b).
+// ⚠ THIS NUMBERING IS `JF` REVISION 3 (sections by category, alphabetical within, crypto LAST
+//    before the reserve so the section that grows can grow in place; 15 Sept).
+//    Revisions 1 (one alphabetical run) and 2 (sections, crypto mid-run) never reached a chain
+//    and are not served. A renumber is a new revision, never a redefinition (§6b).
 //
 // TWO TIERS (design notes §10.5e–§10.5j):
 //   jetForth  one byte  — pushes, runtime primitives, all crypto. CONTROLS the covenant.
@@ -70,18 +71,17 @@ const JF_WORD = [
   '(FRAME)'=>0xb9, '(LOCAL!)'=>0xba, '(LOCAL@)'=>0xbb, '(UNFRAME)'=>0xbc,
   // abort runtime (1)
   '(ABORT")'=>0xbd,
-  // crypto (9)
-  'CHECKMULTISIG'=>0xbe, 'CHECKMULTISIGVERIFY'=>0xbf, 'CHECKSIG'=>0xc0, 'CHECKSIGVERIFY'=>0xc1,
-  'HASH160'=>0xc2, 'HASH256'=>0xc3, 'RIPEMD160'=>0xc4, 'SHA1'=>0xc5, 'SHA256'=>0xc6,
+  // byte strings (9)
+  'BIN2NUM'=>0xbe, 'BYTES='=>0xbf, 'CAT'=>0xc0, 'LEFT'=>0xc1, 'NUM2BIN'=>0xc2, 'RIGHT'=>0xc3,
+  'SIZE'=>0xc4, 'SPLIT'=>0xc5, 'SUBSTR'=>0xc6,
   // transaction (13)
   'LOCKTIME'=>0xc7, 'NSEQUENCE'=>0xc8, 'OUTPOINT'=>0xc9, 'OUTPUTS-HASH'=>0xca, 'PREIMAGE'=>0xcb,
   'PREVOUTS-HASH'=>0xcc, 'SCRIPTCODE'=>0xcd, 'SEQUENCES-HASH'=>0xce, 'TXVALUE'=>0xcf,
   'TXVERSION'=>0xd0, 'VER'=>0xd1, 'VERIF'=>0xd2, 'VERNOTIF'=>0xd3,
-  // byte strings (9)
-  'BIN2NUM'=>0xd4, 'BYTES='=>0xd5, 'CAT'=>0xd6, 'LEFT'=>0xd7, 'NUM2BIN'=>0xd8, 'RIGHT'=>0xd9,
-  'SIZE'=>0xda, 'SPLIT'=>0xdb, 'SUBSTR'=>0xdc,
-  // appended (2)
-  'ED25519-CHECKSIG'=>0xdd, 'ED25519-CHECKSIGVERIFY'=>0xde,
+  // crypto (11)
+  'CHECKMULTISIG'=>0xd4, 'CHECKMULTISIGVERIFY'=>0xd5, 'CHECKSIG'=>0xd6, 'CHECKSIGVERIFY'=>0xd7,
+  'ED25519-CHECKSIG'=>0xd8, 'ED25519-CHECKSIGVERIFY'=>0xd9, 'HASH160'=>0xda, 'HASH256'=>0xdb,
+  'RIPEMD160'=>0xdc, 'SHA1'=>0xdd, 'SHA256'=>0xde,
 ];
 
 /** the declared section order the bytes follow: section => words, alphabetical within. */
@@ -98,10 +98,9 @@ const JF_SECTION = [
   'tier boundary' => ['INVOKE'],
   'locals runtime' => ['(FRAME)', '(LOCAL!)', '(LOCAL@)', '(UNFRAME)'],
   'abort runtime' => ['(ABORT")'],
-  'crypto' => ['CHECKMULTISIG', 'CHECKMULTISIGVERIFY', 'CHECKSIG', 'CHECKSIGVERIFY', 'HASH160', 'HASH256', 'RIPEMD160', 'SHA1', 'SHA256'],
-  'transaction' => ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE', 'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'TXVERSION', 'VER', 'VERIF', 'VERNOTIF'],
   'byte strings' => ['BIN2NUM', 'BYTES=', 'CAT', 'LEFT', 'NUM2BIN', 'RIGHT', 'SIZE', 'SPLIT', 'SUBSTR'],
-  'appended' => ['ED25519-CHECKSIG', 'ED25519-CHECKSIGVERIFY'],
+  'transaction' => ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE', 'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'TXVERSION', 'VER', 'VERIF', 'VERNOTIF'],
+  'crypto' => ['CHECKMULTISIG', 'CHECKMULTISIGVERIFY', 'CHECKSIG', 'CHECKSIGVERIFY', 'ED25519-CHECKSIG', 'ED25519-CHECKSIGVERIFY', 'HASH160', 'HASH256', 'RIPEMD160', 'SHA1', 'SHA256'],
 ];
 
 /** first escape byte; 0xff is the PLANE escape and is never a wordset. */

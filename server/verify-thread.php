@@ -79,7 +79,7 @@ ok(str_contains($t['bytes'], $seenPreimage), '★ the preimage is carried IN the
 ok(strlen($t['bytes']) > 181, sprintf('the entry is %d bytes — it carries a script, unlike the old 84', strlen($t['bytes'])));
 $rt = CovenantEntry::decode($t['bytes']);
 ok($rt['inputs'][0]['sequence'] === 1, '⚠ nSequence IS the tick index (§6.3) — time never comes from a clock');
-ok($rt['version'] === version_build('JF', 2), 'the entry names a FAMILY version, not legacy 103');
+ok($rt['version'] === version_build('JF', 3), 'the entry names a FAMILY version, not legacy 103');
 
 // ⚠⚠ THE PROPERTY THE WHOLE ORDERING RESTS ON
 $t2 = CovenantThread::tick($g['id'], 0, $tipLocking, $tipValue, $successor, 1,

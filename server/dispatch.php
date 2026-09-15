@@ -112,4 +112,4 @@ function interpreter_for(int $nVersion): object
 // ⚠ A host ships only the sets it serves. On a $2/month tier that is not a rounding error.
 register_set('SV', __DIR__ . '/interpreter-sv.php', 'InterpreterSV', [1]);
 register_set('BT', __DIR__ . '/interpreter-bt.php', 'InterpreterBT', [1]);
-register_set('JF', __DIR__ . '/interpreter-jf.php', 'InterpreterJF', [2]);   // revision 1 (single alphabetical run) never reached a chain and is not served
+register_set('JF', __DIR__ . '/interpreter-jf.php', 'InterpreterJF', [3]);   // revisions 1 and 2 never reached a chain and are not served
