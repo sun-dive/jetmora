@@ -45,7 +45,7 @@ ok(strlen(hex2bin(DEAD_CHAIN_ENTRY)) === 84, 'it is 84 bytes; a §3-conformant e
 // ── a real covenant entry ───────────────────────────────────────────────────────────────────────────
 echo "\n── the covenant entry — the DESIGN object ──\n";
 $entry = [
-  'version'  => version_build('JF', 1),
+  'version'  => version_build('JF', 2),
   'inputs'   => [['prevEntry' => str_repeat("\x11", 32), 'index' => 0,
                   'unlocking' => "\x47" . str_repeat("\x30", 0x47),   // a signature-shaped push
                   'sequence' => 7]],

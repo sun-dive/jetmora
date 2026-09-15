@@ -136,7 +136,7 @@ final class CovenantThread
 
     // 1. the skeleton. The unlocking script is not needed yet and is not part of the preimage.
     $skeleton = [
-      'version'  => $version ?? version_build('JF', 1),
+      'version'  => $version ?? version_build('JF', 2),
       'inputs'   => [['prevEntry' => $prevEntryHash, 'index' => $prevIndex,
                       'unlocking' => '', 'sequence' => $sequence]],
       'outputs'  => $outputs,

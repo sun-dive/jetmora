@@ -55,12 +55,13 @@ echo "\n── dispatch ──\n";
 throws(fn() => interpreter_for(103), 'legacy 103 has no interpreter and says why');
 $bt = interpreter_for(version_build('BT', 1));
 ok($bt instanceof InterpreterBT, 'BT rev 1 dispatches to InterpreterBT');
-$jf = interpreter_for(version_build('JF', 1));
+$jf = interpreter_for(version_build('JF', 2));
 ok($jf instanceof InterpreterJF, 'JF rev 1 dispatches to InterpreterJF');
 // ⚠ Registering JF must not make an UNREGISTERED family fall back to it — that is §6b's whole point,
 //   and it is worth re-asserting here now that all three sets exist.
 throws(fn() => interpreter_for(version_build('JZ', 1)), 'JZ is not registered — refused, not substituted');
-throws(fn() => interpreter_for(version_build('JF', 2)), 'JF revision 2 is not registered — refused');
+throws(fn() => interpreter_for(version_build('JF', 1)), 'JF revision 1 is not registered — refused');
+throws(fn() => interpreter_for(version_build('JF', 3)), 'JF revision 3 is not registered — refused');
 
 // ★★★ THE POINT OF THE WHOLE SET MODEL, IN ONE ASSERTION:
 //     byte 0x7f is OP_SUBSTR under BT and OP_SPLIT under SV. The SAME SCRIPT must give DIFFERENT
