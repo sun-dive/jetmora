@@ -93,6 +93,33 @@ final class LogStore
             ) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v BLOB);
         ');
+        // ★ The index per covenant (the reference, §2): which thread an entry advances, so a thread is
+        //   read back with one query instead of a scan. Added as a column so an older file migrates.
+        $cols = array_column($this->db->query('PRAGMA table_info(entries)')->fetchAll(PDO::FETCH_ASSOC), 'name');
+        if (!in_array('genesis', $cols, true)) $this->db->exec('ALTER TABLE entries ADD COLUMN genesis BLOB');
+        $this->db->exec('CREATE INDEX IF NOT EXISTS entries_genesis ON entries (genesis, seq)');
+    }
+
+    /** The entries of one thread, oldest first, after a sequence number. @return array<array{seq:int, body:string}> */
+    public function entriesOf(string $genesis, int $after = -1, int $limit = 256): array
+    {
+        $st = $this->db->prepare('SELECT seq, body FROM entries WHERE genesis=? AND seq>? ORDER BY seq LIMIT ?');
+        $st->execute([$genesis, $after, max(1, min(256, $limit))]);
+        return array_map(fn($r) => ['seq' => (int)$r['seq'], 'body' => $r['body']], $st->fetchAll(PDO::FETCH_ASSOC));
+    }
+    /** The newest sequence number of a thread, or null if it has none. */
+    public function tipOf(string $genesis): ?int
+    {
+        $st = $this->db->prepare('SELECT MAX(seq) FROM entries WHERE genesis=?');
+        $st->execute([$genesis]);
+        $v = $st->fetchColumn();
+        return $v === null || $v === false ? null : (int)$v;
+    }
+    public function countOf(string $genesis): int
+    {
+        $st = $this->db->prepare('SELECT COUNT(*) FROM entries WHERE genesis=?');
+        $st->execute([$genesis]);
+        return (int)$st->fetchColumn();
     }
 
     /**
@@ -162,7 +189,7 @@ final class LogStore
      * Append one entry. ⚠ Returns its sequence number.
      * Writes exactly the nodes that BECAME COMPLETE — at most log(n) of them.
      */
-    public function append(string $body): int
+    public function append(string $body, ?string $genesis = null): int
     {
         // ⚠⚠ BEGIN IMMEDIATE, NOT beginTransaction(). PDO issues a plain BEGIN, which is DEFERRED:
         //    the write lock is not taken until the first INSERT, but size() is READ before it. Under
@@ -180,8 +207,8 @@ final class LogStore
         try {
             $seq = $this->size();
             $leaf = mt_leaf_hash($body);
-            $this->db->prepare('INSERT INTO entries (seq, hash, body) VALUES (?,?,?)')
-                     ->execute([$seq, $leaf, $body]);
+            $this->db->prepare('INSERT INTO entries (seq, hash, body, genesis) VALUES (?,?,?,?)')
+                     ->execute([$seq, $leaf, $body, $genesis]);
             $this->db->prepare('INSERT INTO nodes (level, idx, hash) VALUES (0,?,?)')
                      ->execute([$seq, $leaf]);
 

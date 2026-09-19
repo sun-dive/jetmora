@@ -71,12 +71,48 @@ $unhex = function (string $h, int $bytes = 0): string {
     return $b;
 };
 
+// ── PACKED TRANSPORT (his rule, 19 Sept): bytes on the wire, as on the chain ───────────────────────
+//   A wallet talks in the framing the relay already uses: a 4-byte big-endian length before each field
+//   or entry. JSON stays for people, tooling and the replay page. The choice is the client's:
+//     POST with Content-Type: application/octet-stream  ⇒ the body is packed fields
+//     GET  with Accept: application/octet-stream (or &f=bin) ⇒ the answer is packed
+//   Errors are always JSON, so no answer is ever an empty body.
+$packedIn  = str_starts_with($_SERVER['CONTENT_TYPE'] ?? '', 'application/octet-stream');
+$packedOut = str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/octet-stream') || ($_GET['f'] ?? '') === 'bin';
+$lp = fn(string $b) => pack('N', strlen($b)) . $b;
+/** Split a packed body into its length-prefixed fields; refuses trailing or truncated bytes. */
+$fields = function (string $body, int $n): array {
+    $out = []; $o = 0;
+    for ($i = 0; $i < $n; $i++) {
+        if ($o + 4 > strlen($body)) out(['error' => "packed body truncated at field $i"], 400);
+        $len = unpack('N', substr($body, $o, 4))[1]; $o += 4;
+        if ($o + $len > strlen($body)) out(['error' => "packed body truncated in field $i"], 400);
+        $out[] = substr($body, $o, $len); $o += $len;
+    }
+    if ($o !== strlen($body)) out(['error' => 'packed body has trailing bytes'], 400);
+    return $out;
+};
+function outBytes(string $body, int $status = 200, array $headers = []): never {
+    http_response_code($status);
+    header('Content-Type: application/octet-stream');
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Expose-Headers: X-Tip, X-Count, X-More, X-Seq, X-Tree-Size');
+    foreach ($headers as $k => $v) header("$k: $v");
+    echo $body;
+    exit;
+}
+
 if (!is_dir(dirname(DB_PATH))) @mkdir(dirname(DB_PATH), 0700, true);
 $db = new PDO('sqlite:' . DB_PATH, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $db->exec('PRAGMA busy_timeout=10000');  // ⚠ match LogStore's ATTR_TIMEOUT — two connections, one file
 $store = new LogStore(DB_PATH);
 $registry = new GenesisRegistry($db);
 $heads = new HeadStore($db);
+// ⏭ The operator's own policy (spec §4.5): a price, an account, a rate limit. A file beside this one
+//   returning ['register' => fn(): bool, 'append' => fn(string $genesisId, string $hexKey): bool].
+//   Not a validity check, and not part of the protocol; absent, everything is admitted.
+$policy = is_file(__DIR__ . '/policy.php') ? (require __DIR__ . '/policy.php') : [];
+if (!is_array($policy)) $policy = [];
 
 $op = $_GET['op'] ?? '';
 $n = $store->size();
@@ -141,6 +177,26 @@ case 'entry':
                            'note' => 'still provable given the body; see spec §5c.2 for where to obtain it'], 410);
     out(['seq' => $seq, 'entry' => $hex($body)]);
 
+// ── one thread, read back — the index per covenant ────────────────────────────────────────────
+case 'entries':
+    $g = $unhex((string)($_GET['genesis'] ?? ''), 32);
+    $after = (int)($_GET['after'] ?? -1);
+    $limit = (int)($_GET['limit'] ?? 256);
+    $rows = $store->entriesOf($g, $after, $limit);
+    $tip = $store->tipOf($g);
+    if ($packedOut)   // each entry: 4-byte length ‖ bytes — the relay's framing, so one parser serves both
+        outBytes(implode('', array_map(fn($r) => $lp($r['body']), $rows)), 200,
+                 ['X-Tip' => $tip ?? -1, 'X-Count' => count($rows), 'X-More' => ($rows !== [] && end($rows)['seq'] < $tip) ? 1 : 0]);
+    out(['genesis' => $hex($g), 'after' => $after,
+         'entries' => array_map(fn($r) => ['seq' => $r['seq'], 'entry' => $hex($r['body'])], $rows),
+         'tip' => $tip, 'more' => $rows !== [] && end($rows)['seq'] < $tip]);
+
+case 'tip':
+    $g = $unhex((string)($_GET['genesis'] ?? ''), 32);
+    $tip = $store->tipOf($g); $count = $store->countOf($g);
+    if ($packedOut) outBytes(pack('N', $tip ?? 0xFFFFFFFF) . pack('N', $count), 200, ['X-Tip' => $tip ?? -1, 'X-Count' => $count]);
+    out(['genesis' => $hex($g), 'tip' => $tip, 'count' => $count]);
+
 case 'genesis':
     $g = $registry->get($unhex((string)($_GET['id'] ?? ''), 32));
     if ($g === null) out(['error' => 'unknown genesis'], 404);
@@ -155,15 +211,33 @@ case 'genesis':
 //   may advance it would not be a genesis.
 case 'register':
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
+    if ($packedIn) {
+        // ★ The body IS the commitment: LP(source_hash) ‖ LP(script) ‖ LP(state) ‖ LP(authorised). The id is
+        //   its double hash, so what the wallet sends is exactly what it hashed — nothing to re-encode.
+        [$sh, $sc, $stt, $ap] = $fields(file_get_contents('php://input') ?: '', 4);
+        if (strlen($sh) !== 32) out(['error' => 'source_hash must be 32 bytes'], 400);
+        if (GenesisRegistry::unpackAuthorised($ap) === null) out(['error' => 'authorised is not a packed set'], 400);
+        if (isset($policy['register']) && !$policy['register']()) out(['error' => 'refused by operator policy'], 402);
+        $id = $registry->register(['source_hash' => $sh, 'script' => $sc, 'state' => $stt, 'authorised' => $ap]);
+        if ($packedOut) outBytes($id, 201);
+        out(['genesis' => $hex($id)], 201);
+    }
     $in = json_decode(file_get_contents('php://input') ?: '', true);
     if (!is_array($in)) out(['error' => 'body must be JSON'], 400);
-    foreach (['source_hash', 'script', 'state', 'authorised'] as $k)
+    foreach (['source_hash', 'script', 'state'] as $k)
         if (!isset($in[$k])) out(['error' => "missing $k"], 400);
-    // `authorised` is "open", a list of hex public keys (1-of-n), or {threshold, keys} (k-of-n) — §4.2a.
-    // ⚠⚠ PACKED, NEVER json_encode: these bytes are hashed into the covenant's IDENTITY, and a JSON
-    //    encoder's spacing or key order would change it. Sorting inside makes [a,b] and [b,a] one covenant.
-    try { $authPacked = GenesisRegistry::packAuthorised($in['authorised']); }
-    catch (InvalidArgumentException $e) { out(['error' => $e->getMessage()], 400); }
+    if (isset($policy['register']) && !$policy['register']()) out(['error' => 'refused by operator policy'], 402);
+    // `authorised` is "open", a list of hex public keys (1-of-n), or {threshold, keys} (k-of-n) — §4.2a —
+    // packed here as HASHES; or `authorised_packed`, the bytes already packed by a wallet that derived the
+    // id itself, so the id it computed and the id registered here are the same bytes hashed.
+    // ⚠⚠ PACKED, NEVER json_encode: these bytes are hashed into the covenant's IDENTITY.
+    if (isset($in['authorised_packed'])) {
+        $authPacked = $unhex((string)$in['authorised_packed']);
+        if (GenesisRegistry::unpackAuthorised($authPacked) === null) out(['error' => 'authorised_packed is not a packed set'], 400);
+    } elseif (isset($in['authorised'])) {
+        try { $authPacked = GenesisRegistry::packAuthorised($in['authorised']); }
+        catch (InvalidArgumentException $e) { out(['error' => $e->getMessage()], 400); }
+    } else out(['error' => 'missing authorised'], 400);
     $id = $registry->register([
         'source_hash' => $unhex($in['source_hash'], 32),
         'script'      => $unhex($in['script']),
@@ -194,7 +268,9 @@ case 'port':
     $gf = $in['genesis_fields'];
     $genesisId = $registry->register([
         'source_hash' => $unhex($gf['source_hash'], 32), 'script' => $unhex($gf['script']),
-        'state' => $unhex($gf['state']), 'authorised' => json_encode($gf['authorised']),
+        'state' => $unhex($gf['state']),
+        'authorised' => isset($gf['authorised_packed']) ? $unhex((string)$gf['authorised_packed'])
+                                                       : GenesisRegistry::packAuthorised($gf['authorised'] ?? 'open'),
     ]);
 
     $entry = $unhex($in['entry']);
@@ -213,8 +289,7 @@ case 'port':
     // 3. an authorised key asked for this continuation — ⚠ this is what stops ANYONE porting
     //    someone else's covenant, and it is why portable state is safe (spec §3.5)
     $auth = $registry->authorisedFor($genesisId);
-    $authorHex = strtolower(bin2hex($unhex($in['author_pubkey'])));
-    if ($auth !== 'open' && !in_array($authorHex, array_map('strtolower', $auth ?? []), true))
+    if ($auth === null || !GenesisRegistry::isAuthorised($auth, $unhex($in['author_pubkey'])))
         out(['error' => 'author is not authorised for this covenant'], 403);
     if (!Appender::verifySignature($entry, $unhex($in['author_pubkey']), $unhex($in['author_sig'])))
         out(['error' => 'author signature does not verify'], 403);
@@ -222,7 +297,7 @@ case 'port':
     // ⚠ An ANCHORED source root is final; a merely signed one is portable but CONTESTABLE (§4b.3).
     //   Recorded, not adjudicated — the log has no opinion about which it was.
     $anchored = $h['anchor_root'] !== null && $h['anchor_size'] >= (int)$in['sequence'] + 1;
-    $seq = $store->append($entry);
+    $seq = $store->append($entry, $genesisId);
     out(['seq' => $seq, 'genesis' => $hex($genesisId), 'tree_size' => $store->size(),
          'root' => $hex($store->root()), 'source_tree_size' => $h['tree_size'],
          'source_was_anchored' => $anchored,
@@ -232,13 +307,21 @@ case 'port':
 // ── the append rule: ONE signature check and nothing else (spec §4.1) ────────────────────────
 case 'append':
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
+    // ⏭ the operator's own policy — a price, an account, a rate limit — hooks in here (spec §4.5).
+    //    ⚠ The protocol defines no price, no currency and no settlement (§3.4-0b).
+    $appender = new Appender($store, $registry, $policy['append'] ?? null);
+    if ($packedIn) {
+        // genesis in the query; body = LP(entry) ‖ LP(pubkey) ‖ LP(signature)
+        [$entry, $pk, $sig] = $fields(file_get_contents('php://input') ?: '', 3);
+        $r = $appender->append($unhex((string)($_GET['genesis'] ?? ''), 32), $entry, $pk, $sig);
+        if (!$r->ok) out(['error' => $r->error], $r->status);
+        if ($packedOut) outBytes(pack('N', $r->seq), 201, ['X-Seq' => $r->seq, 'X-Tree-Size' => $store->size()]);
+        out(['seq' => $r->seq, 'tree_size' => $store->size(), 'root' => $hex($store->root())], 201);
+    }
     $in = json_decode(file_get_contents('php://input') ?: '', true);
     if (!is_array($in)) out(['error' => 'body must be JSON'], 400);
     foreach (['genesis', 'entry', 'pubkey', 'signature'] as $k)
         if (!isset($in[$k]) || !is_string($in[$k])) out(['error' => "missing $k"], 400);
-    // ⏭ the operator's own policy — a price, an account, a rate limit — hooks in here (spec §4.5).
-    //    ⚠ The protocol defines no price, no currency and no settlement (§3.4-0b).
-    $appender = new Appender($store, $registry, null);
     $r = $appender->append($unhex($in['genesis'], 32), $unhex($in['entry']),
                            $unhex($in['pubkey']), $unhex($in['signature']));
     if (!$r->ok) out(['error' => $r->error], $r->status);
@@ -254,5 +337,5 @@ default:
          'spec_versions' => ['0.1.1' => 'https://jetmora.org/spec/log.md',
                              '0.1'   => 'https://jetmora.org/spec/log-v0.1.md'],
          'protocol_version' => 1,   // ⚠ NOT the document version — see spec §6b
-         'ops' => ['info', 'head', 'inclusion', 'consistency', 'entry', 'genesis', 'register', 'append', 'port']]);
+         'ops' => ['info', 'head', 'inclusion', 'consistency', 'entry', 'entries', 'tip', 'genesis', 'register', 'append', 'port']]);
 }

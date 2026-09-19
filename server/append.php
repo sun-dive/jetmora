@@ -22,6 +22,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/secp256k1.php';
 require_once __DIR__ . '/store.php';
 require_once __DIR__ . '/genesis.php';
+require_once __DIR__ . '/covenant-entry.php';
 
 final class AppendResult
 {
@@ -53,22 +54,28 @@ final class Appender
         // ── 1. canonical serialization (spec §3.1) ───────────────────────────────────────────
         //    ⚠ Not a formality: OP_PUSH_TX is secure only because a verifier recomputes the preimage
         //    and compares. Two encodings of one entry would let a signer push a preimage that does not
-        //    describe what they did.
+        //    describe what they did. ⇒ Decode, re-encode, require the same bytes. The decoder also
+        //    refuses the shape the first test chain had (no unlocking script): a log tick is not a
+        //    covenant tick, and this log records covenant ticks.
         if ($entry === '') return new AppendResult(false, null, 'empty entry', 400);
         if (strlen($entry) > 100_000) return new AppendResult(false, null, 'entry too large', 413);
+        try { $canonical = CovenantEntry::encode(CovenantEntry::decode($entry)) === $entry; }
+        catch (CovenantEntryError $e) { return new AppendResult(false, null, 'not a covenant entry: ' . $e->getMessage(), 400); }
+        if (!$canonical) return new AppendResult(false, null, 'entry is not canonically serialized', 400);
 
         // ── 2. who may append (spec §4.2) ────────────────────────────────────────────────────
         $auth = $this->registry->authorisedFor($genesisId);
         if ($auth === null) return new AppendResult(false, null, 'unknown genesis', 404);
         $hexKey = bin2hex($pubkey);
-        if ($auth !== 'open') {
+        if ($auth !== GenesisRegistry::AUTH_OPEN) {
             // ⚠⚠ REFUSE k>1 RATHER THAN ACCEPT ONE SIGNATURE FOR IT. This endpoint carries a single
             //   signature, so a k-of-n covenant CANNOT be satisfied here. Letting one signature through
             //   would silently turn every threshold into 1-of-n — a hole, not a limitation.
             //   ⇒ 501: the covenant is well-formed and this server cannot honour it yet (spec §4.2a).
-            if (($auth['k'] ?? 1) > 1)
+            $set = GenesisRegistry::unpackAuthorised($auth);
+            if (($set['k'] ?? 1) > 1)
                 return new AppendResult(false, null, 'k-of-n append is not implemented; this endpoint carries one signature', 501);
-            if (!in_array($hexKey, array_map('strtolower', $auth['keys'] ?? []), true))
+            if (!GenesisRegistry::isAuthorised($auth, $pubkey))
                 return new AppendResult(false, null, 'key not authorised for this covenant', 403);
         }
 
@@ -82,7 +89,7 @@ final class Appender
         // ⚠ NO duplicate check (spec §4.5 / §4.4). Two entries at one sequence are a FACT ABOUT THE
         //   SIGNER, faithfully witnessed. Rejecting the second would make the operator decide
         //   first-seen, which is consensus in miniature.
-        return new AppendResult(true, $this->store->append($entry));
+        return new AppendResult(true, $this->store->append($entry, $genesisId));
     }
 
     /**

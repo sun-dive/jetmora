@@ -34,19 +34,23 @@ final class GenesisRegistry
      * ⚠⚠ AUTHORISED IS PACKED, NEVER JSON — spec §2, §4.2a.
      *
      * It was `json_encode($auth)` until 30 Aug, and that put a JSON encoder's whitespace and key order
-     * inside the bytes a covenant's IDENTITY is hashed from. ⇒ ON CHAIN IS ALWAYS PACKED BYTES. The rule
-     * was already written down; this field was the one place that broke it.
+     * inside the bytes a covenant's IDENTITY is hashed from. ⇒ ON CHAIN IS ALWAYS PACKED BYTES.
      *
      *   open       0x00
-     *   threshold  0x01 ‖ k ‖ n ‖ (len ‖ key) × n      keys ASCENDING by raw bytes, no duplicates
+     *   keys       0x01 ‖ k ‖ n ‖ (len ‖ key)  × n      legacy: read, never written
+     *   hashes     0x02 ‖ k ‖ n ‖ (len ‖ sha256(key)) × n   ★ what is written (7 Sept): a public key in the
+     *              clear is a search key; the hash breaks the link, and an append supplies the key anyway
      *
-     * ★ Sorting is not tidiness — it is what makes the encoding canonical. Before this, `[a,b]` and
-     *   `[b,a]` were DIFFERENT COVENANTS. Now they are the same one, which is what anybody meant.
-     * ★ And a bare list is simply k=1, so a 1-of-n set has exactly ONE encoding, never two.
+     * ★ Sorting is what makes the encoding canonical: `[a,b]` and `[b,a]` are one covenant. A bare list
+     *   is k=1, so a 1-of-n set has exactly one encoding.
      */
+    public const AUTH_OPEN = "\x00";
+    public const V1_KEYS = 0x01;
+    public const V2_HASHES = 0x02;
+
     public static function packAuthorised(mixed $auth): string
     {
-        if ($auth === 'open') return "\x00";
+        if ($auth === 'open') return self::AUTH_OPEN;
         if (!is_array($auth)) throw new InvalidArgumentException('authorised must be a list or "open"');
 
         if (array_is_list($auth)) { $k = 1; $keys = $auth; }
@@ -56,7 +60,7 @@ final class GenesisRegistry
                 throw new InvalidArgumentException('authorised object must be {threshold:int, keys:[…]}');
         }
 
-        $raw = [];
+        $hashes = [];
         foreach ($keys as $hex) {
             if (!is_string($hex) || !preg_match('/^[0-9a-fA-F]+$/', $hex) || strlen($hex) % 2)
                 throw new InvalidArgumentException('authorised key is not hex');
@@ -64,35 +68,49 @@ final class GenesisRegistry
             // ⚠ 32 ⇒ Ed25519 · 33/65 ⇒ secp256k1. Anything else is not a key we can ever verify against.
             if (!in_array(strlen($b), [32, 33, 65], true))
                 throw new InvalidArgumentException('authorised key must be 32, 33 or 65 bytes');
-            $raw[] = $b;
+            $hashes[] = hash('sha256', $b, true);
         }
-        sort($raw, SORT_STRING);                                   // ★ canonical order
-        if (count(array_unique($raw, SORT_STRING)) !== count($raw))
+        sort($hashes, SORT_STRING);                                // ★ canonical order
+        if (count(array_unique($hashes, SORT_STRING)) !== count($hashes))
             throw new InvalidArgumentException('duplicate key in authorised');
 
-        $n = count($raw);
+        $n = count($hashes);
         if ($n < 1 || $n > 255)  throw new InvalidArgumentException('authorised needs 1..255 keys');
         if ($k < 1 || $k > $n)   throw new InvalidArgumentException('threshold must be 1..n');
 
-        $out = "\x01" . chr($k) . chr($n);
-        foreach ($raw as $b) $out .= chr(strlen($b)) . $b;
+        $out = chr(self::V2_HASHES) . chr($k) . chr($n);
+        foreach ($hashes as $h) $out .= chr(strlen($h)) . $h;
         return $out;
     }
 
-    /** @return array{k:int, keys:string[]}|'open'|null  keys as lowercase hex */
+    /** @return array{v:int, k:int, items:string[]}|'open'|null  items as lowercase hex: keys (v1) or hashes (v2) */
     public static function unpackAuthorised(string $b): array|string|null
     {
-        if ($b === "\x00") return 'open';
-        if (strlen($b) < 3 || $b[0] !== "\x01") return null;
-        $k = ord($b[1]); $n = ord($b[2]); $o = 3; $keys = [];
+        if ($b === self::AUTH_OPEN) return 'open';
+        if (strlen($b) < 3) return null;
+        $v = ord($b[0]);
+        if ($v !== self::V1_KEYS && $v !== self::V2_HASHES) return null;
+        $k = ord($b[1]); $n = ord($b[2]); $o = 3; $items = [];
         for ($i = 0; $i < $n; $i++) {
             if ($o >= strlen($b)) return null;
             $len = ord($b[$o]); $o++;
             if ($o + $len > strlen($b)) return null;
-            $keys[] = bin2hex(substr($b, $o, $len)); $o += $len;
+            $items[] = bin2hex(substr($b, $o, $len)); $o += $len;
         }
         if ($o !== strlen($b)) return null;                        // ⚠ trailing bytes are not canonical
-        return ['k' => $k, 'keys' => $keys];
+        if ($n < 1 || $k < 1 || $k > $n) return null;
+        return ['v' => $v, 'k' => $k, 'items' => $items];
+    }
+
+    /** Does this raw public key satisfy a packed `authorised`? Reads v1 (keys) and v2 (hashes). */
+    public static function isAuthorised(string $packed, string $pubkey): bool
+    {
+        if ($packed === self::AUTH_OPEN) return true;
+        $a = self::unpackAuthorised($packed);
+        if ($a === null || $a === 'open') return $a === 'open';
+        $needle = bin2hex($a['v'] === self::V2_HASHES ? hash('sha256', $pubkey, true) : $pubkey);
+        foreach ($a['items'] as $item) if (hash_equals($item, $needle)) return true;   // ⚠ attacker-supplied bytes
+        return false;
     }
 
     /** Canonical by construction: fixed order, length-prefixed, no options, no JSON. */
@@ -131,15 +149,14 @@ final class GenesisRegistry
 
     /**
      * ⇒ THE ONLY QUESTION THE APPEND RULE ASKS (spec §4.1, §4.2).
-     * @return string[]|'open'|null  hex public keys, the literal 'open', or null if unknown
+     * @return string|null  the PACKED authorised bytes (open, keys or hashes), or null if unknown
      */
-    public function authorisedFor(string $id): array|string|null
+    public function authorisedFor(string $id): ?string
     {
         $row = $this->get($id);
         if ($row === null) return null;
         // ⚠ Stored PACKED since 30 Aug. A row written before that is not readable here and is treated as
-        //   unknown rather than guessed at — the alternative is a JSON fallback whose bytes never matched
-        //   the id anyway. Only throwaway test genesis records existed at the change.
-        return self::unpackAuthorised($row['authorised']);
+        //   unknown rather than guessed at. Only throwaway test genesis records existed at the change.
+        return self::unpackAuthorised($row['authorised']) === null ? null : $row['authorised'];
     }
 }
