@@ -106,7 +106,7 @@ $escape = CovenantThread::tick($genesis['id'], 0, $script, pack('P', 41),
   [['value' => 42, 'locking' => "\x76\xa9\x14" . str_repeat("\x99",20) . "\x88\xac"]], 1,
   fn(string $pre) => chr(JF_SMALL0 + 1));
 ok(!runCovenant($script, $escape['preimage']),
-   '⛔⛔ a successor with a DIFFERENT script is REFUSED — the covenant survives its own spend');
+   '⛔⛔ a successor with a DIFFERENT script is REFUSED — the covenant survives its own tick');
 
 // ★ and a successor that pays a second output the covenant did not authorise
 $extra = CovenantThread::tick($genesis['id'], 0, $script, pack('P', 41),

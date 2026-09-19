@@ -109,7 +109,7 @@ final class CovenantThread
 
   // ── ticking it forward ────────────────────────────────────────────────────────────────────────────
   /**
-   * Build the entry that spends the current tip and produces its successor.
+   * Build the entry that signs the current tip forward and produces its successor.
    *
    * ★★★ THE ORDER MATTERS AND IS NOT ARBITRARY. The preimage covers the PREVIOUS tip's locking script,
    *   never this entry's unlocking script — so it can be computed BEFORE the unlocking script exists.

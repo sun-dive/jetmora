@@ -23,9 +23,10 @@
 //   sequence orders. ⚠⚠ **Nothing depends on it being honest, and a covenant MUST NOT read it.** §6.3
 //   stays absolute: a covenant derives time from `nSequence` and never from a clock.
 //
-// ⛔ A LOG RECORD IS NOT A SPEND. It has no unlocking script, carries no signature, and proves nothing
-//   about validity. That is not a shortcoming — it is the definition. Anything that needs proving
-//   belongs in `covenant-entry.php`.
+// ⛔ A LOG RECORD IS AN APPEND-ONLY TICK OF THE LOG THREAD, NOT A COVENANT TICK. The log is a thread
+//   that can only be ticked forward, and as a thread it is tamper-resistant (his words, 19 Sept). It has
+//   no unlocking script, carries no signature, and proves nothing about validity. That is not a
+//   shortcoming — it is the definition. Anything that needs proving belongs in `covenant-entry.php`.
 declare(strict_types=1);
 
 final class LogRecordError extends RuntimeException {}

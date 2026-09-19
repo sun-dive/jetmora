@@ -52,7 +52,7 @@ final class CovenantEntry
       // ⛔⛔ THE GUARD. This one line is what the first chain lacked.
       if (($i['unlocking'] ?? '') === '')
         throw new CovenantEntryError(
-          'an input with NO UNLOCKING SCRIPT is not a spend — it proves nothing about whether the '
+          'an input with NO UNLOCKING SCRIPT is a log tick, not a covenant tick — it proves nothing about whether the '
         . 'transition was permitted. That is a LOG RECORD; use log-record.php');
       $out .= $i['prevEntry'] . pack('V', $i['index'])
             . self::varint(strlen($i['unlocking'])) . $i['unlocking'] . pack('V', $i['sequence']);

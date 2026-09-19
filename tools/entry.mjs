@@ -62,7 +62,7 @@ export function serializeEntry(e) {
     // ⇒ A covenant entry without an unlocking script is not a covenant entry. Matches
     //   server/covenant-entry.php, which enforces the same on encode AND decode.
     if (!i.unlocking.length) throw new Error(
-      'an input with NO UNLOCKING SCRIPT is not a spend — it proves nothing about whether the ' +
+      'an input with NO UNLOCKING SCRIPT is a log tick, not a covenant tick — it proves nothing about whether the ' +
       'transition was permitted. That is a LOG RECORD, not a covenant entry.')
     out.push(...i.prevEntry, ...u32(i.index), ...varint(i.unlocking.length), ...i.unlocking, ...u32(i.sequence))
   }
