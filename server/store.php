@@ -97,6 +97,9 @@ final class LogStore
         //   read back with one query instead of a scan. Added as a column so an older file migrates.
         $cols = array_column($this->db->query('PRAGMA table_info(entries)')->fetchAll(PDO::FETCH_ASSOC), 'name');
         if (!in_array('genesis', $cols, true)) $this->db->exec('ALTER TABLE entries ADD COLUMN genesis BLOB');
+        // ⚠ When the operator RECEIVED the entry: a record for retention policy (§4.5), never a protocol
+        //   field and never read by a covenant (§6.3). Absent on rows from before the column existed.
+        if (!in_array('ts', $cols, true)) $this->db->exec('ALTER TABLE entries ADD COLUMN ts INTEGER');
         $this->db->exec('CREATE INDEX IF NOT EXISTS entries_genesis ON entries (genesis, seq)');
     }
 
@@ -106,6 +109,22 @@ final class LogStore
         $st = $this->db->prepare('SELECT seq, body FROM entries WHERE genesis=? AND seq>? ORDER BY seq LIMIT ?');
         $st->execute([$genesis, $after, max(1, min(256, $limit))]);
         return array_map(fn($r) => ['seq' => (int)$r['seq'], 'body' => $r['body']], $st->fetchAll(PDO::FETCH_ASSOC));
+    }
+    /**
+     * ★ RETENTION (spec §5c, an operator's policy): discard the BODIES of entries received more than
+     *   $seconds ago whose genesis STATE is not one of $keepStates. The leaf hashes stay, so the tree and
+     *   every proof still stand; a pruned body reads as '' (log.php answers 410 for it). Returns rows pruned.
+     */
+    public function pruneOlderThan(int $seconds, array $keepStates = []): int
+    {
+        $cut = time() - $seconds;
+        // ⚠ Compare states as HEX text: a bound PHP string is TEXT to SQLite and never equals a BLOB column.
+        $keep = array_map(fn($b) => strtoupper(bin2hex($b)), $keepStates) ?: ['-'];
+        $sql = 'UPDATE entries SET body = \'\' WHERE ts IS NOT NULL AND ts < ? AND length(body) > 0'
+             . ' AND genesis IN (SELECT id FROM genesis WHERE hex(state) NOT IN (' . implode(',', array_fill(0, count($keep), '?')) . '))';
+        $st = $this->db->prepare($sql);
+        $st->execute([$cut, ...$keep]);
+        return $st->rowCount();
     }
     /** The newest sequence number of a thread, or null if it has none. */
     public function tipOf(string $genesis): ?int
@@ -207,8 +226,8 @@ final class LogStore
         try {
             $seq = $this->size();
             $leaf = mt_leaf_hash($body);
-            $this->db->prepare('INSERT INTO entries (seq, hash, body, genesis) VALUES (?,?,?,?)')
-                     ->execute([$seq, $leaf, $body, $genesis]);
+            $this->db->prepare('INSERT INTO entries (seq, hash, body, genesis, ts) VALUES (?,?,?,?,?)')
+                     ->execute([$seq, $leaf, $body, $genesis, time()]);
             $this->db->prepare('INSERT INTO nodes (level, idx, hash) VALUES (0,?,?)')
                      ->execute([$seq, $leaf]);
 
