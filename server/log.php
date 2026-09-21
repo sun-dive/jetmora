@@ -191,6 +191,14 @@ case 'entries':
          'entries' => array_map(fn($r) => ['seq' => $r['seq'], 'entry' => $hex($r['body'])], $rows),
          'tip' => $tip, 'more' => $rows !== [] && end($rows)['seq'] < $tip]);
 
+case 'find':
+    // Threads by initial state: the way a party finds threads addressed to it by a state it can derive.
+    $state = $unhex((string)($_GET['state'] ?? ''));
+    if ($state === '' || strlen($state) > 64) out(['error' => 'state is 1..64 bytes'], 400);
+    $ids = $store->threadsWithState($state, (int)($_GET['limit'] ?? 256));
+    if ($packedOut) outBytes(implode('', $ids), 200, ['X-Count' => count($ids)]);   // 32 bytes each, newest activity first
+    out(['state' => $hex($state), 'threads' => array_map($hex, $ids)]);
+
 case 'tip':
     $g = $unhex((string)($_GET['genesis'] ?? ''), 32);
     $tip = $store->tipOf($g); $count = $store->countOf($g);

@@ -27,6 +27,7 @@ final class GenesisRegistry
                 authorised  TEXT NOT NULL,      -- JSON: ["<hex pubkey>", ...] or "open"
                 anchor_txid BLOB                -- ⏭ the proof-of-work timestamp (spec §4d), if known
             ) WITHOUT ROWID;
+            CREATE INDEX IF NOT EXISTS genesis_state ON genesis (state);
         ');
     }
 

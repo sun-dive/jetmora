@@ -126,6 +126,18 @@ final class LogStore
         $st->execute([$cut, ...$keep]);
         return $st->rowCount();
     }
+    /**
+     * The threads whose genesis STATE is $state and which still hold an unpruned entry, newest activity
+     * first. A state a party derives from something public (a number, a topic) is how another party finds
+     * threads addressed to it without knowing who wrote them. @return string[] genesis ids
+     */
+    public function threadsWithState(string $state, int $limit = 256): array
+    {
+        $st = $this->db->prepare('SELECT e.genesis, MAX(e.ts) AS t FROM entries e JOIN genesis g ON g.id = e.genesis'
+            . ' WHERE hex(g.state) = ? AND length(e.body) > 0 GROUP BY e.genesis ORDER BY t DESC LIMIT ?');
+        $st->execute([strtoupper(bin2hex($state)), max(1, min(256, $limit))]);
+        return array_map(fn($r) => $r['genesis'], $st->fetchAll(PDO::FETCH_ASSOC));
+    }
     /** The newest sequence number of a thread, or null if it has none. */
     public function tipOf(string $genesis): ?int
     {
