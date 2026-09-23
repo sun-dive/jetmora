@@ -86,10 +86,14 @@ final class Appender
         if (!self::verifySignature($entry, $pubkey, $signature))
             return new AppendResult(false, null, 'bad signature', 403);
 
-        // ⚠ NO duplicate check (spec §4.5 / §4.4). Two entries at one sequence are a FACT ABOUT THE
-        //   SIGNER, faithfully witnessed. Rejecting the second would make the operator decide
-        //   first-seen, which is consensus in miniature.
-        return new AppendResult(true, $this->store->append($entry, $genesisId));
+        // ── 3. the tip (spec §4.4, his ruling 23 Sept) ─────────────────────────────────────────
+        //    An entry TICKS the tip it names (input 0). A tip ticked twice is impossible by design, as a
+        //    spent outpoint is gone on Bitcoin: the second entry is not a competing valid entry to be
+        //    adjudicated, it is invalid. One writer, one tip, one home: no ordering rule, no consensus.
+        //    The check runs inside the store's write lock, so two writers cannot both pass.
+        $prev = CovenantEntry::decode($entry)['inputs'][0]['prevEntry'];
+        try { return new AppendResult(true, $this->store->append($entry, $genesisId, $prev)); }
+        catch (TipTickedException $e) { return new AppendResult(false, null, $e->getMessage(), 409); }
     }
 
     /**

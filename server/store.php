@@ -29,6 +29,8 @@ class PrunedException extends RuntimeException {}
 
 /** ⚠ The log is FULL, not broken. Everything already recorded stays readable and provable. */
 class LogFullException extends RuntimeException {}
+/** A second entry naming a tip that is already ticked (§4.4): invalid, never adjudicated. */
+final class TipTickedException extends RuntimeException {}
 
 final class LogStore
 {
@@ -101,6 +103,21 @@ final class LogStore
         //   field and never read by a covenant (§6.3). Absent on rows from before the column existed.
         if (!in_array('ts', $cols, true)) $this->db->exec('ALTER TABLE entries ADD COLUMN ts INTEGER');
         $this->db->exec('CREATE INDEX IF NOT EXISTS entries_genesis ON entries (genesis, seq)');
+        // ★ THE TIP of every thread (§4.4, his ruling 23 Sept): HASH256 of its newest entry, which is what the next
+        //   entry's input names. Kept as a row so it survives body pruning (§4.5) and costs one lookup.
+        $this->db->exec('CREATE TABLE IF NOT EXISTS tips (genesis BLOB PRIMARY KEY, seq INTEGER NOT NULL, hash BLOB NOT NULL) WITHOUT ROWID');
+    }
+    /** The tip a new entry must name: HASH256 of the thread's newest entry, the genesis id itself when it has none,
+     *  or null when it cannot be known (a thread from before tips were kept, its newest body pruned). */
+    public function tipHashOf(string $genesis): ?string
+    {
+        $st = $this->db->prepare('SELECT hash FROM tips WHERE genesis=?'); $st->execute([$genesis]);
+        $h = $st->fetchColumn();
+        if ($h !== false && $h !== null) return $h;
+        $st = $this->db->prepare('SELECT body FROM entries WHERE genesis=? ORDER BY seq DESC LIMIT 1'); $st->execute([$genesis]);
+        $body = $st->fetchColumn();
+        if ($body === false || $body === null) return $genesis;              // no entry yet: the first tick names the genesis
+        return $body === '' ? null : hash('sha256', hash('sha256', $body, true), true);   // pruned: unknowable, once
     }
 
     /** The entries of one thread, oldest first, after a sequence number. @return array<array{seq:int, body:string}> */
@@ -220,7 +237,7 @@ final class LogStore
      * Append one entry. ⚠ Returns its sequence number.
      * Writes exactly the nodes that BECAME COMPLETE — at most log(n) of them.
      */
-    public function append(string $body, ?string $genesis = null): int
+    public function append(string $body, ?string $genesis = null, ?string $prev = null): int
     {
         // ⚠⚠ BEGIN IMMEDIATE, NOT beginTransaction(). PDO issues a plain BEGIN, which is DEFERRED:
         //    the write lock is not taken until the first INSERT, but size() is READ before it. Under
@@ -236,12 +253,20 @@ final class LogStore
             throw new LogFullException('log is at its storage ceiling: ' . self::MAX_DB_BYTES . ' bytes');
         $this->begin();
         try {
+            // ⚠ INSIDE the write lock: the tip is ticked by this entry, and no other entry may tick the same tip
+            //   (§4.4). Checked before the lock, two writers could both pass and both land.
+            if ($genesis !== null && $prev !== null) {
+                $tip = $this->tipHashOf($genesis);
+                if ($tip !== null && $tip !== $prev) throw new TipTickedException('tip already ticked: the entry does not name the thread\'s tip');
+            }
             $seq = $this->size();
             $leaf = mt_leaf_hash($body);
             $this->db->prepare('INSERT INTO entries (seq, hash, body, genesis, ts) VALUES (?,?,?,?,?)')
                      ->execute([$seq, $leaf, $body, $genesis, time()]);
             $this->db->prepare('INSERT INTO nodes (level, idx, hash) VALUES (0,?,?)')
                      ->execute([$seq, $leaf]);
+            if ($genesis !== null) $this->db->prepare('INSERT OR REPLACE INTO tips (genesis, seq, hash) VALUES (?,?,?)')
+                                            ->execute([$genesis, $seq, hash('sha256', hash('sha256', $body, true), true)]);
 
             // ⚠ A node completes when its index is odd at that level: its sibling already exists.
             $level = 0; $idx = $seq;
