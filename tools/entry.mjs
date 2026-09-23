@@ -50,6 +50,9 @@ export function serializeEntry(e) {
   if (e.locktime !== 0) throw new Error('spec §3: nLocktime MUST be 0 in version 1')
   if (!e.inputs.length) throw new Error('an entry must consume at least one previous entry')
   if (!e.outputs.length) throw new Error('an entry must produce at least one successor')
+  // ⚠ push(...bytes) puts every byte on the call stack: a payload of a few hundred KB (a one-second tick of video)
+  //   overflows it. Appending goes through `add`, which never spreads.
+  const add = (dst, src) => { for (let k = 0; k < src.length; k++) dst.push(src[k]) }
   const out = [...u32(e.version), ...varint(e.inputs.length)]
   for (const i of e.inputs) {
     if (i.prevEntry.length !== 32) throw new Error('prevEntry must be 32 bytes')
@@ -64,14 +67,14 @@ export function serializeEntry(e) {
     if (!i.unlocking.length) throw new Error(
       'an input with NO UNLOCKING SCRIPT is a log tick, not a covenant tick — it proves nothing about whether the ' +
       'transition was permitted. That is a LOG RECORD, not a covenant entry.')
-    out.push(...i.prevEntry, ...u32(i.index), ...varint(i.unlocking.length), ...i.unlocking, ...u32(i.sequence))
+    add(out, i.prevEntry); add(out, u32(i.index)); add(out, varint(i.unlocking.length)); add(out, i.unlocking); add(out, u32(i.sequence))
   }
   out.push(...varint(e.outputs.length))
   for (const o of e.outputs) {
     // ⚠ Same defect, other end: a successor with no locking script carries state, not a covenant.
     if (!o.locking.length) throw new Error(
       'an output with NO LOCKING SCRIPT carries state, not a covenant — that is a LOG RECORD')
-    out.push(...u64(o.value), ...varint(o.locking.length), ...o.locking)
+    add(out, u64(o.value)); add(out, varint(o.locking.length)); add(out, o.locking)
   }
   out.push(...u32(e.locktime))
   return out
