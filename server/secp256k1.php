@@ -284,6 +284,40 @@ final class Secp256k1
     throw new RuntimeException('no usable k after 16 attempts');   // unreachable in practice
   }
 
+  /**
+   * RECOVERABLE deterministic ECDSA, low-s: `[r, s, recid]` where recid (0..3) says which point R was, so a verifier
+   * holding only the signature can recover the key (Antelope/WAX, and Bitcoin message signatures, need it).
+   * `$accept` may refuse a result (WAX refuses "non-canonical" r or s): the RFC 6979 generator then steps forward,
+   * exactly as for r or s = 0 - never a fresh random k.
+   */
+  public static function signRecoverable(GMP $d, string $digest32, ?callable $accept = null): array
+  {
+    self::init();
+    if (strlen($digest32) !== 32) throw new InvalidArgumentException('digest must be 32 bytes');
+    if (gmp_cmp($d, 1) < 0 || gmp_cmp($d, self::$n) >= 0)
+      throw new InvalidArgumentException('private key out of range');
+    $n = self::$n;
+    $e = Rfc6979::bits2int($digest32, 256);
+    for ($attempt = 0; $attempt < 256; $attempt++) {
+      $k = Rfc6979::k($n, $d, $digest32, 'sha256', $attempt);
+      $R = self::mulBlinded(self::$g, $k);          // ⚠ secret scalar
+      if ($R === null) continue;
+      $r = gmp_mod($R[0], $n);
+      if (gmp_sign($r) === 0) continue;
+      $t = gmp_mod(gmp_import(random_bytes(32), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN), $n);   // blinds the inversion, as sign()
+      if (gmp_sign($t) === 0) $t = gmp_init(1);
+      $kt = gmp_invert(gmp_mod(gmp_mul($k, $t), $n), $n);
+      if ($kt === false) continue;
+      $s = gmp_mod(gmp_mul(gmp_mod(gmp_mul($kt, $t), $n), gmp_add($e, gmp_mul($r, $d))), $n);
+      if (gmp_sign($s) === 0) continue;
+      $recid = gmp_intval(gmp_mod($R[1], 2)) | (gmp_cmp($R[0], $n) >= 0 ? 2 : 0);
+      if (gmp_cmp(gmp_mul($s, 2), $n) > 0) { $s = gmp_sub($n, $s); $recid ^= 1; }   // low-s flips R's parity
+      if ($accept !== null && !$accept($r, $s, $recid)) continue;
+      return [$r, $s, $recid];
+    }
+    throw new RuntimeException('no acceptable signature after 256 attempts');
+  }
+
   /** DER, with the leading-zero rule that a naive encoder gets wrong. */
   public static function encodeDer(GMP $r, GMP $s): string
   {
