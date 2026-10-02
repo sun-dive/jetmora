@@ -109,6 +109,17 @@ t('loop.leave',     '0 100 0 (DO) top: I + I 3 = 0BRANCH>go LEAVE>out go: (LOOP)
 t('locals.fee',     '1000 5 (FRAME)#2 (LOCAL@)#0 (LOCAL@)#1 * 100 / (UNFRAME)', [50]);
 t('locals.store',   '1 2 (FRAME)#2 9 (LOCAL!)#0 (LOCAL@)#0 (UNFRAME)', [9]);
 tf('locals.noframe','(LOCAL@)#0',           'no frame');
+// ⚠ found 3 Oct by running this interpreter side by side with the JavaScript one: a store with no frame open
+//   created one instead of being refused, as a read is
+tf('locals.storeNoFrame', '9 (LOCAL!)#0',       'local access with no frame');
+// ⚠ found 3 Oct: a negative index reached past the stack, and a negative shift count escaped as a PHP fault
+tf('stack.pickNeg',  '1 2 -1 PICK',           'PICK: negative index');
+tf('stack.rollNeg',  '1 2 -1 ROLL',           'ROLL: negative index');
+tf('logic.lshiftNeg','1 -1 LSHIFT',           'LSHIFT: negative count');
+tf('logic.rshiftNeg','1 -1 RSHIFT',           'RSHIFT: negative count');
+// ⛔ found 3 Oct: FILL and ERASE built their bytes BEFORE the range check, so this 7-byte script ended the process
+tf('mem.eraseHuge',  '0 2147483647 ERASE',    'memory out of range');
+tf('mem.fillHuge',   '0 2147483647 65 FILL',  'memory out of range');
 
 // byte strings — ( c-addr u ) throughout
 t('str.push',       '$deadbeef DROP DROP',  []);
@@ -209,6 +220,8 @@ $E4 = jf_defs([[0, 0, '65 [CORE:72]', 0, 0]]);            // emits but declared 
 tf('chan.emitUndeclared','INVOKE#0',            'declared no output channel', $E4);
 $E5 = jf_defs([[0, 0, '65 [CORE:72] 66 [CORE:72]', 0, 1]]);
 tf('chan.outOverflow', 'INVOKE#0',              'exceeds the declared out_max of 1', $E5);
+// ⛔ and SPACES built its bytes before the out_max check, the same fault as FILL/ERASE (found 3 Oct)
+tf('chan.spacesHuge', 'INVOKE#0', 'exceeds the declared out_max of 16', jf_defs([[0, 0, '2147483647 [CORE:114]', 0, 16]]));
 
 $I1 = jf_defs([[0, 1, '[CORE:87]', 8, 0]]);               // KEY ( -- char ), in_max 8
 t('chan.keyReceives',  '$41 INVOKE#0',          [65], $I1);

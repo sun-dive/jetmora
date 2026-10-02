@@ -138,17 +138,15 @@ for (let k = 0; k < progs.length; k++) {
   const p = phpOut[k], j = await runJs(progs[k].script, progs[k].preimage)
   if (p.error !== undefined && !p.jf) { phpFaults++; if (faults.length < 5) faults.push({ script: hex(progs[k].script), php: latin1(unhex(p.error)), js: j.stack ? j.stack.join(' ') : latin1(unhex(j.error)) }); continue }
   const eq = p.stack ? same(p.stack, j.stack) : (p.error === j.error && p.diag === j.diag)
-  // ⚠ KNOWN PHP DEFECTS (found 3 Oct, his decision pending): a negative PICK/ROLL index or shift count reaches past the
-  //   stack, and (LOCAL!) with no frame creates one. JS refuses both; such a program is reported, not compared.
-  if (!eq && j.error !== undefined && /negative (index|count)$|^local access with no frame$/.test(latin1(unhex(j.error)))) { phpFaults++; continue }
   if (eq) { agree++; p.stack ? stacks++ : refusals++ } else { differ++; if (firstDiffs.length < 8) firstDiffs.push({ script: hex(progs[k].script), php: p.stack ? p.stack.join(' ') : latin1(unhex(p.error)), js: j.stack ? j.stack.join(' ') : latin1(unhex(j.error)) }) }
 }
 for (const d of firstDiffs) console.log(`  ✗ differ  ${d.script}\n      php: ${d.php}\n      js:  ${d.js}`)
 ok(differ === 0, `${agree} of ${progs.length - phpFaults} programs identical in both (${stacks} finished with a stack, ${refusals} refused, with the same message)`)
 if (phpFaults) {
-  console.log(`  ⚠ ${phpFaults} programs hit the known PHP defects (negative PICK/ROLL index or shift count, (LOCAL!) with no frame) or a PHP fault:`)
+  console.log(`  ⚠ ${phpFaults} programs hit the PHP fault outside the interpreter (a defect: every refusal should be the interpreter's own):`)
   for (const f of faults) console.log(`      ${f.script}\n        php: ${f.php}\n        js:  ${f.js}`)
 }
+ok(phpFaults === 0, `no program made PHP fail outside the interpreter (${phpFaults})`)
 if (!ecdsa) console.log('  ⚠ secp256k1 (PharLap2) not found beside this repo: CHECKSIG cases ran without a verifier')
 
 console.log(`\n${fail ? '⚠' : '✅'}  ${pass} passed · ${fail} failed   [JF in JavaScript · against the PHP interpreter]`)

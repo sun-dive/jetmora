@@ -375,9 +375,9 @@ final class InterpreterJF
       case $W['TUCK']:  $this->need(2); $n = count($this->ds);
                         array_splice($this->ds, $n - 2, 0, [$this->ds[$n-1]]); return $i;
       case $W['DEPTH']: $this->pushI(count($this->ds)); return $i;
-      case $W['PICK']:  $n = $this->popInt(); $this->need($n + 1);
+      case $W['PICK']:  $n = $this->popInt(); if ($n < 0) throw new JfScriptError('PICK: negative index'); $this->need($n + 1);
                         $this->ds[] = $this->ds[count($this->ds) - 1 - $n]; return $i;
-      case $W['ROLL']:  $n = $this->popInt(); $this->need($n + 1);
+      case $W['ROLL']:  $n = $this->popInt(); if ($n < 0) throw new JfScriptError('ROLL: negative index'); $this->need($n + 1);
                         $x = array_splice($this->ds, count($this->ds) - 1 - $n, 1);
                         $this->ds[] = $x[0]; return $i;
       case $W['2DUP']:  $this->need(2); $n = count($this->ds);
@@ -453,8 +453,10 @@ final class InterpreterJF
       case $W['XOR']:    $b = $this->pop(); $this->push(gmp_xor(self::u($this->pop()), self::u($b))); return $i;
       case $W['INVERT']: $this->push(gmp_sub(gmp_neg($this->pop()), 1)); return $i;   // ~x == -x-1
       case $W['LSHIFT']: $n = $this->popInt(); $a = self::u($this->pop());
+                         if ($n < 0) throw new JfScriptError('LSHIFT: negative count');
                          $this->push($n >= 64 ? gmp_init(0) : gmp_mul($a, gmp_pow(2, $n))); return $i;
       case $W['RSHIFT']: $n = $this->popInt(); $a = self::u($this->pop());   // ⚠ LOGICAL, not arithmetic
+                         if ($n < 0) throw new JfScriptError('RSHIFT: negative count');
                          $this->push($n >= 64 ? gmp_init(0) : gmp_div_q($a, gmp_pow(2, $n))); return $i;
 
       // ── comparison ────────────────────────────────────────────────────────────────────────────────
@@ -491,10 +493,11 @@ final class InterpreterJF
                      $this->store($a, $lo); $this->store($a + 8, $hi); return $i;
       case $W['MOVE']: $u = $this->popInt(); $to = $this->popInt(); $from = $this->popInt();
                        $this->write($to, $this->read($from, $u)); return $i;
+      // ⚠ The range is checked BEFORE the bytes are built: built first, a script asking for gigabytes ended the process.
       case $W['FILL']: $ch = $this->popInt(); $u = $this->popInt(); $a = $this->popInt();
-                       if ($u > 0) $this->write($a, str_repeat(chr($ch & 0xff), $u)); return $i;
+                       if ($u > 0) { $this->bounds($a, $u); $this->write($a, str_repeat(chr($ch & 0xff), $u)); } return $i;
       case $W['ERASE']: $u = $this->popInt(); $a = $this->popInt();
-                        if ($u > 0) $this->write($a, str_repeat("\x00", $u)); return $i;
+                        if ($u > 0) { $this->bounds($a, $u); $this->write($a, str_repeat("\x00", $u)); } return $i;
       case $W['CELLS']: $this->push(gmp_mul($this->pop(), 8)); return $i;
       case $W['CELL+']: $this->push(gmp_add($this->pop(), 8)); return $i;
       case $W['CHARS']: return $i;                                  // a char is one address unit
@@ -555,7 +558,8 @@ final class InterpreterJF
                     $f = $this->frame(); if (!array_key_exists($k, $f)) throw new JfScriptError("local $k unset");
                     $this->ds[] = $f[$k]; return $i; }
       case $W['(LOCAL!)']: { $k = self::u8($code, $i); $i++;
-                    $this->frames[count($this->frames) - 1][$k] = $this->pop(); return $i; }
+                    $v = $this->pop(); $this->frame();         // ⚠ refused with no frame, as (LOCAL@) is
+                    $this->frames[count($this->frames) - 1][$k] = $v; return $i; }
       case $W['(UNFRAME)']: if (!$this->frames) throw new JfScriptError('(UNFRAME) with no frame');
                     array_pop($this->frames); return $i;
 
@@ -718,7 +722,7 @@ final class InterpreterJF
         'EMIT'   => chr($this->popInt() & 0xff),
         'CR'     => "\n",
         'SPACE'  => ' ',
-        'SPACES' => str_repeat(' ', max(0, $this->popInt())),
+        'SPACES' => $this->spaces($this->chan[$t]),
         'TYPE'   => $this->popSpan(),
         'EMIT?'  => '',
       };
@@ -756,6 +760,15 @@ final class InterpreterJF
     }
     if ($got !== '') $this->write($addr, $got);
     $this->pushI(strlen($got));
+  }
+
+  /** SPACES' bytes, refused BEFORE they are built when they would not fit the declared channel. */
+  private function spaces(array $c): string
+  {
+    $n = max(0, $this->popInt());
+    if (strlen($c['out']) + $n > $c['max'])
+      throw new JfScriptError(sprintf('output exceeds the declared out_max of %d', $c['max']));
+    return str_repeat(' ', $n);
   }
 
   /**
