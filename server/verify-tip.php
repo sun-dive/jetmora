@@ -68,12 +68,27 @@ ok($send($t3)->ok && $store->countOf($id) === 3, 'a tick naming the newest entry
 echo "\n── a thread from before tips were kept ──\n";
 $db->exec('DELETE FROM tips');                        // as an older database would be
 ok($store->tipHashOf($id) === $h256($t3['bytes']), 'the tip is derived from the newest body when no row is kept');
-$db->prepare("UPDATE entries SET body = '' WHERE genesis = ?")->execute([$id]);   // every body pruned (§4.5)
-ok($store->tipHashOf($id) === null, 'with the newest body pruned the tip is unknowable');
-$t4 = $tick(str_repeat("\x42", 32), 4);
-ok($send($t4)->ok, 'the next entry is accepted once, whatever it names');
-$t5wrong = $tick(str_repeat("\x42", 32), 5);
-ok($send($t5wrong)->status === 409, 'and from then on the tip is known again');
+ok($store->recordTips() === 1 && $store->tipHashOf($id) === $h256($t3['bytes']), 'recordTips gives it a row from that body');
+$db->exec('DELETE FROM tips');
+$db->exec('UPDATE entries SET ts = 1');               // every entry old enough to prune
+ok($store->pruneOlderThan(60) === 3, 'pruning blanks the three bodies');
+ok($store->tipHashOf($id) === $h256($t3['bytes']), '★ but first records the tip, so pruning never leaves it unknown');
+$t4 = $tick($h256($t3['bytes']), 4);
+ok($send($t4)->ok, 'and the thread ticks on after pruning');
+
+echo "\n── ⛔ a tip that is not known is never ticked ──\n";
+$db->exec('DELETE FROM tips');
+$db->prepare("UPDATE entries SET body = '' WHERE genesis = ?")->execute([$id]);   // no row, newest body gone
+ok($store->tipHashOf($id) === null, 'with no row and the newest body pruned the tip is unknown');
+$guess = $send($tick(str_repeat("\x42", 32), 5));
+ok(!$guess->ok && $guess->status === 409, sprintf('an entry naming anything is refused, never accepted once: "%s"', $guess->error));
+ok($store->countOf($id) === 4, 'and nothing was recorded');
+
+echo "\n── ⛔ every write path names the tip ──\n";
+$threw = null; try { $store->append('a thread entry with no tip named', $id); } catch (TipTickedException $e) { $threw = $e->getMessage(); }
+ok($threw !== null, sprintf('the store refuses an entry of a thread that names no tip: "%s"', $threw));
+$port = shell_exec(PHP_BINARY . ' -r ' . escapeshellarg('$_GET = ["op" => "port"]; $_SERVER["REQUEST_METHOD"] = "POST"; chdir(' . var_export(__DIR__, true) . '); include "threads.php";') . ' 2>&1');
+ok(str_contains((string)$port, 'moving a thread to this host is not available yet'), 'port is switched off until moving a thread is designed');
 
 @unlink($path); @unlink("$path-wal"); @unlink("$path-shm");
 printf("\n%s  %d passed · %d failed   [the tip is ticked once]\n", $fail === 0 ? '✅' : '⚠', $pass, $fail);

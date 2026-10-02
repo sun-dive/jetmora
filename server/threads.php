@@ -265,6 +265,9 @@ case 'register':
 //   3. the author signature authorises the continuation
 //   ⇒ It does NOT replay the covenant's history. That is a verifier's job, not a service's (§4.1).
 case 'port':
+    // ⛔ OFF until moving a thread is designed (his call, 3 Oct): a new host takes a thread only with its OWNER's
+    //   permission, and the old host must not stay able to tick it. Below is the earlier form, which checked neither.
+    out(['error' => 'moving a thread to this host is not available yet'], 501);
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
     $in = json_decode(file_get_contents('php://input') ?: '', true);
     if (!is_array($in)) out(['error' => 'body must be JSON'], 400);

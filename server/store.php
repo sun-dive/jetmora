@@ -108,7 +108,7 @@ final class ThreadStore
         $this->db->exec('CREATE TABLE IF NOT EXISTS tips (genesis BLOB PRIMARY KEY, seq INTEGER NOT NULL, hash BLOB NOT NULL) WITHOUT ROWID');
     }
     /** The tip a new entry must name: HASH256 of the thread's newest entry, the genesis id itself when it has none,
-     *  or null when it cannot be known (a thread from before tips were kept, its newest body pruned). */
+     *  or null when it cannot be known (no tip row and the newest body pruned), and then nothing may tick it. */
     public function tipHashOf(string $genesis): ?string
     {
         $st = $this->db->prepare('SELECT hash FROM tips WHERE genesis=?'); $st->execute([$genesis]);
@@ -117,7 +117,7 @@ final class ThreadStore
         $st = $this->db->prepare('SELECT body FROM entries WHERE genesis=? ORDER BY seq DESC LIMIT 1'); $st->execute([$genesis]);
         $body = $st->fetchColumn();
         if ($body === false || $body === null) return $genesis;              // no entry yet: the first tick names the genesis
-        return $body === '' ? null : hash('sha256', hash('sha256', $body, true), true);   // pruned: unknowable, once
+        return $body === '' ? null : hash('sha256', hash('sha256', $body, true), true);
     }
 
     /** The entries of one thread, oldest first, after a sequence number. @return array<array{seq:int, body:string}> */
@@ -137,11 +137,29 @@ final class ThreadStore
         $cut = time() - $seconds;
         // ⚠ Compare states as HEX text: a bound PHP string is TEXT to SQLite and never equals a BLOB column.
         $keep = array_map(fn($b) => strtoupper(bin2hex($b)), $keepStates) ?: ['-'];
+        // ⚠ The tip outlives the body: a thread with no tip row gets one from its newest body BEFORE anything is
+        //   blanked, so pruning can never leave a tip unknown.
+        $this->recordTips();
         $sql = 'UPDATE entries SET body = \'\' WHERE ts IS NOT NULL AND ts < ? AND length(body) > 0'
              . ' AND genesis IN (SELECT id FROM genesis WHERE hex(state) NOT IN (' . implode(',', array_fill(0, count($keep), '?')) . '))';
         $st = $this->db->prepare($sql);
         $st->execute([$cut, ...$keep]);
         return $st->rowCount();
+    }
+    /** A tip row for every thread that has none (threads from before tips were kept), from its newest body. */
+    public function recordTips(): int
+    {
+        $rows = $this->db->query('SELECT e.genesis, MAX(e.seq) AS seq FROM entries e LEFT JOIN tips t ON t.genesis = e.genesis'
+            . ' WHERE e.genesis IS NOT NULL AND t.genesis IS NULL GROUP BY e.genesis')->fetchAll(PDO::FETCH_ASSOC);
+        $body = $this->db->prepare('SELECT body FROM entries WHERE seq=?');
+        $put = $this->db->prepare('INSERT OR IGNORE INTO tips (genesis, seq, hash) VALUES (?,?,?)');
+        $n = 0;
+        foreach ($rows as $r) {
+            $body->execute([$r['seq']]); $b = $body->fetchColumn();
+            if (!is_string($b) || $b === '') continue;                // already pruned: stays unknown, and refuses
+            $put->execute([$r['genesis'], $r['seq'], hash('sha256', hash('sha256', $b, true), true)]); $n++;
+        }
+        return $n;
     }
     /**
      * The threads whose genesis STATE is $state and which still hold an unpruned entry, newest activity
@@ -253,11 +271,14 @@ final class ThreadStore
             throw new ThreadStoreFullException('the thread store is at its storage ceiling: ' . self::MAX_DB_BYTES . ' bytes');
         $this->begin();
         try {
-            // ⚠ INSIDE the write lock: the tip is ticked by this entry, and no other entry may tick the same tip
-            //   (§4.4). Checked before the lock, two writers could both pass and both land.
-            if ($genesis !== null && $prev !== null) {
+            // ⚠ INSIDE the write lock: a tip is an unticked outpoint, tickable only once (§4.4). Checked before the
+            //   lock, two writers could both pass and both land. Every entry of a thread names its tip; one that
+            //   does not, or a thread whose tip is unknown, is refused.
+            if ($genesis !== null) {
+                if ($prev === null) throw new TipTickedException('an entry of a thread must name the tip it ticks');
                 $tip = $this->tipHashOf($genesis);
-                if ($tip !== null && $tip !== $prev) throw new TipTickedException('tip already ticked: the entry does not name the thread\'s tip');
+                if ($tip === null) throw new TipTickedException('the thread\'s tip is not known here, so nothing may tick it');
+                if ($tip !== $prev) throw new TipTickedException('tip already ticked: the entry does not name the thread\'s tip');
             }
             $seq = $this->size();
             $leaf = mt_leaf_hash($body);
