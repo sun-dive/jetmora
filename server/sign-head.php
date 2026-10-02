@@ -30,7 +30,7 @@ if (strlen($seed) !== SODIUM_CRYPTO_SIGN_SEEDBYTES) { fwrite(STDERR, "the key fi
 $pair = sodium_crypto_sign_seed_keypair($seed);
 $pub = sodium_crypto_sign_publickey($pair);
 
-$store = new LogStore($dbPath);
+$store = new ThreadStore($dbPath);
 $db = new PDO('sqlite:' . $dbPath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $db->exec('PRAGMA busy_timeout=10000');
 $heads = new HeadStore($db);

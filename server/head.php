@@ -3,7 +3,7 @@
 //
 // SIGNED TREE HEAD — spec §5.2. ⏭ PROPOSED, not settled.
 //
-// ⚠ A head is the operator SIGNING what it holds. That is the middle rung of §4c: witnessed (the log
+// ⚠ A head is the operator SIGNING what it holds. That is the middle rung of §4c: witnessed (the service
 //   has it, final immediately) → SIGNED (publicly committed, so equivocation becomes provable) →
 //   anchored (dated by proof of work, cannot be walked back).
 //   ⇒ It is NOT a confirmation of anything. The entries were already final when they were appended.
@@ -39,7 +39,7 @@ final class SignedHead
      *                Anyone may compare it against the anchor; nothing depends on it being honest.
      *   anchor_root 32 bytes — the last ANCHORED root, or 32 zero bytes if none yet
      *   anchor_size  8 bytes big-endian — the tree size at that anchored root
-     *   prune_level  1 byte  — ⚠ PER LOG, his call. Retention granularity as a LEVEL: the operator
+     *   prune_level  1 byte  — ⚠ PER SERVICE, his call. Retention granularity as a LEVEL: the operator
      *                keeps subtree roots at this level for pruned regions, so K = 2^level.
      *                0 means nothing is pruned. ⇒ Held in the HEAD rather than in a policy document
      *                because a client verifying an OLD proof needs the value that applied THEN, and
@@ -48,7 +48,7 @@ final class SignedHead
     public static function bytes(int $size, string $root, int $ts, string $anchorRoot = '', int $anchorSize = 0, int $pruneLevel = 0, string $logId = ''): string
     {
         if (strlen($root) !== 32) throw new InvalidArgumentException('root must be 32 bytes');
-        /* ⚠ 32 zero bytes means "this log has not declared its identity" — legal, and a detector
+        /* ⚠ 32 zero bytes means "this service has not declared its identity" — legal, and a detector
            MUST treat two such heads as UNCOMPARABLE rather than as the same branch. */
         $logId = $logId === '' ? str_repeat("\x00", 32) : $logId;
         if (strlen($logId) !== 32) throw new InvalidArgumentException('log id must be 32 bytes');
@@ -68,7 +68,7 @@ final class SignedHead
         $anchorRoot = substr($b, 81, 32);
         return [
             'version'     => $v,
-            /* ⚠ null means the log has not declared which history this is. A detector MUST treat two
+            /* ⚠ null means the service has not declared which history this is. A detector MUST treat two
                such heads as UNCOMPARABLE — not as the same branch. */
             'log_id'      => $logId === str_repeat("\x00", 32) ? null : $logId,
             'tree_size'   => unpack('J', substr($b, 33, 8))[1],

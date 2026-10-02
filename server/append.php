@@ -5,16 +5,18 @@
 //
 //   1. the entry is well-formed and CANONICALLY serialized
 //   2. it is signed by a key the covenant's genesis names
+//   3. it names the thread's tip: a second entry naming a tip already ticked is invalid (§4.4), not a
+//      rival to choose between
 //
-// ⚠ AND NOTHING ELSE. No script execution. No duplicate rejection (§4.4). No adjudication. A log is a
-//   witness; it records what it was given. Every temptation to make it cleverer is a step toward
+// ⚠ AND NOTHING ELSE. No script execution. No adjudication. A thread service is a witness; it records
+//   what it was given. Every temptation to make it cleverer is a step toward
 //   consensus, and consensus is the thing this design does not have.
 //
 // ⚠⚠ TWO SIGNATURES EXIST AND THEY ARE NOT THE SAME THING — a distinction the spec should state:
 //   · the covenant's INTERNAL CHECKSIG (OP_PUSH_TX) proves the STATE TRANSITION is what the program
-//     permits. ⇒ A VERIFIER's concern. The log never runs it.
-//   · the APPEND AUTHORISATION signature proves WHO SUBMITTED this. ⇒ The log's only concern.
-//   Conflating them would put an interpreter in the log, which §4.1 forbids for good reason.
+//     permits. ⇒ A VERIFIER's concern. The service never runs it.
+//   · the APPEND AUTHORISATION signature proves WHO SUBMITTED this. ⇒ The service's only concern.
+//   Conflating them would put an interpreter in the service, which §4.1 forbids for good reason.
 //
 // ⚠ PAYMENT IS NOT HERE AND MUST NOT BE (spec §3.4-0b). The operator's billing hooks in through
 //   $authorise; the protocol defines no price, no currency and no settlement.
@@ -38,7 +40,7 @@ final class Appender
 {
     /** @param null|callable(string,string):bool $authorise operator policy hook: (genesisId, pubkey) => bool */
     public function __construct(
-        private LogStore $store,
+        private ThreadStore $store,
         private GenesisRegistry $registry,
         private $authorise = null,
     ) {}
@@ -56,7 +58,7 @@ final class Appender
         //    and compares. Two encodings of one entry would let a signer push a preimage that does not
         //    describe what they did. ⇒ Decode, re-encode, require the same bytes. The decoder also
         //    refuses the shape the first test chain had (no unlocking script): a log tick is not a
-        //    covenant tick, and this log records covenant ticks.
+        //    covenant tick, and this service records covenant ticks.
         if ($entry === '') return new AppendResult(false, null, 'empty entry', 400);
         if (strlen($entry) > 100_000) return new AppendResult(false, null, 'entry too large', 413);
         try { $canonical = CovenantEntry::encode(CovenantEntry::decode($entry)) === $entry; }

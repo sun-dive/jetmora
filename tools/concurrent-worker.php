@@ -3,7 +3,7 @@
 // ⚠ Reports its own failures rather than dying, so the harness can count them by class.
 require_once __DIR__ . '/../server/store.php';
 [$path, $id, $count] = [$argv[1], (int)$argv[2], (int)$argv[3]];
-$store = new LogStore($path);
+$store = new ThreadStore($path);
 $ok = 0; $errs = [];
 // ⚠ Every worker opens the DB, then they all wait for the same wall-clock instant. Without this the
 //   processes stagger by however long PHP takes to start and the race never happens.

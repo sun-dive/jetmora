@@ -23,7 +23,7 @@ function ok(bool $c, string $what): void {
 
 $path = sys_get_temp_dir() . '/jetmora-tip-' . bin2hex(random_bytes(4)) . '.db';
 $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-$store = new LogStore($path);
+$store = new ThreadStore($path);
 $registry = new GenesisRegistry($db);
 $appender = new Appender($store, $registry);
 

@@ -4,7 +4,7 @@
 // GENESIS REGISTRY — spec §2. ⏭ PROPOSED, not settled: §2's serialization is still an open item, and
 // this is the smallest thing that lets the append rule work. Marked so it is revised deliberately.
 //
-// A covenant is "the thing descended from genesis G", never "the thing in log L". The registry answers
+// A covenant is "the thing descended from genesis G", never "the thing on service L". The registry answers
 // exactly one question the append endpoint needs: ⇒ WHICH KEY MAY ADVANCE COVENANT G?
 declare(strict_types=1);
 

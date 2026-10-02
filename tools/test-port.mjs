@@ -29,8 +29,8 @@ import * as M from './merkle.mjs'
 console.error(`\n⛔ the port test is sound; its ENTRIES are log rows, not covenants\n   This tool is stopped. Read the banner at the top of ${import.meta.url.split('/').pop()} — it explains\n   what it produced, why that was the wrong layer, and the two ways to revive it.\n`)
 process.exit(2)
 
-const A = process.env.LOG_A ?? 'http://127.0.0.1:8787/log.php'
-const B = process.env.LOG_B ?? 'http://127.0.0.1:8788/log.php'
+const A = process.env.THREADS_A ?? 'http://127.0.0.1:8787/threads.php'
+const B = process.env.THREADS_B ?? 'http://127.0.0.1:8788/threads.php'
 const hex = b => Buffer.from(b).toString('hex')
 const unhex = h => [...Buffer.from(h, 'hex')]
 const sha = b => [...createHash('sha256').update(Buffer.from(b)).digest()]

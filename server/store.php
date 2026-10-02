@@ -1,7 +1,7 @@
 <?php
 // © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
-// THE LOG STORE — spec §4, §5.
+// THE THREAD STORE — spec §4, §5.
 //
 // ⚠⚠ THE TREE IS STORED, NEVER REBUILT. Appending touches only log(n) nodes; proofs are READ.
 //
@@ -14,12 +14,12 @@
 //        naive   ~370 ms · 72 MB   per request at n = 1,000,000
 //        stored     0.02 ms root · 0.22 ms proof · 2 MB   — and flat
 //
-//   A log is read constantly and appended to occasionally, so that ratio is where the cost lives.
+//   A thread service is read constantly and appended to occasionally, so that ratio is where the cost lives.
 //   ★ And the scale is not hypothetical: 36 ticks a lap, ten laps, a thousand players is 360,000
 //   entries in a day.
 //   MEASURED append cost: 15.5 us at n=1,000 rising to 17.8 us at n=16,000 — flat across a 16x growth.
 //
-// ⚠ SQLite because an append-only log needs a SERIALIZED WRITER and shared hosting has no persistent
+// ⚠ SQLite because an append-only store needs a SERIALIZED WRITER and shared hosting has no persistent
 //   process. A transaction gives that for free; two concurrent appends cannot interleave.
 declare(strict_types=1);
 require_once __DIR__ . '/merkle.php';
@@ -27,21 +27,21 @@ require_once __DIR__ . '/merkle.php';
 /** ⚠ Distinct from a generic failure: the data is not wrong, it is ABSENT and recoverable (§5c.2). */
 class PrunedException extends RuntimeException {}
 
-/** ⚠ The log is FULL, not broken. Everything already recorded stays readable and provable. */
-class LogFullException extends RuntimeException {}
+/** ⚠ The store is FULL, not broken. Everything already recorded stays readable and provable. */
+class ThreadStoreFullException extends RuntimeException {}
 /** A second entry naming a tip that is already ticked (§4.4): invalid, never adjudicated. */
 final class TipTickedException extends RuntimeException {}
 
-final class LogStore
+final class ThreadStore
 {
     /**
-     * ⚠⚠ SHARED HOSTING, SO THE LOG HAS A CEILING — 100 MB, about 293,000 entries at a measured 341
+     * ⚠⚠ SHARED HOSTING, SO THE STORE HAS A CEILING — 100 MB, about 293,000 entries at a measured 341
      *   bytes each (body + tree nodes + index), or roughly 3,250 races.
      *
-     * ★ Reaching it is not a failure mode, it is THE failure mode we want: the log declines to record
+     * ★ Reaching it is not a failure mode, it is THE failure mode we want: the store declines to record
      *   and can still prove everything it already recorded. *An operator who can only refuse.*
-     * ⚠ This is NOT a defence against abuse — appending is free by design (§6c.1) and a log that
-     *   throttled strangers would be solving the wrong problem. It exists so that filling this log
+     * ⚠ This is NOT a defence against abuse — appending is free by design (§6c.1) and a service that
+     *   throttled strangers would be solving the wrong problem. It exists so that filling this store
      *   cannot fill the ACCOUNT, which hosts other things that have nothing to do with jetmora.
      */
     public const MAX_DB_BYTES = 100 * 1024 * 1024;
@@ -130,7 +130,7 @@ final class LogStore
     /**
      * ★ RETENTION (spec §5c, an operator's policy): discard the BODIES of entries received more than
      *   $seconds ago whose genesis STATE is not one of $keepStates. The leaf hashes stay, so the tree and
-     *   every proof still stand; a pruned body reads as '' (log.php answers 410 for it). Returns rows pruned.
+     *   every proof still stand; a pruned body reads as '' (threads.php answers 410 for it). Returns rows pruned.
      */
     public function pruneOlderThan(int $seconds, array $keepStates = []): int
     {
@@ -173,11 +173,11 @@ final class LogStore
     /**
      * ★★★ THE BATTERY, IN THE ONLY UNIT THAT MEANS ANYTHING HERE.
      *
-     * A BRC-226 battery bounds SATOSHIS — how much an agent may spend before it is refuelled. This log
+     * A BRC-226 battery bounds SATOSHIS — how much an agent may spend before it is refuelled. This store
      * has no satoshis, so what it bounds is ENTRIES, and what that buys is RACES. Same mechanism, the
      * resource swapped. ⇒ Bytes are the implementation; entries are the charge.
      *
-     * ⚠ MEASURED, NEVER ASSUMED: the cost per entry is taken from this log's own consumption so far, so
+     * ⚠ MEASURED, NEVER ASSUMED: the cost per entry is taken from this store's own consumption so far, so
      *   it self-corrects as the shape of the entries changes. A hardcoded constant would drift silently,
      *   and the whole point of a fuel gauge is that it is not a guess.
      * ⚠ Returns null below a floor — with a handful of entries the average is dominated by the schema
@@ -250,7 +250,7 @@ final class LogStore
         // ⚠ Checked BEFORE the write lock: refusing early costs nothing, and refusing late holds a lock
         //   while doing it. ⇒ The overshoot is one entry, which is 341 bytes.
         if ($this->bytes() >= self::MAX_DB_BYTES)
-            throw new LogFullException('log is at its storage ceiling: ' . self::MAX_DB_BYTES . ' bytes');
+            throw new ThreadStoreFullException('the thread store is at its storage ceiling: ' . self::MAX_DB_BYTES . ' bytes');
         $this->begin();
         try {
             // ⚠ INSIDE the write lock: the tip is ticked by this entry, and no other entry may tick the same tip
@@ -379,7 +379,7 @@ final class LogStore
     public function prune(int $level, int $upTo): array
     {
         if ($level < 1) throw new InvalidArgumentException('prune level must be >= 1');
-        if ($upTo < 0 || $upTo > $this->size()) throw new InvalidArgumentException('upTo outside the log');
+        if ($upTo < 0 || $upTo > $this->size()) throw new InvalidArgumentException('upTo outside the tree');
         $this->begin();
         try {
             $b = $this->db->prepare('UPDATE entries SET body = X\'\' WHERE seq < ? AND length(body) > 0');

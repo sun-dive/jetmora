@@ -1,11 +1,11 @@
 <?php
 // © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
-// THE LOG ENDPOINT — spec §5.3, §4.1. One file, deliberately thin: the store does the work and this
-// only translates HTTP to it. ⚠ A log serves PROOFS. It does not adjudicate, does not execute Script,
+// THE THREAD SERVICE ENDPOINT — spec §5.3, §4.1. One file, deliberately thin: the store does the work and this
+// only translates HTTP to it. ⚠ A thread service serves PROOFS. It does not adjudicate, does not execute Script,
 // and has no opinion about what the entries mean.
 //
-// ⚠ CORS is open on reads and that is correct: a transparency log's contents are public by
+// ⚠ CORS is open on reads and that is correct: a thread service's contents are public by
 //   construction, and a browser-side verifier is exactly the client this is for. Writes are gated by
 //   the append rule's signature, not by origin.
 declare(strict_types=1);
@@ -19,6 +19,7 @@ require_once __DIR__ . '/merkle.php';
 //     web-writable, which hands out the file instead of the proofs.
 //   ⇒ Deployment creates a sibling of the docroot ($HOME/jetmora-data); if that directory exists we
 //     use it. Locally it does not, so development falls back to ./data and needs no configuration.
+// ⚠ The FILE keeps its first name, log.db: renaming a live database is a change of its own (TODO.md).
 define('DB_PATH', (static function (): string {
     $root = $_SERVER['DOCUMENT_ROOT'] ?? '';
     if ($root !== '') {
@@ -41,10 +42,10 @@ function out(array $body, int $status = 200): never {
 //   ★ The CLASS is named because it is the whole diagnosis (a PDOException is not a TypeError); the
 //   message is not, because messages carry paths and internals.
 set_exception_handler(static function (Throwable $e): void {
-    // ★ FULL IS NOT BROKEN. The log declines to record and still proves everything it recorded —
+    // ★ FULL IS NOT BROKEN. The store declines to record and still proves everything it recorded —
     //   "an operator who can only refuse". 507 says exactly that; 500 would say something false.
-    if ($e instanceof LogFullException)
-        out(['error' => 'log is full', 'note' => $e->getMessage(),
+    if ($e instanceof ThreadStoreFullException)
+        out(['error' => 'the thread store is full', 'note' => $e->getMessage(),
              'still_provable' => 'every entry already appended remains readable and provable'], 507);
     // ★ For a PDOException the SQLSTATE and the DRIVER CODE are the whole diagnosis — 5 is BUSY, 8 is
     //   READONLY, 14 is CANTOPEN, 1 is a plain SQL error — and neither carries a path.
@@ -104,8 +105,8 @@ function outBytes(string $body, int $status = 200, array $headers = []): never {
 
 if (!is_dir(dirname(DB_PATH))) @mkdir(dirname(DB_PATH), 0700, true);
 $db = new PDO('sqlite:' . DB_PATH, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-$db->exec('PRAGMA busy_timeout=10000');  // ⚠ match LogStore's ATTR_TIMEOUT — two connections, one file
-$store = new LogStore(DB_PATH);
+$db->exec('PRAGMA busy_timeout=10000');  // ⚠ match ThreadStore's ATTR_TIMEOUT — two connections, one file
+$store = new ThreadStore(DB_PATH);
 $registry = new GenesisRegistry($db);
 $heads = new HeadStore($db);
 // ⏭ The operator's own policy (spec §4.5): a price, an account, a rate limit. A file beside this one
@@ -126,8 +127,8 @@ case 'info':
          //   beats guessing. It is not a protocol field.
          'journal_mode' => $store->journalMode,
          // ⚠ shared hosting. Visible here so it is known LONG before it bites, not discovered at it.
-         'bytes' => $store->bytes(), 'capacity_bytes' => LogStore::MAX_DB_BYTES,
-         // ★ The battery, in entries rather than bytes — measured from this log's own consumption.
+         'bytes' => $store->bytes(), 'capacity_bytes' => ThreadStore::MAX_DB_BYTES,
+         // ★ The battery, in entries rather than bytes — measured from this store's own consumption.
          //   ⚠ null until there is enough history for the average to mean anything.
          'charge' => $store->charge(),
          'head' => $latest ? $hex($latest['head']) : null,
@@ -173,7 +174,7 @@ case 'entry':
     // ⚠⚠ A PRUNED body is an EMPTY STRING, not null — checking only for null returned 200 with an
     //    empty entry, which is the worst of both: it looks like data and is not.
     //    ⇒ 410, not 404: the entry existed and is still provable, it is simply no longer held here.
-    if ($body === '') out(['error' => 'pruned — not held by this log',
+    if ($body === '') out(['error' => 'pruned — not held by this service',
                            'note' => 'still provable given the body; see spec §5c.2 for where to obtain it'], 410);
     out(['seq' => $seq, 'entry' => $hex($body)]);
 
@@ -254,15 +255,15 @@ case 'register':
     ]);
     out(['genesis' => $hex($id)], 201);
 
-// ── PORT a covenant from another log — spec §4b ──────────────────────────────────────────────
-// ★★★ This is what defeats a censoring operator: state must be continuable ELSEWHERE, or a log that
+// ── PORT a covenant from another service — spec §4b ──────────────────────────────────────────────
+// ★★★ This is what defeats a censoring operator: state must be continuable ELSEWHERE, or a service that
 // refuses your tick freezes the covenant forever and §1 is rebuilt with a new lever.
 //
-// ⚠⚠ WHAT THIS LOG VERIFIES, AND ONLY THIS (spec §4b.4):
+// ⚠⚠ WHAT THIS SERVICE VERIFIES, AND ONLY THIS (spec §4b.4):
 //   1. the inclusion proof validates against the source root
 //   2. the source root carries the source operator's signature
 //   3. the author signature authorises the continuation
-//   ⇒ It does NOT replay the covenant's history. That is a verifier's job, not a log's (§4.1).
+//   ⇒ It does NOT replay the covenant's history. That is a verifier's job, not a service's (§4.1).
 case 'port':
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
     $in = json_decode(file_get_contents('php://input') ?: '', true);
@@ -272,7 +273,7 @@ case 'port':
         if (!isset($in[$k])) out(['error' => "missing $k"], 400);
 
     // the covenant's identity travels with it — a covenant is "descended from genesis G", never
-    // "the thing in log A" (spec §4b.1)
+    // "the thing on service A" (spec §4b.1)
     $gf = $in['genesis_fields'];
     $genesisId = $registry->register([
         'source_hash' => $unhex($gf['source_hash'], 32), 'script' => $unhex($gf['script']),
@@ -289,7 +290,7 @@ case 'port':
         out(['error' => 'source head signature does not verify'], 403);
     $h = SignedHead::parse($head);
 
-    // 1. the entry really was in the source log's tree at that root
+    // 1. the entry really was in the source service's tree at that root
     $proof = array_map($unhex, $in['inclusion_proof']);
     if (!mt_verify_inclusion((int)$in['sequence'], $h['tree_size'], $entry, $proof, $h['root']))
         out(['error' => 'inclusion proof does not verify against the source root'], 403);
@@ -303,7 +304,7 @@ case 'port':
         out(['error' => 'author signature does not verify'], 403);
 
     // ⚠ An ANCHORED source root is final; a merely signed one is portable but CONTESTABLE (§4b.3).
-    //   Recorded, not adjudicated — the log has no opinion about which it was.
+    //   Recorded, not adjudicated — the service has no opinion about which it was.
     $anchored = $h['anchor_root'] !== null && $h['anchor_size'] >= (int)$in['sequence'] + 1;
     $seq = $store->append($entry, $genesisId);
     out(['seq' => $seq, 'genesis' => $hex($genesisId), 'tree_size' => $store->size(),
@@ -338,7 +339,7 @@ case 'append':
 default:
     // ⚠ `spec` is always the CURRENT document; `spec_version` says which that is, and every superseded
     //    version stays fetchable at its own URL. A specification that can be silently replaced has the
-    //    same defect as a log that can.
+    //    same defect as a service that can.
     out(['log' => 'jetmora',
          'spec' => 'https://jetmora.org/spec/log.md',
          'spec_version' => '0.1.1',

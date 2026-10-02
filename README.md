@@ -39,7 +39,7 @@ rather than from the source.
 
 ## The specification
 
-`spec/log.md` — what a log is, the entry format, appending, the tree, anchoring, portability.
+`spec/log.md` — the thread service, the entry format, appending, the tree, anchoring, portability.
 ⚠ It says **what**; the reasoning lives elsewhere and is not normative. Seven items are marked ⏭ OPEN
 and an implementation must not claim conformance while any remain.
 
@@ -114,7 +114,7 @@ a limitation that isn't there.
 
 ## ★★★ Bitcoin Racers on a test chain
 
-`node --experimental-strip-types tools/dragchain.mjs` (with a log running)
+`node --experimental-strip-types tools/dragchain.mjs` (with a thread service running)
 
 The quarter mile, one tick per entry. Four races, four endings, **264 individually provable ticks**:
 
@@ -134,7 +134,7 @@ single locking script, and the covenant refuses the car if its physics disagree.
 ⇒ **So the race is PREDICTED at mint. The driver cannot change their mind at tick 40.**
 
 ★ Here the throttle is a **decision per tick, not a plan**. The grenade above is one entry: the driver
-pressed the pedal, the engine let go, and the log recorded exactly that. On a chain that race would have
+pressed the pedal, the engine let go, and the thread recorded exactly that. On a chain that race would have
 had to be foreseen and committed to before it existed.
 
 ## Anchoring
@@ -151,7 +151,7 @@ node tools/broadcast.mjs status             # what it holds
 node tools/broadcast.mjs anchor <root> <n>  # build and show — add --send to broadcast
 ```
 
-★ **Use a dedicated key.** The anchor chain's key becomes the log's identity: it signs every anchor,
+★ **Use a dedicated key.** The anchor chain's key becomes the thread service's identity: it signs every anchor,
 forever. Mixing that with a spending wallet is poor hygiene.
 
 ⚠ **Dry run by default.** Nothing broadcasts without `--send`, and even then it refuses a fee below the
@@ -159,9 +159,9 @@ forever. Mixing that with a spending wallet is poor hygiene.
 by serializing the **signed** transaction — never hand-counted, and never taken from the figure computed
 before signing.
 
-## The log server
+## The thread service
 
-`server/` is a complete log: signature-gated append, an incremental merkle tree held on disk, immutable
+`server/` is a complete thread service: signature-gated append, an incremental merkle tree held on disk, immutable
 signed heads, and inclusion and consistency proofs over HTTP.
 
 | `merkle.php` | RFC 6962 |
@@ -169,14 +169,14 @@ signed heads, and inclusion and consistency proofs over HTTP.
 | `genesis.php` | answers the one question the append rule asks: which key may advance covenant G |
 | `append.php` | ⚠ the whole rule: canonical, and signed by an authorised key. **Nothing else** |
 | `head.php` | 90-byte signed head. ⚠ Re-signing a size is impossible, not merely forbidden |
-| `log.php` | the HTTP endpoints |
+| `threads.php` | the HTTP endpoints of the thread service |
 | `probe.php` | ⚠ host capability probe. Token-gated, delete after use |
 
 ★ **Verified end to end by an independent implementation:** a JS client checked 200 inclusion proofs and
-8 consistency proofs served by the PHP log, and rejected a tampered proof and a false entry claim.
+8 consistency proofs served by the PHP service, and rejected a tampered proof and a false entry claim.
 
-⚠ **What it deliberately does not do:** execute Script, reject duplicates, or adjudicate. A log is a
-witness. Every temptation to make it cleverer is a step toward consensus.
+⚠ **What it deliberately does not do:** execute Script or adjudicate. A second entry naming a tip that is already ticked is refused as
+invalid (§4.4), never weighed against the first. A thread service is a witness. Every temptation to make it cleverer is a step toward consensus.
 
 ## Files
 

@@ -19,7 +19,7 @@ header('Content-Type: application/json');
 
 $r = ['php' => PHP_VERSION, 'sapi' => PHP_SAPI, 'os' => PHP_OS_FAMILY, 'int_size' => PHP_INT_SIZE];
 
-// ── extensions the log server would use ──────────────────────────────────────────────────────
+// ── extensions the thread service would use ──────────────────────────────────────────────────────
 foreach (['hash','openssl','sqlite3','pdo_sqlite','sodium','gmp','bcmath','curl','json'] as $e)
     $r['ext'][$e] = extension_loaded($e);
 
@@ -51,7 +51,7 @@ $r['secp256k1'] = extension_loaded('gmp');
 $r['secp256k1_via'] = $r['secp256k1'] ? 'own implementation (server/secp256k1.php, needs ext-gmp)'
                                       : 'UNAVAILABLE — ext-gmp is missing';
 
-// ── ⚠ CAN IT WRITE? An append-only log is not much use otherwise. ────────────────────────────
+// ── ⚠ CAN IT WRITE? An append-only store is not much use otherwise. ────────────────────────────
 $dir = __DIR__ . '/_probe_tmp';
 $r['write'] = ['dir' => false, 'flock' => false, 'sqlite_file' => false];
 if (@mkdir($dir) || is_dir($dir)) {
@@ -78,11 +78,11 @@ if (@mkdir($dir) || is_dir($dir)) {
 // ── ⚠ OUTBOUND HTTP — anchoring has to reach a broadcaster ───────────────────────────────────
 $r['outbound'] = ['allow_url_fopen' => (bool)ini_get('allow_url_fopen'), 'curl' => extension_loaded('curl')];
 
-// ── limits that bite a merkle tree over a large log ──────────────────────────────────────────
+// ── limits that bite a merkle tree over a large store ──────────────────────────────────────────
 foreach (['memory_limit','max_execution_time','post_max_size','upload_max_filesize','disable_functions']
          as $k) $r['ini'][$k] = ini_get($k);
 
-// ── ⇒ THE VERDICT: can the log server be built here as designed? ─────────────────────────────
+// ── ⇒ THE VERDICT: can the thread service be built here as designed? ─────────────────────────────
 $must = $r['ext']['hash'] && $r['sha256'] && $r['rfc6962'] && $r['write']['dir'];
 $store = $r['write']['sqlite_file'] ? 'sqlite' : ($r['write']['flock'] ? 'file+flock (fallback)' : 'NONE');
 // ⚠ BOTH schemes matter: ed25519 keys are what every live genesis currently authorises, and

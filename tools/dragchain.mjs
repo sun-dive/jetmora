@@ -35,7 +35,7 @@ import * as M from './merkle.mjs'
 console.error(`\n⛔ dragchain built LOG ROWS and they were called a covenant chain\n   This tool is stopped. Read the banner at the top of ${import.meta.url.split('/').pop()} — it explains\n   what it produced, why that was the wrong layer, and the two ways to revive it.\n`)
 process.exit(2)
 
-const BASE = process.env.LOG ?? 'http://127.0.0.1:8787/log.php'
+const BASE = process.env.THREADS ?? 'http://127.0.0.1:8787/threads.php'
 const MINT = process.env.BASIC ?? '/home/sundive/Documents/GitHub/grafverse/mint'
 const hex = b => Buffer.from(b).toString('hex')
 const unhex = h => [...Buffer.from(h, 'hex')]

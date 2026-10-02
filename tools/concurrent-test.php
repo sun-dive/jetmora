@@ -8,7 +8,7 @@ $WORKERS = (int)($argv[1] ?? 8);
 $EACH    = (int)($argv[2] ?? 25);
 $path = sys_get_temp_dir() . '/jetmora-concurrent-' . getmypid() . '.db';
 foreach (glob($path . '*') as $f) @unlink($f);
-(new LogStore($path));                       // create the schema before the workers race
+(new ThreadStore($path));                       // create the schema before the workers race
 
 $startAt = microtime(true) + 1.5;            // ⚠ a common start instant, or they merely queue
 $procs = [];
@@ -31,7 +31,7 @@ echo "  appends that raised            " . count($errs) . "\n";
 foreach ($byClass as $k => $v) echo "     ⚠ $v × $k\n";
 
 // ── now the checks that matter ──────────────────────────────────────────────────────────────
-$store = new LogStore($path);
+$store = new ThreadStore($path);
 $size = $store->size();
 echo "\n  store->size()                  $size\n";
 echo "  " . ($size === $ok ? "✓" : "⚠") . " size equals successful appends\n";
