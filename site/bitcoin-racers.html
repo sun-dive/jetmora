@@ -2,7 +2,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bitcoin Racers — the quarter mile, tick by tick</title>
-<meta name="description" content="Four drag races replayed from a jetmora log. Every tick is an entry, and every entry is proved in your browser.">
+<meta name="description" content="Four drag races replayed from a jetmora thread service. Every tick is an entry, and every entry is proved in your browser.">
 <!--
   © 2026 sun-dive. Apache License 2.0.
 
@@ -94,13 +94,13 @@
 
   <div class="panel">
     <div class="row">
-      <div><div class="lbl" style="margin-bottom:6px">log</div><div class="mono" id="size">…</div></div>
+      <div><div class="lbl" style="margin-bottom:6px">entries</div><div class="mono" id="size">…</div></div>
       <div><div class="lbl" style="margin-bottom:6px">root</div><div class="mono hash" id="root">…</div></div>
     </div>
   </div>
 
   <div class="panel">
-    <div class="lbl">the replay — one log entry per frame</div>
+    <div class="lbl">the replay — one entry per frame</div>
     <div id="lanes"></div>
     <div class="row" style="justify-content:space-between;margin-top:16px">
       <div class="row" style="gap:12px">
@@ -110,7 +110,7 @@
         <span class="mono" id="tick" style="color:var(--dim)">tick 0</span>
       </div>
       <!-- ⚠ #pager is REWRITTEN wholesale by showPage(), so nothing else may live inside it. The tick
-           display did, briefly, and was deleted the moment a single-page log emptied the pager. -->
+           display did, briefly, and was deleted the moment a single page of entries emptied the pager. -->
       <div class="row" id="pager" style="gap:10px"></div>
       <div class="row" style="gap:10px">
         <select id="rate"><option value="60">1×</option><option value="150">2.5×</option>
@@ -118,7 +118,7 @@
     </div>
     <input id="scrub" type="range" min="0" value="0" step="1">
     <p class="note" style="margin:12px 0 0">
-      ⚠ Each frame is one log entry — the chain played back, not a simulation re-run. The four races were
+      ⚠ Each frame is one entry — the chain played back, not a simulation re-run. The four races were
       run <em>separately</em>; four lanes is how they are shown, not a race that happened.
     </p>
   </div>
@@ -172,13 +172,13 @@
     <div class="lbl" style="margin:14px 0 0">⛽ How this stays free</div>
     <p class="garage-note">
       Racing is free — <b>no wallet, and no coins from you, ever</b>.
-      This chain has no coin at all: a race costs about ninety log entries, and the shop keeps them paid for.
+      This chain has no coin at all: a race costs about ninety entries, and the shop keeps them paid for.
     </p>
   </div>
   </div>
 
   <div class="panel">
-    <div class="lbl">battery — this log has no coin, so what it meters is entries</div>
+    <div class="lbl">battery — this thread service has no coin, so what it meters is entries</div>
     <div class="row" style="margin-top:4px">
       <div class="mono" id="charge">…</div>
     </div>
@@ -190,7 +190,7 @@
 
   <p class="note">
     Every tick above was fetched from
-    <a href="https://jetmora.org/log/log.php?op=info">the log</a> and checked against its root with an
+    <a href="https://jetmora.org/threads/?op=info">the thread service</a> and checked against its root with an
     RFC&nbsp;6962 inclusion proof, computed here rather than taken on trust. The chain has no blocks, no
     coin and no miners. <span class="warn">Its ordering and structure are proved; its timestamps are its
     own claim.</span>
@@ -509,10 +509,10 @@ import { parseEntry } from './js/entry.mjs'
 import { verifyInclusion, root as merkleRoot } from './js/merkle.mjs'
 import { fromHex, toHex } from './js/sha256.mjs'
 
-// ★ ANY jetmora log, not just this one — `?log=<url>` points the page at somebody else's. The design
-//   says a log is one operator among many; a viewer welded to one address would quietly say otherwise.
-//   ⚠ It also makes the multi-page path testable, which four races on the live log never exercise.
-const API = new URLSearchParams(location.search).get('log') || 'https://jetmora.org/log/log.php'
+// ★ ANY jetmora thread service, not just this one — `?threads=<url>` points the page at somebody else's. The design
+//   says a thread service is one operator among many; a viewer welded to one address would quietly say otherwise.
+//   ⚠ It also makes the multi-page path testable, which four races on the live service never exercise.
+const API = new URLSearchParams(location.search).get('threads') || 'https://jetmora.org/threads/'
 const S = 2 ** 32                       // ⚠ the racers' fixed-point scale — metres and m/s are v / 2^32
 const QUARTER = 402.336
 const j = async q => (await fetch(`${API}?${q}`)).json()
@@ -548,13 +548,13 @@ for (let i = 0; i < info.size; i += LANES) {
   }))
 }
 
-// ⚠ Races are separate covenants but share one log, appended back to back. Each starts its tick count
+// ⚠ Races are separate covenants but share one thread service, appended back to back. Each starts its tick count
 //   at 1, so a reset to 1 IS the boundary — no metadata needed, and none is invented.
 const ALL = []
 for (const t of ticks) { if (t.n === 1) ALL.push([]); ALL.at(-1)?.push(t) }
 
-// ⚠ FOUR LANES IS THE STRIP'S SHAPE, NOT THE LOG'S. Today the log holds exactly four races, so the
-//   distinction never showed; the next race makes it matter. `races` is the PAGE, `ALL` is the log.
+// ⚠ FOUR LANES IS THE STRIP'S SHAPE, NOT THE SERVICE'S. Today the service holds exactly four races, so the
+//   distinction never showed; the next race makes it matter. `races` is the PAGE, `ALL` is the service.
 const PAGE_SIZE = 4
 let page = 0, races = [], first = 0
 let buildLanes = () => {}, showStandings = () => {}
@@ -567,7 +567,7 @@ const ending = r => r.at(-1).s >= QUARTER ? 'FINISH' : r.length === 1 ? 'BLOWN'
                   : r.at(-1).fuel === 0 ? 'STOPPED' : 'OFF'
 let ENDINGS = []
 // ★ Names belong to the race, not to the lane it happens to be drawn in — the first four came from the
-//   run that seeded the log, and anything after is numbered. Keyed on the ABSOLUTE index for that reason.
+//   run that seeded the service, and anything after is numbered. Keyed on the ABSOLUTE index for that reason.
 const nameOf = abs => NAMES[abs] ?? `race ${abs + 1}`
 
 function draw(id, maxS, caption) {
@@ -625,7 +625,7 @@ function draw(id, maxS, caption) {
   g.fillText(caption, PAD.l + W / 2, c.height - 16)
 }
 
-// ── THE REPLAY — one log entry per frame ─────────────────────────────────────────────────────────
+// ── THE REPLAY — one entry per frame ─────────────────────────────────────────────────────────
 // ★ The design is grafverse's: an emoji car on a strip with a chequered finish, moved by a CSS
 //   transition rather than repainted. ⇒ The browser does the interpolation; we only ever set a
 //   percentage, and the number we set comes straight out of the entry.
@@ -668,7 +668,7 @@ function draw(id, maxS, caption) {
 
   /**
    * ★ THE ENDING, MADE VISIBLE — ported from grafverse.com/bitcoin-racers.html.
-   * ⚠⚠ EVERY BRANCH IS KEYED OFF THE ENDING THE LOG RECORDED, never off "did the car reach the end of
+   * ⚠⚠ EVERY BRANCH IS KEYED OFF THE ENDING THE THREAD RECORDED, never off "did the car reach the end of
    *   the trace". That page had already told that lie once, printing a finishing time for a car that
    *   went off at tick four. A visual lie is the loudest kind.
    */
@@ -694,7 +694,7 @@ function draw(id, maxS, caption) {
         audio.cheer(); L.car.classList.add('told'); L.glyph.textContent = '🏁'
         break
       // ⚠ STOPPED gets nothing, deliberately. The drama of running dry is the ABSENCE — the engine
-      //   has already died, and dressing that up would be inventing an event the log does not have.
+      //   has already died, and dressing that up would be inventing an event the thread does not have.
     }
   }
   function unfinale(i) {
@@ -717,7 +717,7 @@ function draw(id, maxS, caption) {
     else audio.engineTo(8, 0, false)
     races.forEach((r, i) => {
       // ⚠ A race shorter than the playhead has ENDED — it holds its last recorded state rather than
-      //   drifting on, because that is what the log running out looks like.
+      //   drifting on, because that is what the thread running out looks like.
       const done = t >= r.length, cur = r[Math.min(t, r.length - 1)]
       const L = lanes[i]
       L.el.classList.toggle('done', done)
@@ -800,7 +800,7 @@ showStandings = () => {
 }
 
 const ROOT = fromHex(info.root)
-// ── verify the whole log, the cheap way and the strong way ───────────────────────────────────────
+// ── verify every entry, the cheap way and the strong way ───────────────────────────────────────
 // ⚠⚠ THIS USED TO FETCH 264 INCLUSION PROOFS AND CHECK THEM ONE BY ONE — ~2,600 SHA-256 rounds and 264
 //   round-trips, on a main thread that then could not animate. His question was the right one: why are
 //   thousands of hashes being done at all?
@@ -817,7 +817,7 @@ document.getElementById('size').textContent =
 document.getElementById('root').style.color = rootOK ? 'var(--good)' : 'var(--bad)'
 
 // ★ And one inclusion proof per race, kept because it demonstrates something the recomputation cannot:
-//   that the log SERVES proofs, so a verifier who holds one entry and not the whole log can still check
+//   that the thread service SERVES proofs, so a verifier who holds one entry and not the whole service can still check
 //   it. Four requests, not 264.
 function proveThisPage() {
   races.forEach(async (r, i) => {

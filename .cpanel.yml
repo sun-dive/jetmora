@@ -33,17 +33,23 @@ deployment:
     - /bin/cp tools/entry.mjs tools/merkle.mjs tools/sha256.mjs "$DEPLOYPATH/js/"
     - /bin/mkdir -p "$DEPLOYPATH/vectors" && /bin/cp vectors/core.json "$DEPLOYPATH/vectors/core.json"
     - /bin/cp vectors/LICENSE "$DEPLOYPATH/vectors/LICENSE"  # CC0 1.0, alongside the file it dedicates
-    # ── THE LOG SERVICE ────────────────────────────────────────────────────────────────────────────
+    # ── THE THREAD SERVICE, at /threads/ ───────────────────────────────────────────────────────────
     # ⚠⚠ The database lives OUTSIDE the docroot. Inside one it is web-readable as well as writable.
     #    `server/data/` is gitignored, so a deploy can never overwrite a live database.
     - /bin/mkdir -p "$HOME/jetmora-data" && /bin/chmod 700 "$HOME/jetmora-data"
-    - /bin/mkdir -p "$DEPLOYPATH/log"
-    - /bin/cp server/log.php "$DEPLOYPATH/log/log.php"          # the only endpoint; the rest are includes
-    - /bin/cp server/store.php "$DEPLOYPATH/log/store.php"
-    - /bin/cp server/merkle.php "$DEPLOYPATH/log/merkle.php"
-    - /bin/cp server/genesis.php "$DEPLOYPATH/log/genesis.php"
-    - /bin/cp server/append.php "$DEPLOYPATH/log/append.php"
-    - /bin/cp server/head.php "$DEPLOYPATH/log/head.php"
+    - /bin/mkdir -p "$DEPLOYPATH/threads"
+    - /bin/cp server/threads.php "$DEPLOYPATH/threads/index.php"   # the only endpoint; the rest are includes
+    # every file threads.php reaches through require: a missing one is a fatal error before any JSON can answer
+    - /bin/cp server/store.php "$DEPLOYPATH/threads/store.php"
+    - /bin/cp server/merkle.php "$DEPLOYPATH/threads/merkle.php"
+    - /bin/cp server/genesis.php "$DEPLOYPATH/threads/genesis.php"
+    - /bin/cp server/append.php "$DEPLOYPATH/threads/append.php"
+    - /bin/cp server/head.php "$DEPLOYPATH/threads/head.php"
+    - /bin/cp server/secp256k1.php "$DEPLOYPATH/threads/secp256k1.php"
+    - /bin/cp server/rfc6979.php "$DEPLOYPATH/threads/rfc6979.php"
+    - /bin/cp server/covenant-entry.php "$DEPLOYPATH/threads/covenant-entry.php"
+    # ⛔ /log/ was the first home of the thread service, and the name was wrong: it is not a log. Removed, no redirect.
+    - /bin/rm -rf "$DEPLOYPATH/log"
     # ⚠ emit-vectors.php and probe.php are development tools and are deliberately NOT deployed.
     - /bin/cp LICENSE "$DEPLOYPATH/LICENSE"                  # Apache-2.0
     - /bin/cp NOTICE "$DEPLOYPATH/NOTICE"                    # derivation + the Open BSV position + provenance
