@@ -348,6 +348,21 @@ $T[] = ['order.runsAreContiguous', '', null, null, null,
 $T[] = ['order.promotedBeforeOwn', '', null, null, null,
         fn() => max($codesP) < min($codesO)];
 
+// ── export: the same cases for the JavaScript interpreter (tools/verify-jf.mjs) ─────────────────────
+//   php server/verify-jf.php --export=<file.json>   ⇒ writes the script cases and exits; nothing runs
+foreach ($argv as $arg) if (str_starts_with($arg, '--export=')) {
+  $out = [];
+  foreach ($T as $case) {
+    if (isset($case[5])) continue;                        // a property of the PHP map; verify-jf.mjs pins the JS map itself
+    $out[] = ['id' => $case[0], 'script' => bin2hex($case[1]),
+              'want' => $case[2] === null ? null : array_map('strval', $case[2]),
+              'err' => $case[3], 'diag' => isset($case[4]) ? bin2hex($case[4]) : null];
+  }
+  file_put_contents(substr($arg, 9), json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+  printf("exported %d cases\n", count($out));
+  exit(0);
+}
+
 // ── run ──────────────────────────────────────────────────────────────────────────────────────────────
 $verbose = in_array('-v', $argv, true);
 $pass = $fail = 0; $failures = [];
