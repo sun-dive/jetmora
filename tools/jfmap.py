@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# © 2026 sun-dive — Apache License 2.0 (the text: basic/LICENSE).
 """
 THE CANONICAL `JF` OPCODE MAP. One implementation, two consumers.
 

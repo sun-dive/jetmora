@@ -8,7 +8,10 @@ Apache License 2.0 on 2030-09-14. The specification and the papers stay under
 the Apache License 2.0 as first published; vectors/core.json is CC0.
 
 The jetmora BASIC compiler, basic/, is licensed under the Apache License 2.0
-(see basic/LICENSE), so that anyone may use it and build on it.
+(see basic/LICENSE), so that anyone may use it and build on it. So is the JF
+opcode table it compiles to: tools/jfmap.py, tools/forth2012.tsv,
+tools/gen-ops-jf.py, and the tables generated from them, tools/ops-jf.mjs and
+server/ops-jf.php.
 
 ────────────────────────────────────────────────────────────────────────────────
 THIRD-PARTY AND DERIVED MATERIAL
