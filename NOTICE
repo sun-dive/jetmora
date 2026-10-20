@@ -7,6 +7,9 @@ witnesses and mirrors for anyone and building on the work, and converting to the
 Apache License 2.0 on 2030-09-14. The specification and the papers stay under
 the Apache License 2.0 as first published; vectors/core.json is CC0.
 
+The jetmora BASIC compiler, basic/, is licensed under the Apache License 2.0
+(see basic/LICENSE), so that anyone may use it and build on it.
+
 ────────────────────────────────────────────────────────────────────────────────
 THIRD-PARTY AND DERIVED MATERIAL
 
