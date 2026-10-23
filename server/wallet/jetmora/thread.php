@@ -21,6 +21,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../../covenant-entry.php';
 require_once __DIR__ . '/../../preimage.php';
+require_once __DIR__ . '/../../dispatch.php';
 
 final class ThreadError extends RuntimeException {}
 
@@ -158,6 +159,22 @@ final class CovenantThread
     $bytes = CovenantEntry::encode($entry);
     return ['entry' => $entry, 'bytes' => $bytes,
             'hash' => CovenantEntry::hash($bytes), 'preimage' => $pre];
+  }
+
+  // ── judging a tick ────────────────────────────────────────────────────────────────────────────────
+  /**
+   * Judge input $inputIndex of $entry against the tip it spends. The entry's nVersion names the interpreter;
+   * the preimage is built here from the entry and the tip, never taken from the caller; that interpreter's
+   * verifyTick judges the rest.
+   * @throws VersionError when this host has no interpreter that judges ticks for the version named.
+   * @return array{accepted: bool, stack?: GMP[], error?: string}
+   */
+  public static function judge(array $entry, int $inputIndex, string $prevLocking, string $prevValue): array
+  {
+    $vm = interpreter_for($entry['version']);
+    if (!method_exists($vm, 'verifyTick')) throw new VersionError(get_class($vm) . ' does not judge ticks');
+    $pre = Preimage::build($entry, $inputIndex, $prevLocking, $prevValue);
+    return $vm::verifyTick($entry['inputs'][$inputIndex]['unlocking'], $prevLocking, $pre);
   }
 
   /**

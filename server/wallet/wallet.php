@@ -36,6 +36,7 @@ require_once __DIR__ . '/../append.php';             // ⚠ the CHAIN's verifier
 // ⚠ The state is the OUTPUT VALUE — §3's "application-defined quantity". The script never changes, so
 //   it needs no self-modification, and the successor must carry the SAME script with value + 1.
 const COUNTER_SRC = <<<'ASM'
+  2DROP
   1000 PREIMAGE  DUP 8 !
   2DUP 8 @ 52 - 8 2000 SUBSTR BIN2NUM 16 !
   2DUP 8 @ 40 - 32 2100 SUBSTR 2DROP
@@ -111,17 +112,11 @@ function put_thread(array $t): void {
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function hexOf(string $b): string { return bin2hex($b); }
 
-/** Run the covenant over a tick's preimage. ★ This is the verdict nothing upstream will give you. */
-function covenant_verdict(string $script, string $preimage): array {
-  $vm = new InterpreterJF();
-  $vm->setPreimage($preimage);
-  try {
-    $stack = $vm->run($script);
-    if (count($stack) !== 1) return [false, 'the covenant left ' . count($stack) . ' items, expected 1'];
-    return [gmp_sign($stack[0]) !== 0, gmp_sign($stack[0]) !== 0 ? 'accepted' : 'REFUSED by the covenant'];
-  } catch (JfScriptError $e) {
-    return [false, 'covenant error: ' . $e->getMessage()];
-  }
+/** Judge a tick against the covenant, as every tick is judged (CovenantThread::judge). ★ The verdict nothing upstream gives. */
+function covenant_verdict(array $entry, string $script, string $prevValue): array {
+  $v = CovenantThread::judge($entry, 0, $script, $prevValue);
+  if (isset($v['error'])) return [false, 'covenant error: ' . $v['error']];
+  return [$v['accepted'], $v['accepted'] ? 'accepted' : 'REFUSED by the covenant'];
 }
 
 $script  = jf_asm(COUNTER_SRC);
@@ -187,12 +182,12 @@ try {
     $tick = CovenantThread::tick(
       hex2bin($t['tip']), 0, $script, pack('P', (int)$t['value']),
       [['value' => $newValue, 'locking' => $script]], (int)$t['ticks'] + 1,
-      fn(string $pre) => chr(JF_SMALL0 + 1)     // ⚠ JF's PREIMAGE is native: no OP_PUSH_TX needed
+      fn(string $pre) => "\x01\x01"           // one byte push, which the lock drops: JF's PREIMAGE is native
     );
 
     // ★★★ THE COVENANT DECIDES. §4.1: an operator checks only well-formedness and authorisation, so
     //   nothing upstream will catch a bad tick. The wallet is the last place it can be caught.
-    [$okc, $why] = covenant_verdict($script, $tick['preimage']);
+    [$okc, $why] = covenant_verdict($tick['entry'], $script, pack('P', (int)$t['value']));
     if (!$okc) throw new RuntimeException("the covenant refused this tick — {$why}");
 
     // ⚠ TWO SIGNATURES (§4.0a). The append one is over the ENTRY BYTES and is all a chain may check.

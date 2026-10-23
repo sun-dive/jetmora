@@ -37,8 +37,10 @@ function ok(bool $c, string $what): void {
 }
 
 // ── the covenant, in jetForth ───────────────────────────────────────────────────────────────────────
+// ⚠ The tick's unlocking script is one byte push (an unlocking script is byte pushes only), and the lock drops it first.
 // ⚠ Scratch slots: 8 = preimage length · 16 = old value · 24 = script length
 const COUNTER_SRC = <<<'ASM'
+  2DROP
   1000 PREIMAGE  DUP 8 !
   2DUP 8 @ 52 - 8 2000 SUBSTR BIN2NUM 16 !
   2DUP 8 @ 40 - 32 2100 SUBSTR 2DROP
@@ -55,14 +57,10 @@ $script = jf_asm(COUNTER_SRC);
 printf("── the covenant: %d bytes of jetForth bytecode ──\n", strlen($script));
 ok(strlen($script) > 0 && strlen($script) < 253, 'it assembles, and fits a 1-byte varint');
 
-/** Run the covenant over a tick's preimage. Returns its verdict. */
-function runCovenant(string $script, string $preimage): bool
+/** Judge a tick against the covenant, as every tick is judged (CovenantThread::judge). Returns the verdict. */
+function runCovenant(string $script, array $tick, int $prevValue): bool
 {
-  $vm = new InterpreterJF();
-  $vm->setPreimage($preimage);
-  $stack = $vm->run($script);
-  if (count($stack) !== 1) throw new RuntimeException('covenant left ' . count($stack) . ' items, want 1');
-  return gmp_sign($stack[0]) !== 0;                 // Forth TRUE is all bits set
+  return CovenantThread::judge($tick['entry'], 0, $script, pack('P', $prevValue))['accepted'];
 }
 
 /** One tick: successor carries $newValue and the SAME script. */
@@ -74,8 +72,8 @@ function tickTo(string $script, string $tip, int $oldValue, int $newValue): arra
     1,
     // ⚠ Nothing needs pushing: JF's PREIMAGE is native, so the unlocking script carries only what the
     //   covenant cannot derive. Here that is nothing — but it MUST NOT be empty (that is a log row),
-    //   so it carries OP_1 as an explicit "no arguments".
-    fn(string $pre) => chr(JF_SMALL0 + 1)
+    //   so it carries one byte push, which the lock drops.
+    fn(string $pre) => "\x01\x01"
   );
 }
 
@@ -90,30 +88,30 @@ ok(strlen($t['preimage']) === 105 + strlen($script) + 52,
    sprintf('preimage = 105 + script(%d) + 52 = %d bytes — the offsets hold', strlen($script), strlen($t['preimage'])));
 ok(substr($t['preimage'], 105, strlen($script)) === $script,
    '...and scriptCode really is at offset 105, which is what the covenant reads');
-ok(runCovenant($script, $t['preimage']), '★★★ THE COVENANT ACCEPTS IT — 41 → 42');
+ok(runCovenant($script, $t, 41), '★★★ THE COVENANT ACCEPTS IT — 41 → 42');
 
 // ── ⛔ ticks that BREAK THE RULE ─────────────────────────────────────────────────────────────────────
 echo "\n── ⛔ and the covenant REFUSES what breaks its rule ──\n";
-ok(!runCovenant($script, tickTo($script, $genesis['id'], 41, 43)['preimage']),
+ok(!runCovenant($script, tickTo($script, $genesis['id'], 41, 43), 41),
    '⛔ 41 → 43 is REFUSED — it skipped a value');
-ok(!runCovenant($script, tickTo($script, $genesis['id'], 41, 41)['preimage']),
+ok(!runCovenant($script, tickTo($script, $genesis['id'], 41, 41), 41),
    '⛔ 41 → 41 is REFUSED — it did not advance');
-ok(!runCovenant($script, tickTo($script, $genesis['id'], 41, 40)['preimage']),
+ok(!runCovenant($script, tickTo($script, $genesis['id'], 41, 40), 41),
    '⛔ 41 → 40 is REFUSED — it went backwards');
 
 // ★★ the sharpest one: the successor tries to change the SCRIPT, which is how a covenant is escaped
 $escape = CovenantThread::tick($genesis['id'], 0, $script, pack('P', 41),
   [['value' => 42, 'locking' => "\x76\xa9\x14" . str_repeat("\x99",20) . "\x88\xac"]], 1,
-  fn(string $pre) => chr(JF_SMALL0 + 1));
-ok(!runCovenant($script, $escape['preimage']),
+  fn(string $pre) => "\x01\x01");
+ok(!runCovenant($script, $escape, 41),
    '⛔⛔ a successor with a DIFFERENT script is REFUSED — the covenant survives its own tick');
 
 // ★ and a successor that pays a second output the covenant did not authorise
 $extra = CovenantThread::tick($genesis['id'], 0, $script, pack('P', 41),
   [['value' => 42, 'locking' => $script],
    ['value' => 1,  'locking' => "\x51"]], 1,
-  fn(string $pre) => chr(JF_SMALL0 + 1));
-ok(!runCovenant($script, $extra['preimage']),
+  fn(string $pre) => "\x01\x01");
+ok(!runCovenant($script, $extra, 41),
    '⛔ an EXTRA output is REFUSED — hashOutputs covers all of them');
 
 // ── the chain continues ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +119,7 @@ echo "\n── ★ and it runs as a THREAD, not a single step ──\n";
 $tip = $genesis['id']; $v = 0; $steps = 0;
 for ($n = 0; $n < 5; $n++) {
   $step = tickTo($script, $tip, $v, $v + 1);
-  if (!runCovenant($script, $step['preimage'])) break;
+  if (!runCovenant($script, $step, $v)) break;
   $tip = $step['hash']; $v++; $steps++;
 }
 ok($steps === 5, sprintf('five consecutive ticks, each accepted by the covenant (counter now %d)', $v));
