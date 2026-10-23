@@ -43,6 +43,13 @@ class JfScriptError extends RuntimeException
   }
 }
 
+/**
+ * THE HOST CANNOT JUDGE: a capability it lacks (Ed25519 without ext/sodium). It is not a refusal, and
+ * verifyTick passes it on rather than turn it into one: a tick is never refused here and accepted there
+ * because one host is missing a library.
+ */
+final class JfHostError extends RuntimeException {}
+
 /** ⚠ Distinct on purpose: the bank design exists so an unimplemented wordset is refused BY NAME. */
 final class JfBankUnsupported extends JfScriptError
 {
@@ -61,10 +68,21 @@ final class InterpreterJF
   /** @var array<int,array{n_in:int,n_out:int,body:string}> */ private array $defs = [];
   /** @var GMP[][] locals frames */ private array $frames = [];
   private string $mem = '';
-  /** @var array<int,array{in:string,pos:int,out:string,max:int}> one frame per active INVOKE */
+  /** @var array<int,array{in:string,pos:int,inmax:int,out:string,max:int,room:int}> one frame per active INVOKE */
   private array $chan = [];
   private int $opCount = 0;
   private int $depth = 0;
+  /** Cells in the locals frames, and cells an active INVOKE has set aside: both count as items held. */
+  private int $frameCells = 0;
+  private int $held = 0;
+  /** Every pushed byte, in order: read-only, and never at a program-memory address (his call, 23 Oct). */
+  private string $pmem = '';
+  private int $sigOps = 0;
+  /** Where the push space starts. Program memory is below it, so the two can never overlap. A function at INVOKE
+   *  depth d (the INVOKEs active: the lock is 0) has its own from PUSH_BASE × (d + 1), so a push address it returns
+   *  is out of range in its caller. A program-memory address it returns names the caller's own memory. */
+  public const PUSH_BASE = 16777216;
+  private int $pbase = self::PUSH_BASE;
 
   /** Signature/preimage context. ⚠ Optional: a bare script has no transaction. */
   private ?string $preimage = null;
@@ -73,13 +91,16 @@ final class InterpreterJF
   private static ?GMP $H64 = null;   // 2^63
 
   /**
-   * Every limit here is OPERATOR POLICY (§4.5), never a protocol constant. Past the budget there is
-   * simply no proof — which is a different thing from the program being invalid.
+   * These limits are for run(), the interpreter as a tool. A tick is judged by verifyTick(), with JF
+   * revision 3's own limits (the TICK_ constants), the same for every host.
    */
   public function __construct(
     private int $maxOps = 200000,
     private int $memSize = 65536,
     private int $maxDepth = 64,
+    private int $maxItems = 1000,
+    private int $pushSize = 65536,
+    private int $maxSigOps = 100,
   ) {
     self::$M64 ??= gmp_pow(2, 64);
     self::$H64 ??= gmp_pow(2, 63);
@@ -99,6 +120,11 @@ final class InterpreterJF
   }
 
   // ── stacks ─────────────────────────────────────────────────────────────────────────────────────────
+  /** need($n + 1) for an index that may be PHP_INT_MAX, which `+ 1` would turn into a float. */
+  private function needMore(int $n): void {
+    if ($n >= count($this->ds))
+      throw new JfScriptError('stack underflow: need ' . gmp_strval(gmp_add(gmp_init($n), 1)) . ', have ' . count($this->ds));
+  }
   private function need(int $n): void {
     if (count($this->ds) < $n) throw new JfScriptError("stack underflow: need $n, have " . count($this->ds));
   }
@@ -118,12 +144,19 @@ final class InterpreterJF
 
   // ── memory ─────────────────────────────────────────────────────────────────────────────────────────
   private function bounds(int $addr, int $len): void {
-    if ($addr < 0 || $len < 0 || $addr + $len > strlen($this->mem))
-      throw new JfScriptError("memory out of range: addr=$addr len=$len size=" . strlen($this->mem));
+    if ($addr < 0 || $len < 0 || $addr + $len > $this->memSize)
+      throw new JfScriptError("memory out of range: addr=$addr len=$len size=" . $this->memSize);
+    // made, zeroed, when first touched: a function that never touches memory costs nothing for it
+    if ($this->mem === '') $this->mem = str_repeat("\x00", $this->memSize);
+  }
+  /** $a + $off as an address. Past PHP_INT_MAX it is out of range, said as the JavaScript port says it. */
+  private function at(int $a, int $off): int {
+    if ($a > PHP_INT_MAX - $off)
+      throw new JfScriptError('memory out of range: addr=' . gmp_strval(gmp_add(gmp_init($a), $off)) . ' len=8 size=' . $this->memSize);
+    return $a + $off;
   }
   private function fetch(int $addr): GMP {
-    $this->bounds($addr, 8);
-    $le = substr($this->mem, $addr, 8);
+    $le = $this->view($addr, 8);
     return self::cell(gmp_import(strrev($le), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN));
   }
   private function store(int $addr, GMP $v): void {
@@ -133,13 +166,31 @@ final class InterpreterJF
     $le = strrev(str_pad($be, 8, "\x00", STR_PAD_LEFT));
     for ($k = 0; $k < 8; $k++) $this->mem[$addr + $k] = $le[$k];
   }
-  private function read(int $addr, int $len): string {
+  private function read(int $addr, int $len): string { return $this->view($addr, $len); }
+  /** Bytes from program memory, or from wholly inside the push space. Writes never reach the push space. */
+  private function view(int $addr, int $len): string {
+    $p = strlen($this->pmem);
+    if ($addr >= $this->pbase && $len >= 0 && $len <= $p && $addr - $this->pbase <= $p - $len) {
+      $this->charge($len);
+      return substr($this->pmem, $addr - $this->pbase, $len);
+    }
     $this->bounds($addr, $len);
+    $this->charge($len);
     return substr($this->mem, $addr, $len);
   }
+  /** Each span read, written or pushed costs one more instruction for every whole 64 bytes in it (his call, 23 Oct).
+   *  A function's channel bytes are charged when INVOKE reads its input span and when its output is pushed on return. */
+  private function charge(int $n): void {
+    $this->opCount += intdiv($n, 64);
+    if ($this->opCount > $this->maxOps) throw new JfScriptError('op budget exhausted');
+  }
   private function write(int $addr, string $b): void {
-    $this->bounds($addr, strlen($b));
-    for ($k = 0, $n = strlen($b); $k < $n; $k++) $this->mem[$addr + $k] = $b[$k];
+    $n = strlen($b);
+    $this->bounds($addr, $n);
+    $this->charge($n);
+    // byte by byte is faster up to about 128 bytes; above that substr_replace costs about 1 us at any length
+    if ($n <= 128) { for ($k = 0; $k < $n; $k++) $this->mem[$addr + $k] = $b[$k]; }
+    else $this->mem = substr_replace($this->mem, $b, $addr, $n);
   }
   /** `( c-addr u -- )` popped as a pair, u on top. */
   private function popSpan(): string { $u = $this->popInt(); $a = $this->popInt(); return $this->read($a, $u); }
@@ -212,13 +263,83 @@ final class InterpreterJF
     throw new JfScriptError('8-byte varint is not a script length');
   }
 
+  // ── judging a tick ─────────────────────────────────────────────────────────────────────────────────
+  /**
+   * JF revision 3's limits when a tick is judged. They are the version's, the same for every host: a limit
+   * that differed between hosts would be a verdict that differed between them. Taken from a BSV node's
+   * defaults: a script is at most 500,000 bytes (500 KB, BSV's KB being 1,000), and a tick runs at most the same
+   * number of instructions, each span read, written or pushed costing one more for every whole 64 bytes. At
+   * most 1,000 items are held at once, as BSV's MAX_STACK_ELEMENTS (stack and altstack), counting here the data and
+   * return stacks, the locals frames and what an INVOKE has set aside. Pushed bytes have their own 65,536 bytes,
+   * read-only. At most 100 signature checks a tick, weighted as BSV weights them (CHECKSIG and ED25519-CHECKSIG 1,
+   * CHECKMULTISIG its number of keys) and counted as each runs, before the check is made.
+   */
+  public const TICK_MAX_SCRIPT = 500000, TICK_MAX_OPS = 500000, TICK_MEM = 65536, TICK_MAX_DEPTH = 64, TICK_MAX_ITEMS = 1000,
+               TICK_PUSH_MEM = 65536, TICK_MAX_SIGOPS = 100;
+
+  /**
+   * Judge a tick as a BSV node judges a spend (bitcoin-sv src/script/interpreter.cpp, VerifyScript):
+   *   1  the unlocking script is byte pushes only: direct pushes and STR8 / STR16 / STR32, each whole;
+   *   2  it runs, then the lock runs as a SECOND, separate run on the data stack and pushed bytes it left, so
+   *      nothing in the first can jump into the second or end it;
+   *   3  the tick is accepted when the lock leaves exactly one item and it is non-zero. Any error refuses it.
+   * @return array{accepted: bool, stack?: GMP[], error?: string}
+   */
+  public static function verifyTick(string $unlocking, string $lock, ?string $preimage): array
+  {
+    if (strlen($unlocking) > self::TICK_MAX_SCRIPT || strlen($lock) > self::TICK_MAX_SCRIPT)
+      return ['accepted' => false, 'error' => 'a script is longer than 500000 bytes'];
+    if (!self::bytePushesOnly($unlocking)) return ['accepted' => false, 'error' => 'the unlocking script is not byte pushes only'];
+    $vm = new self(self::TICK_MAX_OPS, self::TICK_MEM, self::TICK_MAX_DEPTH, self::TICK_MAX_ITEMS,
+                   self::TICK_PUSH_MEM, self::TICK_MAX_SIGOPS);
+    $vm->setPreimage($preimage);
+    try {
+      $vm->ds = $vm->rs = $vm->frames = $vm->chan = [];
+      $vm->opCount = 0; $vm->depth = 0; $vm->frameCells = 0; $vm->held = 0; $vm->sigOps = 0;
+      $vm->mem = '';
+      $vm->pmem = ''; $vm->pbase = self::PUSH_BASE;
+      $vm->exec($unlocking, 0, true);
+      // the second run: the data stack and the pushed bytes carry over, and the op and signature counts run on
+      $vm->rs = $vm->frames = []; $vm->depth = 0; $vm->frameCells = 0;
+      $i = 0;
+      $vm->parseDefs($lock, $i);
+      $vm->exec($lock, $i, true);
+      if ($vm->frames) throw new JfScriptError('unbalanced locals frame');
+    } catch (JfHostError $e) {
+      throw $e;                                     // this host cannot judge: never a refusal
+    } catch (JfScriptError $e) {
+      return ['accepted' => false, 'error' => $e->getMessage()];
+    } catch (Throwable $e) {
+      return ['accepted' => false, 'error' => 'the interpreter faulted: ' . get_class($e)];   // no host paths
+    }
+    return ['accepted' => count($vm->ds) === 1 && gmp_sign($vm->ds[0]) !== 0, 'stack' => $vm->ds];
+  }
+
+  /** Byte pushes only: direct pushes (0 to 72 bytes) and STR8 / STR16 / STR32, each whole. */
+  public static function bytePushesOnly(string $s): bool
+  {
+    $n = strlen($s);
+    for ($p = 0; $p < $n;) {
+      $op = ord($s[$p++]);
+      if ($op <= JF_PUSH_MAX) $len = $op;
+      elseif ($op === JF_LIT['STR8'])  { if ($p + 1 > $n) return false; $len = ord($s[$p]); $p += 1; }
+      elseif ($op === JF_LIT['STR16']) { if ($p + 2 > $n) return false; $len = unpack('v', substr($s, $p, 2))[1]; $p += 2; }
+      elseif ($op === JF_LIT['STR32']) { if ($p + 4 > $n) return false; $len = unpack('V', substr($s, $p, 4))[1]; $p += 4; }
+      else return false;
+      if ($p + $len > $n) return false;
+      $p += $len;
+    }
+    return true;
+  }
+
   // ── run ────────────────────────────────────────────────────────────────────────────────────────────
   /** @return GMP[] the final data stack, bottom first. @throws JfScriptError */
   public function run(string $script): array
   {
     $this->ds = $this->rs = $this->frames = $this->chan = [];
-    $this->opCount = 0; $this->depth = 0;
-    $this->mem = str_repeat("\x00", $this->memSize);
+    $this->opCount = 0; $this->depth = 0; $this->frameCells = 0; $this->held = 0; $this->sigOps = 0;
+    $this->mem = '';
+    $this->pmem = ''; $this->pbase = self::PUSH_BASE;
     $i = 0;
     $this->parseDefs($script, $i);
     $this->exec($script, $i, /* covenant tier */ true);
@@ -234,12 +355,14 @@ final class InterpreterJF
   {
     $len = strlen($code);
     while ($i < $len) {
+      // checked after every instruction, as BSV checks stack + altstack after every opcode
+      if (count($this->ds) + count($this->rs) + $this->frameCells + $this->held > $this->maxItems) $this->tooMany();
       if (++$this->opCount > $this->maxOps) throw new JfScriptError('op budget exhausted');
       $op = ord($code[$i]); $i++;
 
       // ── direct push: the opcode IS the length ───────────────────────────────────────────────────
-      // ⚠ A push puts (c-addr u) on the stack — the bytes are copied into working memory at the
-      //   scratch pointer, because a cell cannot hold 32 bytes and Forth strings are addr+len.
+      // ⚠ A push puts (c-addr u) on the stack — the bytes are copied into the push space, because a
+      //   cell cannot hold 32 bytes and Forth strings are addr+len.
       if ($op <= JF_PUSH_MAX) {
         if ($i + $op > $len) throw new JfScriptError('push past end of script');
         $this->pushSpan(substr($code, $i, $op));
@@ -308,24 +431,26 @@ final class InterpreterJF
 
       $i = $this->step($op, $code, $i, $covenant);
     }
+    if (count($this->ds) + count($this->rs) + $this->frameCells + $this->held > $this->maxItems) $this->tooMany();
+  }
+  private function tooMany(): never {
+    throw new JfScriptError(sprintf('stack size exceeded: %d items held, at most %d',
+      count($this->ds) + count($this->rs) + $this->frameCells + $this->held, $this->maxItems));
   }
 
-  /** Copy bytes into scratch memory and leave `( c-addr u )`. */
+  /** Append bytes to the push space and leave `( c-addr u )`. ⚠ Deterministic: an address depends only on the lengths pushed before. */
   private function pushSpan(string $b): void {
-    $at = $this->scratch(strlen($b));
-    $this->write($at, $b);
-    $this->pushI($at); $this->pushI(strlen($b));
+    $n = strlen($b);
+    if (strlen($this->pmem) + $n > $this->pushSize) throw new JfScriptError('push space exhausted');
+    $this->charge($n);
+    $at = $this->pbase + strlen($this->pmem);
+    $this->pmem .= $b;
+    $this->pushI($at); $this->pushI($n);
   }
-  /**
-   * Scratch allocation for literals only, growing DOWN from the top of memory.
-   * ⚠ Deterministic by construction: it depends on nothing but the sequence of literals executed.
-   */
-  private int $scratchTop = 0;
-  private function scratch(int $n): int {
-    if ($this->scratchTop === 0) $this->scratchTop = strlen($this->mem);
-    $this->scratchTop -= $n;
-    if ($this->scratchTop < 0) throw new JfScriptError('literal scratch exhausted');
-    return $this->scratchTop;
+  private function sigOp(int $n): void {
+    $this->sigOps += $n;
+    if ($this->sigOps > $this->maxSigOps)
+      throw new JfScriptError(sprintf('signature check limit exceeded: at most %d a tick', $this->maxSigOps));
   }
 
   /** One opcode. Returns the new instruction pointer. */
@@ -347,7 +472,7 @@ final class InterpreterJF
       case $L['LITBIG']: {
         $n = $this->varint($code, $i);
         if ($i + $n > strlen($code)) throw new JfScriptError('truncated LITBIG');
-        // ⚠ A bignum does not fit a cell. It goes to memory and arrives as (c-addr u), like any string.
+        // ⚠ A bignum does not fit a cell. It goes to the push space and arrives as (c-addr u), like any string.
         $this->pushSpan(substr($code, $i, $n));
         return $i + $n;
       }
@@ -367,25 +492,24 @@ final class InterpreterJF
       case $W['SWAP']:  $this->need(2); $n = count($this->ds);
                         [$this->ds[$n-2], $this->ds[$n-1]] = [$this->ds[$n-1], $this->ds[$n-2]]; return $i;
       case $W['OVER']:  $this->need(2); $this->ds[] = $this->ds[count($this->ds) - 2]; return $i;
-      case $W['ROT']:   $this->need(3); $n = count($this->ds);
-                        $x = $this->ds[$n-3]; array_splice($this->ds, $n-3, 1); $this->ds[] = $x; return $i;
+      case $W['ROT']:   $this->need(3); $n = count($this->ds); $x = $this->ds[$n-3];
+                        $this->ds[$n-3] = $this->ds[$n-2]; $this->ds[$n-2] = $this->ds[$n-1]; $this->ds[$n-1] = $x; return $i;
       case $W['?DUP']:  $this->need(1); $t = $this->ds[count($this->ds) - 1];
                         if (gmp_sign($t) !== 0) $this->ds[] = $t; return $i;
-      case $W['NIP']:   $this->need(2); array_splice($this->ds, count($this->ds) - 2, 1); return $i;
-      case $W['TUCK']:  $this->need(2); $n = count($this->ds);
-                        array_splice($this->ds, $n - 2, 0, [$this->ds[$n-1]]); return $i;
+      case $W['NIP']:   $this->need(2); $n = count($this->ds); $this->ds[$n-2] = $this->ds[$n-1]; array_pop($this->ds); return $i;
+      case $W['TUCK']:  $this->need(2); $n = count($this->ds); $b = $this->ds[$n-1];
+                        $this->ds[$n-1] = $this->ds[$n-2]; $this->ds[$n-2] = $b; $this->ds[] = $b; return $i;
       case $W['DEPTH']: $this->pushI(count($this->ds)); return $i;
-      case $W['PICK']:  $n = $this->popInt(); if ($n < 0) throw new JfScriptError('PICK: negative index'); $this->need($n + 1);
+      case $W['PICK']:  $n = $this->popInt(); if ($n < 0) throw new JfScriptError('PICK: negative index'); $this->needMore($n);
                         $this->ds[] = $this->ds[count($this->ds) - 1 - $n]; return $i;
-      case $W['ROLL']:  $n = $this->popInt(); if ($n < 0) throw new JfScriptError('ROLL: negative index'); $this->need($n + 1);
-                        $x = array_splice($this->ds, count($this->ds) - 1 - $n, 1);
-                        $this->ds[] = $x[0]; return $i;
+      case $W['ROLL']:  $n = $this->popInt(); if ($n < 0) throw new JfScriptError('ROLL: negative index'); $this->needMore($n);
+                        $x = array_splice($this->ds, count($this->ds) - 1 - $n, 1); $this->ds[] = $x[0]; return $i;
       case $W['2DUP']:  $this->need(2); $n = count($this->ds);
                         $this->ds[] = $this->ds[$n-2]; $this->ds[] = $this->ds[$n-1]; return $i;
       case $W['2DROP']: $this->need(2); $this->pop(); $this->pop(); return $i;
       case $W['2SWAP']: $this->need(4); $n = count($this->ds);
-                        $x = array_splice($this->ds, $n - 4, 2);
-                        array_splice($this->ds, count($this->ds), 0, $x); return $i;
+                        [$this->ds[$n-4], $this->ds[$n-3], $this->ds[$n-2], $this->ds[$n-1]]
+                          = [$this->ds[$n-2], $this->ds[$n-1], $this->ds[$n-4], $this->ds[$n-3]]; return $i;
       case $W['2OVER']: $this->need(4); $n = count($this->ds);
                         $this->ds[] = $this->ds[$n-4]; $this->ds[] = $this->ds[$n-3]; return $i;
       case $W['>R']:    $this->rs[] = $this->pop(); return $i;
@@ -488,9 +612,9 @@ final class InterpreterJF
                      $this->write($a, chr($v & 0xff)); return $i;
       case $W['+!']: $a = $this->popInt(); $this->store($a, gmp_add($this->fetch($a), $this->pop())); return $i;
       case $W['2@']: $a = $this->popInt();
-                     $this->push($this->fetch($a + 8)); $this->push($this->fetch($a)); return $i;
+                     $this->push($this->fetch($this->at($a, 8))); $this->push($this->fetch($a)); return $i;
       case $W['2!']: $a = $this->popInt(); $lo = $this->pop(); $hi = $this->pop();
-                     $this->store($a, $lo); $this->store($a + 8, $hi); return $i;
+                     $this->store($a, $lo); $this->store($this->at($a, 8), $hi); return $i;
       case $W['MOVE']: $u = $this->popInt(); $to = $this->popInt(); $from = $this->popInt();
                        $this->write($to, $this->read($from, $u)); return $i;
       // ⚠ The range is checked BEFORE the bytes are built: built first, a script asking for gigabytes ended the process.
@@ -502,7 +626,7 @@ final class InterpreterJF
       case $W['CELL+']: $this->push(gmp_add($this->pop(), 8)); return $i;
       case $W['CHARS']: return $i;                                  // a char is one address unit
       case $W['CHAR+']: $this->push(gmp_add($this->pop(), 1)); return $i;
-      case $W['ALIGNED']: $a = $this->popInt(); $this->pushI(intdiv($a + 7, 8) * 8); return $i;
+      case $W['ALIGNED']: $a = $this->pop(); $this->push(gmp_mul(gmp_div_q(gmp_add($a, 7), 8, GMP_ROUND_ZERO), 8)); return $i;
 
       // ── loop runtime ──────────────────────────────────────────────────────────────────────────────
       // ⚠ DO pushes (limit, index) on the RETURN stack, as standard Forth does, so I / J / UNLOOP are
@@ -553,22 +677,24 @@ final class InterpreterJF
       case $W['(FRAME)']: { $n = self::u8($code, $i); $i++;
                     $this->need($n);
                     $this->frames[] = $n === 0 ? [] : array_splice($this->ds, count($this->ds) - $n);
+                    $this->frameCells += $n;
                     return $i; }
       case $W['(LOCAL@)']: { $k = self::u8($code, $i); $i++;
                     $f = $this->frame(); if (!array_key_exists($k, $f)) throw new JfScriptError("local $k unset");
                     $this->ds[] = $f[$k]; return $i; }
       case $W['(LOCAL!)']: { $k = self::u8($code, $i); $i++;
-                    $v = $this->pop(); $this->frame();         // ⚠ refused with no frame, as (LOCAL@) is
+                    $v = $this->pop(); $f = $this->frame();    // ⚠ refused with no frame, as (LOCAL@) is
+                    if (!array_key_exists($k, $f)) $this->frameCells++;
                     $this->frames[count($this->frames) - 1][$k] = $v; return $i; }
       case $W['(UNFRAME)']: if (!$this->frames) throw new JfScriptError('(UNFRAME) with no frame');
-                    array_pop($this->frames); return $i;
+                    $this->frameCells -= count(array_pop($this->frames)); return $i;
 
       // ── byte strings ──────────────────────────────────────────────────────────────────────────────
       case $W['SIZE']:  $this->need(2); $this->ds[] = $this->ds[count($this->ds) - 1]; return $i;
       case $W['SPLIT']: { $n = $this->popInt(); $u = $this->popInt(); $a = $this->popInt();
                     if ($n < 0 || $n > $u) throw new JfScriptError('SPLIT out of range');
                     // ★ No copy: a split of (addr,len) is two spans of the SAME bytes.
-                    $this->pushI($a); $this->pushI($n); $this->pushI($a + $n); $this->pushI($u - $n); return $i; }
+                    $this->pushI($a); $this->pushI($n); $this->push(gmp_add(gmp_init($a), $n)); $this->pushI($u - $n); return $i; }
       case $W['CAT']:   { $d = $this->popInt(); $s2 = $this->popSpan(); $s1 = $this->popSpan();
                     $this->write($d, $s1 . $s2);
                     $this->pushI($d); $this->pushI(strlen($s1) + strlen($s2)); return $i; }
@@ -589,7 +715,7 @@ final class InterpreterJF
                     $u  = self::u($v);
                     $be = gmp_sign($u) === 0 ? '' : gmp_export($u, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
                     if (strlen($be) > $sz) throw new JfScriptError('NUM2BIN does not fit');
-                    $this->write($d, strrev(str_pad($be, $sz, "\x00", STR_PAD_LEFT)));
+                    $this->write($d, strrev($be) . str_repeat("\x00", $sz - strlen($be)));
                     $this->pushI($d); $this->pushI($sz); return $i; }
       // ★★★ ( a1 u1 a2 u2 -- flag ) — THE COVENANT'S CENTRAL OPERATION.
       //   Comparing a computed hash against one from the preimage is what every covenant does, and
@@ -599,9 +725,10 @@ final class InterpreterJF
       case $W['BYTES=']: { $b = $this->popSpan(); $a = $this->popSpan();
                     $this->flag(strlen($a) === strlen($b) && hash_equals($a, $b)); return $i; }
 
+      // a cell keeps the low 64 bits, which are the first 8 bytes
       case $W['BIN2NUM']: { $s = $this->popSpan();
                     $this->push($s === '' ? gmp_init(0)
-                      : gmp_import(strrev($s), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN)); return $i; }
+                      : gmp_import(strrev(substr($s, 0, 8)), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN)); return $i; }
 
       // ── crypto ────────────────────────────────────────────────────────────────────────────────────
       // `( c-addr u dest -- )` — the CALLER supplies the destination. No hidden allocator, because an
@@ -619,6 +746,7 @@ final class InterpreterJF
       //   AND hashes it twice behind your back; here `PREIMAGE` is a word and the hashing is written
       //   down, so `PREIMAGE d HASH256 ... CHECKSIG` says exactly what it signs.
       case $W['CHECKSIG']: case $W['CHECKSIGVERIFY']: {
+        $this->sigOp(1);
         $msg = $this->popSpan(); $pub = $this->popSpan(); $sig = $this->popSpan();
         $ok  = self::ecdsaVerify($sig, $pub, $msg);
         if ($op === $W['CHECKSIGVERIFY']) {
@@ -630,6 +758,7 @@ final class InterpreterJF
       // scheme hashes internally, so no digest word precedes it. A wrong key or signature length is a
       // failed check, never an error. Appended 15 Sept at 0xDD/0xDE; CHECKSIG above stays secp256k1.
       case $W['ED25519-CHECKSIG']: case $W['ED25519-CHECKSIGVERIFY']: {
+        $this->sigOp(1);
         $msg = $this->popSpan(); $pub = $this->popSpan(); $sig = $this->popSpan();
         $ok  = self::ed25519Verify($sig, $pub, $msg);
         if ($op === $W['ED25519-CHECKSIGVERIFY']) {
@@ -637,7 +766,7 @@ final class InterpreterJF
         } else $this->flag($ok);
         return $i; }
 
-      // `( a-msg u-msg n a-pub u-pub ... m a-sig u-sig ... -- flag )` — m sigs, n keys, sigs in key order.
+      // `( a-msg u-msg a-pub u-pub ... n a-sig u-sig ... m -- flag )` — m sigs, n keys, sigs in key order.
       // ⛔ NO dummy element. BTC's off-by-one is a bug `BT` carries for fidelity; `JF` is not trying to
       //    be Bitcoin, and reproducing a known bug in a new set would be an amputation in reverse.
       case $W['CHECKMULTISIG']: case $W['CHECKMULTISIGVERIFY']: {
@@ -647,6 +776,7 @@ final class InterpreterJF
         for ($k = 0; $k < $m; $k++) array_unshift($sigs, $this->popSpan());
         $n = $this->popInt();
         if ($n < 0 || $n > 32 || $m > $n) throw new JfScriptError('CHECKMULTISIG: bad key count');
+        $this->sigOp($n);
         $keys = [];
         for ($k = 0; $k < $n; $k++) array_unshift($keys, $this->popSpan());
         $msg = $this->popSpan();
@@ -727,12 +857,14 @@ final class InterpreterJF
         'EMIT?'  => '',
       };
       if ($word === 'EMIT?') {                       // ( -- flag ) is there room for one more?
-        $this->flag(strlen($this->chan[$t]['out']) < $this->chan[$t]['max']);
+        $this->flag(strlen($this->chan[$t]['out']) < min($this->chan[$t]['max'], $this->chan[$t]['room']));
         return;
       }
       if (strlen($this->chan[$t]['out']) + strlen($b) > $this->chan[$t]['max'])
         throw new JfScriptError(sprintf('output exceeds the declared out_max of %d',
                                         $this->chan[$t]['max']));
+      if (strlen($this->chan[$t]['out']) + strlen($b) > $this->chan[$t]['room'])
+        throw new JfScriptError('push space exhausted');
       $this->chan[$t]['out'] .= $b;
       return;
     }
@@ -752,12 +884,11 @@ final class InterpreterJF
     // ⚠ and the newline is CONSUMED but NOT stored, which is the part that is easy to get wrong.
     $n1 = $this->popInt(); $addr = $this->popInt();
     if ($n1 < 0) throw new JfScriptError('ACCEPT: negative length');
-    $got = '';
-    while (strlen($got) < $n1 && $this->chan[$t]['pos'] < strlen($in)) {
-      $c = $in[$this->chan[$t]['pos']++];
-      if ($c === "\n") break;
-      $got .= $c;
-    }
+    $pos = $this->chan[$t]['pos'];
+    $take = min($n1, strlen($in) - $pos);
+    $nl = $take > 0 ? strpos($in, "\n", $pos) : false;
+    if ($nl !== false && $nl < $pos + $take) { $got = substr($in, $pos, $nl - $pos); $this->chan[$t]['pos'] = $nl + 1; }
+    else { $got = (string)substr($in, $pos, $take); $this->chan[$t]['pos'] = $pos + $take; }
     if ($got !== '') $this->write($addr, $got);
     $this->pushI(strlen($got));
   }
@@ -768,6 +899,7 @@ final class InterpreterJF
     $n = max(0, $this->popInt());
     if (strlen($c['out']) + $n > $c['max'])
       throw new JfScriptError(sprintf('output exceeds the declared out_max of %d', $c['max']));
+    if (strlen($c['out']) + $n > $c['room']) throw new JfScriptError('push space exhausted');
     return str_repeat(' ', $n);
   }
 
@@ -810,20 +942,20 @@ final class InterpreterJF
   }
 
   /**
-   * ⛔⛔ THE TIER BOUNDARY, AND IT IS ENFORCED RATHER THAN DECLARED.
-   *
-   * A declared arity is NOT a sandbox: a function would otherwise reach past its arguments with PICK or
-   * ROLL and read the covenant's stack. So the function gets a FRESH data stack holding exactly n_in
-   * items, a FRESH return stack, fresh locals — and stdForth has no word that reaches back.
-   * ⇒ The arity check then becomes a CHECK rather than a hope: n_out items sit on a stack that started
-   *   empty and could hold nothing else.
-   * ⚠⚠⚠ MEMORY IS FRESH TOO, and an earlier version of this file got that WRONG. I reasoned that
-   *   working memory was "how (c-addr u) arguments are passed at all" and left it shared — which
-   *   meant **a function could read the caller's entire memory with a bare `@`**, measured and
-   *   confirmed. The fresh stack was real; the memory boundary did not exist.
-   * ⇒ ★★★ The resolution makes the design cleaner rather than costing anything: **a function takes
-   *   CELLS and its declared input channel, never addresses.** An address is meaningless across the
-   *   boundary anyway, so nothing is lost by refusing to carry one.
+   * ⛔⛔ THE TIER BOUNDARY, AND IT IS ENFORCED RATHER THAN DECLARED. A declared arity is not a sandbox, so a
+   * call gives the function only what it declares, and stdForth has no word that reaches back:
+   *   stacks  a fresh data stack holding exactly its n_in cells, a fresh return stack, fresh locals. The n_out
+   *           cells must be all it leaves; they are appended to the caller's stack.
+   *   memory  fresh program memory, zeroed (made when first touched): a bare `@` reads nothing of the caller's.
+   *   pushes  an empty push space of its own, from PUSH_BASE × (d + 1) at INVOKE depth d (the INVOKEs active: the
+   *           lock is 0). No pushed key reaches it by address: a caller hands it bytes only through its input
+   *           span. A push address it returns is out of range in its caller; a memory address names the caller's.
+   *   input   the declared input span (in_max), held in its channel for KEY and ACCEPT.
+   *   output  the declared channel (out_max), checked as each byte is written against out_max and against the
+   *           room left in the caller's push space, where it lands on return as ( c-addr u ).
+   * The tick's counts run through the call: instructions (with the byte charge), the 100 signature checks, and
+   * the 1,000 items, the caller's stacks and locals still counting while the function runs. A function takes
+   * CELLS and its declared input channel, never addresses.
    */
   private function invoke(int $ix): void
   {
@@ -834,24 +966,33 @@ final class InterpreterJF
     $this->need($d['n_in'] + ($inMax > 0 ? 2 : 0));
     if (++$this->depth > $this->maxDepth) { $this->depth--; throw new JfScriptError('call depth exceeded'); }
 
-    $savedDs = $this->ds; $savedRs = $this->rs; $savedFr = $this->frames;
+    $savedRs = $this->rs; $savedFr = $this->frames;           // the function gets fresh ones: no copy needed
+    $savedFc = $this->frameCells; $savedHeld = $this->held; $savedBase = $this->pbase;
     $chanDepth = count($this->chan);
+    $taken = [];                                             // the caller's cells this call took, bottom first
     try {
       $inBytes = '';
       if ($inMax > 0) {
-        $inBytes = $this->popSpan();
+        $u = $this->popInt(); $a = $this->popInt(); $taken = [gmp_init($a), gmp_init($u)];
+        $inBytes = $this->read($a, $u);
         if (strlen($inBytes) > $inMax)
           throw new JfScriptError(sprintf('INVOKE %d: input is %d bytes, declared in_max %d',
                                           $ix, strlen($inBytes), $inMax));
       }
-      $args = $d['n_in'] === 0 ? [] : array_splice($this->ds, count($this->ds) - $d['n_in']);
+      $args = [];
+      for ($k = 0; $k < $d['n_in']; $k++) $args[] = array_pop($this->ds);
+      $args = array_reverse($args);
+      $taken = array_merge($args, $taken);
       $callerDs = $this->ds;
-      $this->ds = $args; $this->rs = []; $this->frames = [];
-      $savedMem = $this->mem; $savedTop = $this->scratchTop;
-      $this->mem = str_repeat("\x00", strlen($this->mem));   // ⛔ zeroed: no residue from the caller
-      $this->scratchTop = 0;
+      $this->held += count($callerDs) + count($savedRs) + $savedFc;   // still held while the function runs
+      $this->ds = $args; $this->rs = []; $this->frames = []; $this->frameCells = 0;
+      $savedMem = $this->mem; $savedP = $this->pmem;
+      $this->mem = '';                                       // ⛔ fresh, zeroed when touched: no residue from the caller
+      $this->pmem = '';                                      // ⛔ nor the caller's pushes: no key reaches a function
+      // 'room': the caller's push space left, where the output is pushed on return
       $this->chan[] = ['in' => $inBytes, 'pos' => 0, 'inmax' => $inMax,
-                       'out' => '', 'max' => $outMax];
+                       'out' => '', 'max' => $outMax, 'room' => $this->pushSize - strlen($savedP)];
+      $this->pbase = self::PUSH_BASE * (count($this->chan) + 1);
 
       $this->exec($d['body'], 0, /* covenant */ false);
       if (count($this->ds) !== $d['n_out'])
@@ -860,17 +1001,22 @@ final class InterpreterJF
       if ($this->frames) throw new JfScriptError("INVOKE $ix: unbalanced locals frame");
       $results = $this->ds;
       $emitted = array_pop($this->chan)['out'];
-      $this->mem = $savedMem; $this->scratchTop = $savedTop;
+      $this->mem = $savedMem; $this->pmem = $savedP; $this->pbase = $savedBase;
+      $this->frameCells = $savedFc; $this->held = $savedHeld;
     } catch (Throwable $e) {
       // ⚠ A failed call leaves NOTHING behind — not a partial stack, not a half-written channel,
       //   and not a scribbled-on arena.
       array_splice($this->chan, $chanDepth);
-      if (isset($savedMem)) { $this->mem = $savedMem; $this->scratchTop = $savedTop; }
-      $this->ds = $savedDs; $this->rs = $savedRs; $this->frames = $savedFr;
+      if (isset($savedMem)) { $this->mem = $savedMem; $this->pmem = $savedP; }
+      if (isset($callerDs)) $this->ds = $callerDs;
+      foreach ($taken as $c) $this->ds[] = $c;
+      $this->rs = $savedRs; $this->frames = $savedFr;
+      $this->frameCells = $savedFc; $this->held = $savedHeld; $this->pbase = $savedBase;
       throw $e;
     } finally { $this->depth--; }
 
-    $this->ds = array_merge($callerDs, $results);
+    $this->ds = $callerDs; unset($callerDs);                 // one reference, so the results append in place
+    foreach ($results as $r) $this->ds[] = $r;
     $this->rs = $savedRs; $this->frames = $savedFr;
     // ⇒ THE CHANNEL COMES BACK AS ( c-addr u ), ABOVE the declared outputs. Declared, therefore
     //   counted — which is the whole reason it is allowed at all.
@@ -908,15 +1054,36 @@ final class InterpreterJF
    */
   public static function ecdsaVerify(string $sig, string $pub, string $digest32): bool
   {
+    if (strlen($digest32) !== 32 || !self::isStrictDer($sig)) return false;
     return Secp256k1::verifyDigest($sig, $pub, $digest32);
   }
 
+  /**
+   * BIP66's strict DER, without a sighash byte (JF signs an explicit digest): one encoding per signature,
+   * so a holder cannot re-encode one into another that also verifies.
+   *   30 L 02 lenR R 02 lenS S   with L = total − 2, no negative and no padded integer
+   */
+  public static function isStrictDer(string $s): bool
+  {
+    $n = strlen($s);
+    if ($n < 8 || $n > 72) return false;
+    $b = array_values(unpack('C*', $s));
+    if ($b[0] !== 0x30 || $b[1] !== $n - 2 || $b[2] !== 0x02) return false;
+    $lr = $b[3];
+    if ($lr === 0 || 5 + $lr >= $n || $b[4 + $lr] !== 0x02) return false;
+    $ls = $b[5 + $lr];
+    if ($ls === 0 || $lr + $ls + 6 !== $n) return false;
+    if (($b[4] & 0x80) || ($lr > 1 && $b[4] === 0 && !($b[5] & 0x80))) return false;
+    if (($b[6 + $lr] & 0x80) || ($ls > 1 && $b[6 + $lr] === 0 && !($b[7 + $lr] & 0x80))) return false;
+    return true;
+  }
+
   /** Ed25519 (RFC 8032) via ext/sodium. A host without sodium cannot answer and must say so rather
-   *  than guess: that is a refusal of the script, not a FALSE. */
+   *  than guess: a JfHostError, never a FALSE and never a refusal. */
   public static function ed25519Verify(string $sig, string $pub, string $msg): bool
   {
     if (strlen($pub) !== 32 || strlen($sig) !== 64) return false;
-    if (!extension_loaded('sodium')) throw new JfScriptError('ED25519-CHECKSIG needs ext/sodium on this host');
+    if (!extension_loaded('sodium')) throw new JfHostError('ED25519-CHECKSIG needs ext/sodium on this host');
     try { return sodium_crypto_sign_verify_detached($sig, $msg, $pub); } catch (\Throwable) { return false; }
   }
 }

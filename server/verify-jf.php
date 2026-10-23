@@ -123,7 +123,7 @@ tf('mem.fillHuge',   '0 2147483647 65 FILL',  'memory out of range');
 
 // byte strings — ( c-addr u ) throughout
 t('str.push',       '$deadbeef DROP DROP',  []);
-t('str.size',       '$deadbeef SIZE',       [65532, 4, 4]);      // scratch grows DOWN from 65536
+t('str.size',       '$deadbeef SIZE',       [16777216, 4, 4]);   // the first push lands at the push space's start
 // ★ SPLIT copies nothing: two spans over the SAME bytes. de ad -> 0xadde, be ef -> 0xefbe.
 t('str.split',      '$deadbeef 2 SPLIT BIN2NUM >R BIN2NUM R>', [44510, 61374]);
 t('str.bin2num',    '$0100 BIN2NUM',        [1]);                // little-endian
@@ -252,13 +252,12 @@ t('chan.nestedIsolated', 'INVOKE#1 BIN2NUM',    [66], $N);           // ⇒ "B" 
 // ⇒ jetForth gets BOTH the verdict and the reason, and decides what to do with each.
 $MSG = '746f6f20736d616c6c';                                          // "too small"
 $C1 = jf_defs([[1, 1, '10 < 0BRANCH>ok $' . $MSG . ' [CORE:118] 0 BRANCH>done ok: -1 done:', 0, 32]]);
-// ⚠ the returned span is a COPY: the literal inside the function took scratch first, so the address
-//   is not the literal's. Reading it through the returned address rather than a magic number is the
-//   whole point — a caller never has to know where the function put anything.
-// ⚠ 65527, not 65518: the function's own literal now sits in the function's OWN arena, so the
-//   caller's scratch is untouched until the returned copy lands. The address is evidence of the
-//   memory boundary, which an earlier version of this file did not have.
-t('diag.failCarriesReason', '5 INVOKE#0 DROP',   [0, 65527], $C1);    // verdict 0 + an address
+// ⚠ the returned span is a COPY: the literal inside the function went to the function's own push
+//   space, so the address is not the literal's. Reading it through the returned address rather than a
+//   magic number is the whole point — a caller never has to know where the function put anything.
+// ⚠ 16777216: the caller's push space is untouched until the returned copy lands first in it. The
+//   address is evidence of the boundary.
+t('diag.failCarriesReason', '5 INVOKE#0 DROP',   [0, 16777216], $C1); // verdict 0 + an address
 t('diag.reasonLength',      '5 INVOKE#0 NIP',    [0, 9], $C1);        // ...and a 9-byte reason
 t('diag.passIsSilent',      '20 INVOKE#0 NIP',   [-1, 0], $C1);       // verdict -1, reason empty
 // ★ and the reason is READABLE at the address the function handed back: "too small" begins with 't'

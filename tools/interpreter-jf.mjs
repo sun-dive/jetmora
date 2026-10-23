@@ -14,7 +14,8 @@
 // ⚠ CRYPTO IS SUPPLIED, not built in, so one interpreter serves a page (WebCrypto) and a test (Node):
 //   { sha256, sha1, ripemd160 }  (bytes) -> bytes, synchronous
 //   ed25519Verify(sig, pub, msg) -> boolean or a Promise of one
-//   ecdsaVerify(sig, pub, digest32) -> boolean or a Promise of one; absent, CHECKSIG refuses to answer
+//   ecdsaVerify(sig, pub, digest32) -> boolean or a Promise of one
+//   A word whose crypto was not supplied throws JfHostError: the host cannot answer, which is not a refusal.
 // Bytes are Uint8Array throughout.
 
 import { JF_PUSH_MAX, JF_SMALL0, JF_SMALL_NEG1, JF_LIT, JF_WORD, JF_ESC0, JF_PLANE, JF_RESERVED0,
@@ -24,11 +25,17 @@ export class JfScriptError extends Error {
   /** The diagnostic a refusal carries out (bytes the script chose), or null for a machine fault. */
   diagnostic = null
   static aborted(msg) {
-    const e = new JfScriptError(msg.length === 0 ? 'ABORT' : `ABORT: ${latin1(msg)}`)
+    const e = new JfScriptError(msg.length === 0 ? 'ABORT' : `ABORT: ${new TextDecoder().decode(msg)}`)
     e.diagnostic = msg
     return e
   }
 }
+/**
+ * THE HOST CANNOT JUDGE: a capability it was not given (a hash, secp256k1, Ed25519). It is not a refusal,
+ * and verifyTick passes it on rather than turn it into one: a tick is never refused here and accepted there
+ * because one host is missing a library.
+ */
+export class JfHostError extends Error {}
 /** ⚠ Distinct on purpose: an unimplemented wordset is refused BY NAME. */
 export class JfBankUnsupported extends JfScriptError {
   constructor(wordset, word = null) {
@@ -40,8 +47,8 @@ export class JfBankUnsupported extends JfScriptError {
 
 const M64 = 1n << 64n, H64 = 1n << 63n
 const INT_MAX = H64 - 1n, INT_MIN = -H64                     // PHP_INT_MAX / PHP_INT_MIN on a 64-bit host
-const latin1 = b => { let s = ''; for (const x of b) s += String.fromCharCode(x); return s }
 const hex2 = n => n.toString(16).padStart(2, '0')
+const UTF8 = new TextEncoder()
 const cat = (a, b) => { const o = new Uint8Array(a.length + b.length); o.set(a, 0); o.set(b, a.length); return o }
 const bytesOf = s => Uint8Array.from(s, c => c.charCodeAt(0))
 /** Wrap into a signed 64-bit cell. ⚠ Two's complement WRAPPING, which is what a fixed cell means. */
@@ -62,14 +69,26 @@ const OP = new Map()
 for (const [k, v] of Object.entries(JF_WORD)) OP.set(v, k)
 for (const [k, v] of Object.entries(JF_LIT)) OP.set(v, k)
 const DEFS_MARK = JF_RESERVED0                               // the reserved slot the compiler emits for the header
+const BANK_SEL = new Map(Object.entries(JF_BANK_WORD).map(([set, words]) => {
+  const m = new Map(); for (const [w, v] of Object.entries(words)) if (!m.has(v)) m.set(v, w)
+  return [set, m]
+}))
+/** Where the push space starts. Program memory is below it, so the two can never overlap. A function at INVOKE
+ *  depth d (the INVOKEs active: the lock is 0) has its own from PUSH_BASE × (d + 1), so a push address it returns
+ *  is out of range in its caller. A program-memory address it returns names the caller's own memory. */
+export const PUSH_BASE = 16777216
 
 export class InterpreterJF {
-  /** Every limit is OPERATOR POLICY (§4.5), never a protocol constant. */
-  constructor({ maxOps = 200000, memSize = 65536, maxDepth = 64, crypto = {} } = {}) {
-    Object.assign(this, { maxOps, memSize, maxDepth, crypto })
+  /** These limits are for run(), the interpreter as a tool. A tick is judged by verifyTick(), with TICK_LIMITS. */
+  constructor({ maxOps = 200000, memSize = 65536, maxDepth = 64, maxItems = 1000, pushSize = 65536, maxSigOps = 100, crypto = {} } = {}) {
+    Object.assign(this, { maxOps, memSize, maxDepth, maxItems, pushSize, maxSigOps, crypto })
     this.preimage = null
     this.ds = []; this.rs = []; this.defs = []; this.frames = []; this.chan = []
-    this.mem = new Uint8Array(0); this.opCount = 0; this.depth = 0; this.scratchTop = 0
+    this.mem = null; this.opCount = 0; this.depth = 0; this.sigOps = 0
+    // every pushed byte, in order: read-only, and never at a program-memory address. Grown as needed.
+    this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE
+    // cells in the locals frames, and cells an active INVOKE has set aside: both count as items held
+    this.frameCells = 0; this.held = 0
   }
   setPreimage(p) { this.preimage = p }
 
@@ -84,17 +103,34 @@ export class InterpreterJF {
 
   // ── memory ─────────────────────────────────────────────────────────────────────────────────────────
   bounds(addr, len) {
-    if (addr < 0n || len < 0n || addr + len > BigInt(this.mem.length))
-      throw new JfScriptError(`memory out of range: addr=${addr} len=${len} size=${this.mem.length}`)
+    if (addr < 0n || len < 0n || addr + len > BigInt(this.memSize))
+      throw new JfScriptError(`memory out of range: addr=${addr} len=${len} size=${this.memSize}`)
+    // made, zeroed, when first touched: a function that never touches memory costs nothing for it
+    if (this.mem === null) this.mem = new Uint8Array(this.memSize)
   }
-  fetch(addr) { this.bounds(addr, 8n); const a = Number(addr); return cell(leToBig(this.mem.subarray(a, a + 8))) }
+  fetch(addr) { return cell(leToBig(this.view(addr, 8n))) }
   store(addr, v) {
     this.bounds(addr, 8n)
     let u = uns(cell(v)); const a = Number(addr)
     for (let k = 0; k < 8; k++) { this.mem[a + k] = Number(u & 0xffn); u >>= 8n }
   }
-  read(addr, len) { this.bounds(addr, len); const a = Number(addr); return this.mem.slice(a, a + Number(len)) }
-  write(addr, b) { this.bounds(addr, BigInt(b.length)); this.mem.set(b, Number(addr)) }
+  read(addr, len) { return this.view(addr, len) }
+  /** Bytes from program memory, or from wholly inside the push space. Writes never reach the push space.
+   *  `copy` false gives a view into that memory, for a caller that reads it before the memory can change. */
+  view(addr, len, copy = true) {
+    const p = BigInt(this.plen), pb = BigInt(this.pbase)
+    const [m, a] = addr >= pb && len >= 0n && len <= p && addr - pb <= p - len ? [this.pmem, Number(addr - pb)]
+                 : (this.bounds(addr, len), [this.mem, Number(addr)])
+    this.charge(Number(len))
+    return copy ? m.slice(a, a + Number(len)) : m.subarray(a, a + Number(len))
+  }
+  /** Each span read, written or pushed costs one more instruction for every whole 64 bytes in it (his call, 23 Oct).
+   *  A function's channel bytes are charged when INVOKE reads its input span and when its output is pushed on return. */
+  charge(n) {
+    this.opCount += Math.floor(n / 64)
+    if (this.opCount > this.maxOps) throw new JfScriptError('op budget exhausted')
+  }
+  write(addr, b) { this.bounds(addr, BigInt(b.length)); this.charge(b.length); this.mem.set(b, Number(addr)) }
   /** `( c-addr u -- )` popped as a pair, u on top. */
   popSpan() { const u = this.popInt(); const a = this.popInt(); return this.read(a, u) }
 
@@ -138,8 +174,9 @@ export class InterpreterJF {
   /** @returns {Promise<bigint[]>} the final data stack, bottom first. Throws JfScriptError. */
   async run(script) {
     this.ds = []; this.rs = []; this.frames = []; this.chan = []
-    this.opCount = 0; this.depth = 0
-    this.mem = new Uint8Array(this.memSize)
+    this.opCount = 0; this.depth = 0; this.frameCells = 0; this.held = 0; this.sigOps = 0
+    this.mem = null
+    this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE
     const i = this.parseDefs(script, 0)
     await this.exec(script, i, /* covenant tier */ true)
     if (this.frames.length) throw new JfScriptError('unbalanced locals frame')
@@ -150,6 +187,8 @@ export class InterpreterJF {
   async exec(code, i, covenant) {
     const len = code.length
     while (i < len) {
+      // checked after every instruction, as BSV checks stack + altstack after every opcode
+      if (this.ds.length + this.rs.length + this.frameCells + this.held > this.maxItems) this.tooMany()
       if (++this.opCount > this.maxOps) throw new JfScriptError('op budget exhausted')
       const op = code[i]; i++
       // ── direct push: the opcode IS the length ──
@@ -168,9 +207,7 @@ export class InterpreterJF {
         if (op === JF_PLANE) throw new JfScriptError('plane escape 0xff is unassigned')
         const set = jf_bank_name(op) ?? `unassigned bank 0x${hex2(op)}`
         const sel = InterpreterJF.u8(code, i); i++
-        const names = JF_BANK_WORD[set] ?? {}
-        const found = Object.entries(names).find(([, v]) => v === sel)
-        const word = found ? found[0] : false
+        const word = BANK_SEL.get(set)?.get(sel) ?? false
         // ⚠ ONE WORD, ONE ENCODING: a promoted word's two-byte form is reserved-illegal.
         if (word !== false && JF_PROMOTED[word] !== undefined)
           throw new JfScriptError(`${word} is jetForth-only: its two-byte form is reserved-illegal`)
@@ -195,16 +232,28 @@ export class InterpreterJF {
       }
       i = await this.step(op, code, i, covenant)
     }
+    if (this.ds.length + this.rs.length + this.frameCells + this.held > this.maxItems) this.tooMany()
+  }
+  tooMany() {
+    throw new JfScriptError(`stack size exceeded: ${this.ds.length + this.rs.length + this.frameCells + this.held} items held, at most ${this.maxItems}`)
   }
 
-  /** Copy bytes into scratch memory and leave `( c-addr u )`. */
-  pushSpan(b) { const at = this.scratch(b.length); this.write(BigInt(at), b); this.pushI(at); this.pushI(b.length) }
-  /** Scratch for literals only, growing DOWN from the top of memory. ⚠ Deterministic by construction. */
-  scratch(n) {
-    if (this.scratchTop === 0) this.scratchTop = this.mem.length
-    this.scratchTop -= n
-    if (this.scratchTop < 0) throw new JfScriptError('literal scratch exhausted')
-    return this.scratchTop
+  /** Append bytes to the push space and leave `( c-addr u )`. ⚠ Deterministic: an address depends only on the lengths pushed before. */
+  pushSpan(b) {
+    const n = b.length
+    if (this.plen + n > this.pushSize) throw new JfScriptError('push space exhausted')
+    this.charge(n)
+    if (this.plen + n > this.pmem.length) {
+      const grown = new Uint8Array(Math.min(this.pushSize, Math.max(this.plen + n, this.pmem.length * 2, 256)))
+      grown.set(this.pmem.subarray(0, this.plen)); this.pmem = grown
+    }
+    this.pmem.set(b, this.plen)
+    this.pushI(this.pbase + this.plen); this.pushI(n)
+    this.plen += n
+  }
+  sigOp(n) {
+    this.sigOps += Number(n)
+    if (this.sigOps > this.maxSigOps) throw new JfScriptError(`signature check limit exceeded: at most ${this.maxSigOps} a tick`)
   }
 
   /** One opcode. Returns the new instruction pointer. */
@@ -243,17 +292,20 @@ export class InterpreterJF {
       case 'DROP': this.pop(); return i
       case 'SWAP': { this.need(2); const n = ds.length; [ds[n - 2], ds[n - 1]] = [ds[n - 1], ds[n - 2]]; return i }
       case 'OVER': this.need(2); ds.push(ds[ds.length - 2]); return i
-      case 'ROT': { this.need(3); const x = ds.splice(ds.length - 3, 1)[0]; ds.push(x); return i }
+      case 'ROT': { this.need(3); const n = ds.length; const x = ds[n - 3]; ds[n - 3] = ds[n - 2]; ds[n - 2] = ds[n - 1]; ds[n - 1] = x; return i }
       case '?DUP': { this.need(1); const t = ds[ds.length - 1]; if (t !== 0n) ds.push(t); return i }
-      case 'NIP': this.need(2); ds.splice(ds.length - 2, 1); return i
-      case 'TUCK': { this.need(2); const n = ds.length; ds.splice(n - 2, 0, ds[n - 1]); return i }
+      case 'NIP': { this.need(2); const n = ds.length; ds[n - 2] = ds[n - 1]; ds.pop(); return i }
+      case 'TUCK': { this.need(2); const n = ds.length; const b = ds[n - 1]; ds[n - 1] = ds[n - 2]; ds[n - 2] = b; ds.push(b); return i }
       case 'DEPTH': this.pushI(ds.length); return i
-      // ⚠ a negative index is refused here; PHP's own reaches past the stack (reported 3 Oct, not yet decided)
       case 'PICK': { const n = this.popInt(); if (n < 0n) throw new JfScriptError('PICK: negative index'); this.need(n + 1n); ds.push(ds[ds.length - 1 - Number(n)]); return i }
-      case 'ROLL': { const n = this.popInt(); if (n < 0n) throw new JfScriptError('ROLL: negative index'); this.need(n + 1n); const x = ds.splice(ds.length - 1 - Number(n), 1); ds.push(x[0]); return i }
+      case 'ROLL': { const n = this.popInt(); if (n < 0n) throw new JfScriptError('ROLL: negative index'); this.need(n + 1n)
+        // the cost is the depth rolled, not the depth of the stack
+        const t = ds.length - 1, k0 = t - Number(n), x = ds[k0]
+        for (let k = k0; k < t; k++) ds[k] = ds[k + 1]
+        ds[t] = x; return i }
       case '2DUP': { this.need(2); const n = ds.length; ds.push(ds[n - 2]); ds.push(ds[n - 1]); return i }
       case '2DROP': this.need(2); this.pop(); this.pop(); return i
-      case '2SWAP': { this.need(4); const x = ds.splice(ds.length - 4, 2); ds.push(...x); return i }
+      case '2SWAP': { this.need(4); const n = ds.length; [ds[n - 4], ds[n - 3], ds[n - 2], ds[n - 1]] = [ds[n - 2], ds[n - 1], ds[n - 4], ds[n - 3]]; return i }
       case '2OVER': { this.need(4); const n = ds.length; ds.push(ds[n - 4]); ds.push(ds[n - 3]); return i }
       case '>R': this.rs.push(this.pop()); return i
       case 'R>': if (!this.rs.length) throw new JfScriptError('return stack underflow'); ds.push(this.rs.pop()); return i
@@ -334,11 +386,10 @@ export class InterpreterJF {
       case '2@': { const a = this.popInt(); this.push(this.fetch(a + 8n)); this.push(this.fetch(a)); return i }
       case '2!': { const a = this.popInt(); const lo = this.pop(); const hi = this.pop(); this.store(a, lo); this.store(a + 8n, hi); return i }
       case 'MOVE': { const u = this.popInt(); const to = this.popInt(); const from = this.popInt(); this.write(to, this.read(from, u)); return i }
-      // ⚠ the range is checked BEFORE anything is allocated: PHP's own builds the bytes first, and a script asking
-      //   for gigabytes ends the process (found 3 Oct, reported)
+      // ⚠ the range is checked BEFORE anything is allocated: built first, a script asking for gigabytes ends the process
       case 'FILL': { const ch = this.popInt(); const u = this.popInt(); const a = this.popInt()
-        if (u > 0n) { this.bounds(a, u); this.mem.fill(Number(ch & 0xffn), Number(a), Number(a + u)) } return i }
-      case 'ERASE': { const u = this.popInt(); const a = this.popInt(); if (u > 0n) { this.bounds(a, u); this.mem.fill(0, Number(a), Number(a + u)) } return i }
+        if (u > 0n) { this.bounds(a, u); this.charge(Number(u)); this.mem.fill(Number(ch & 0xffn), Number(a), Number(a + u)) } return i }
+      case 'ERASE': { const u = this.popInt(); const a = this.popInt(); if (u > 0n) { this.bounds(a, u); this.charge(Number(u)); this.mem.fill(0, Number(a), Number(a + u)) } return i }
       case 'CELLS': this.push(this.pop() * 8n); return i
       case 'CELL+': this.push(this.pop() + 8n); return i
       case 'CHARS': return i                                                // a char is one address unit
@@ -383,14 +434,15 @@ export class InterpreterJF {
       case '(FRAME)': { const n = InterpreterJF.u8(code, i); i++
         this.need(n)
         this.frames.push(new Map((n === 0 ? [] : ds.splice(ds.length - n)).map((v, k) => [k, v])))
+        this.frameCells += n
         return i }
       case '(LOCAL@)': { const k = InterpreterJF.u8(code, i); i++
         const f = this.frame(); if (!f.has(k)) throw new JfScriptError(`local ${k} unset`)
         ds.push(f.get(k)); return i }
       case '(LOCAL!)': { const k = InterpreterJF.u8(code, i); i++
-        // ⚠ refused with no frame, as (LOCAL@) is; PHP's own creates a frame instead (found 3 Oct, reported)
-        const v = this.pop(); this.frame().set(k, v); return i }
-      case '(UNFRAME)': if (!this.frames.length) throw new JfScriptError('(UNFRAME) with no frame'); this.frames.pop(); return i
+        // ⚠ refused with no frame, as (LOCAL@) is
+        const v = this.pop(); const f = this.frame(); if (!f.has(k)) this.frameCells++; f.set(k, v); return i }
+      case '(UNFRAME)': if (!this.frames.length) throw new JfScriptError('(UNFRAME) with no frame'); this.frameCells -= this.frames.pop().size; return i
 
       // ── byte strings ──
       case 'SIZE': this.need(2); ds.push(ds[ds.length - 1]); return i
@@ -417,9 +469,19 @@ export class InterpreterJF {
       // ★★★ ( a1 u1 a2 u2 -- flag ) — THE COVENANT'S CENTRAL OPERATION. ⚠ CONSTANT TIME over the bytes.
       case 'BYTES=': { const b = this.popSpan(); const a = this.popSpan()
         let eq = a.length === b.length
-        if (eq) { let x = 0; for (let k = 0; k < a.length; k++) x |= a[k] ^ b[k]; eq = x === 0 }
+        if (eq) {
+          let x = 0, k = 0
+          if (a.byteOffset % 4 === 0 && b.byteOffset % 4 === 0) {
+            const w = a.length >>> 2, A = new Uint32Array(a.buffer, a.byteOffset, w), B = new Uint32Array(b.buffer, b.byteOffset, w)
+            for (let j = 0; j < w; j++) x |= A[j] ^ B[j]
+            k = w << 2
+          }
+          for (; k < a.length; k++) x |= a[k] ^ b[k]
+          eq = x === 0
+        }
         this.flag(eq); return i }
-      case 'BIN2NUM': { const s = this.popSpan(); this.push(s.length === 0 ? 0n : leToBig(s)); return i }
+      // a cell keeps the low 64 bits, which are the first 8 bytes
+      case 'BIN2NUM': { const s = this.popSpan(); this.push(s.length === 0 ? 0n : leToBig(s.subarray(0, 8))); return i }
 
       // ── crypto ── `( c-addr u dest -- )`: the CALLER supplies the destination
       case 'SHA256': return this.hashTo(i, b => this.hash('sha256', b))
@@ -430,17 +492,19 @@ export class InterpreterJF {
 
       // `( a-sig u-sig a-pub u-pub a-digest 32 -- flag )` secp256k1 over an EXPLICIT digest
       case 'CHECKSIG': case 'CHECKSIGVERIFY': {
+        this.sigOp(1)
         const msg = this.popSpan(); const pub = this.popSpan(); const sig = this.popSpan()
         const ok = await this.ecdsaVerify(sig, pub, msg)
         if (name === 'CHECKSIGVERIFY') { if (!ok) throw new JfScriptError('CHECKSIGVERIFY failed') } else this.flag(ok)
         return i }
       // `( a-sig u-sig a-pub u-pub a-msg u-msg -- flag )` Ed25519 over the message as given
       case 'ED25519-CHECKSIG': case 'ED25519-CHECKSIGVERIFY': {
+        this.sigOp(1)
         const msg = this.popSpan(); const pub = this.popSpan(); const sig = this.popSpan()
         const ok = await this.ed25519Verify(sig, pub, msg)
         if (name === 'ED25519-CHECKSIGVERIFY') { if (!ok) throw new JfScriptError('ED25519-CHECKSIGVERIFY failed') } else this.flag(ok)
         return i }
-      // `( a-msg u-msg n a-pub u-pub ... m a-sig u-sig ... -- flag )` ⛔ NO dummy element
+      // `( a-msg u-msg a-pub u-pub ... n a-sig u-sig ... m -- flag )` ⛔ NO dummy element
       case 'CHECKMULTISIG': case 'CHECKMULTISIGVERIFY': {
         const m = this.popInt()
         if (m < 0n || m > 32n) throw new JfScriptError('CHECKMULTISIG: bad signature count')
@@ -448,6 +512,7 @@ export class InterpreterJF {
         for (let k = 0n; k < m; k++) sigs.unshift(this.popSpan())
         const n = this.popInt()
         if (n < 0n || n > 32n || m > n) throw new JfScriptError('CHECKMULTISIG: bad key count')
+        this.sigOp(n)
         const keys = []
         for (let k = 0n; k < n; k++) keys.unshift(this.popSpan())
         const msg = this.popSpan()
@@ -492,14 +557,18 @@ export class InterpreterJF {
     const t = this.chan.length - 1, c = this.chan[t]
     if (CHANNEL_WORDS[word] === 'o') {
       if (c.max === 0) throw new JfScriptError(`${word}: this function declared no output channel (out_max is 0)`)
-      if (word === 'EMIT?') { this.flag(c.out.length < c.max); return }   // ( -- flag ) is there room for one more?
+      if (word === 'EMIT?') { this.flag(c.olen < Math.min(c.max, c.room)); return }   // ( -- flag ) is there room for one more?
       const b = word === 'EMIT' ? Uint8Array.of(Number(this.popInt() & 0xffn))
               : word === 'CR' ? bytesOf('\n')
               : word === 'SPACE' ? bytesOf(' ')
               : word === 'SPACES' ? this.spaces(c)
               : this.popSpan()                                              // TYPE
-      if (c.out.length + b.length > c.max) throw new JfScriptError(`output exceeds the declared out_max of ${c.max}`)
-      c.out = cat(c.out, b)
+      if (c.olen + b.length > c.max) throw new JfScriptError(`output exceeds the declared out_max of ${c.max}`)
+      if (c.olen + b.length > c.room) throw new JfScriptError('push space exhausted')
+      if (c.olen + b.length > c.out.length) {
+        const grown = new Uint8Array(Math.max(c.olen + b.length, c.out.length * 2, 256)); grown.set(c.out.subarray(0, c.olen)); c.out = grown
+      }
+      c.out.set(b, c.olen); c.olen += b.length
       return
     }
     // ⚠ Check the DECLARED size, not whether bytes happen to be present
@@ -511,20 +580,20 @@ export class InterpreterJF {
     // ACCEPT ( c-addr +n1 -- +n2 ) — a LINE: up to n1 bytes, stopping at \n, which is CONSUMED but NOT stored
     const n1 = this.popInt(); const addr = this.popInt()
     if (n1 < 0n) throw new JfScriptError('ACCEPT: negative length')
-    const got = []
-    while (BigInt(got.length) < n1 && c.pos < c.in.length) {
-      const ch = c.in[c.pos++]
-      if (ch === 10) break
-      got.push(ch)
-    }
-    if (got.length) this.write(addr, Uint8Array.from(got))
+    const take = Number(n1 < BigInt(c.in.length - c.pos) ? n1 : BigInt(c.in.length - c.pos))
+    const nl = newlineIn(c.in, c.pos, c.pos + take)
+    let got
+    if (nl !== -1 && nl < c.pos + take) { got = c.in.subarray(c.pos, nl); c.pos = nl + 1 }
+    else { got = c.in.subarray(c.pos, c.pos + take); c.pos += take }
+    if (got.length) this.write(addr, got)
     this.pushI(got.length)
   }
 
-  /** SPACES' bytes, refused BEFORE they are allocated when they would not fit (PHP's own allocates first). */
+  /** SPACES' bytes, refused BEFORE they are allocated when they would not fit. */
   spaces(c) {
     const n = this.popInt(), k = n > 0n ? n : 0n
-    if (BigInt(c.out.length) + k > BigInt(c.max)) throw new JfScriptError(`output exceeds the declared out_max of ${c.max}`)
+    if (BigInt(c.olen) + k > BigInt(c.max)) throw new JfScriptError(`output exceeds the declared out_max of ${c.max}`)
+    if (BigInt(c.olen) + k > BigInt(c.room)) throw new JfScriptError('push space exhausted')
     return new Uint8Array(Number(k)).fill(32)
   }
   /** ⛔⛔ THE COVENANT'S OWN WORDS ARE NOT THE FUNCTION'S. */
@@ -544,68 +613,184 @@ export class InterpreterJF {
   hashTo(i, h) { const d = this.popInt(); const s = this.popSpan(); this.write(d, h(s)); return i }
   hash(kind, b) {
     const f = this.crypto[kind]
-    if (!f) throw new JfScriptError(`${kind.toUpperCase()} is not available on this host`)
+    if (!f) throw new JfHostError(`${kind.toUpperCase()} is not available on this host`)
     return f(b)
   }
   async ecdsaVerify(sig, pub, digest32) {
-    if (!this.crypto.ecdsaVerify) throw new JfScriptError('CHECKSIG needs secp256k1 on this host')
+    if (digest32.length !== 32 || !isStrictDer(sig)) return false
+    if (!this.crypto.ecdsaVerify) throw new JfHostError('CHECKSIG needs secp256k1 on this host')
     try { return !!(await this.crypto.ecdsaVerify(sig, pub, digest32)) } catch { return false }
   }
   /** Ed25519 (RFC 8032). A wrong key or signature length is a failed check, never an error. */
   async ed25519Verify(sig, pub, msg) {
     if (pub.length !== 32 || sig.length !== 64) return false
-    if (!this.crypto.ed25519Verify) throw new JfScriptError('ED25519-CHECKSIG needs Ed25519 on this host')
+    if (!this.crypto.ed25519Verify) throw new JfHostError('ED25519-CHECKSIG needs Ed25519 on this host')
     try { return !!(await this.crypto.ed25519Verify(sig, pub, msg)) } catch { return false }
   }
 
-  /** ⛔⛔ THE TIER BOUNDARY, ENFORCED: a function gets a FRESH stack holding exactly n_in items, fresh memory, fresh locals. */
+  /** ⛔⛔ THE TIER BOUNDARY, ENFORCED: fresh stacks holding exactly n_in cells, fresh memory (made when touched), an empty
+   *  push space at PUSH_BASE × (INVOKE depth + 1), the declared channels; the tick's counts run through. See InterpreterJF::invoke. */
   async invoke(ix) {
     if (this.defs[ix] === undefined) throw new JfScriptError(`INVOKE ${ix}: no such definition`)
     const d = this.defs[ix]
     const inMax = d.in_max ?? 0, outMax = d.out_max ?? 0
     this.need(d.n_in + (inMax > 0 ? 2 : 0))                  // the input span sits ABOVE the cell arguments
     if (++this.depth > this.maxDepth) { this.depth--; throw new JfScriptError('call depth exceeded') }
-    const savedDs = this.ds.slice(), savedRs = this.rs.slice(), savedFr = this.frames.slice()
+    const savedRs = this.rs, savedFr = this.frames           // the function gets fresh ones: no copy needed
+    const savedFc = this.frameCells, savedHeld = this.held, savedBase = this.pbase
     const chanDepth = this.chan.length
-    let savedMem, savedTop, callerDs, results, emitted
+    let savedMem, savedP, savedPl, callerDs, results, emitted
+    let taken = []                                             // the caller's cells this call took, bottom first
     try {
       let inBytes = new Uint8Array(0)
       if (inMax > 0) {
-        inBytes = this.popSpan()
+        const u = this.popInt(); const a = this.popInt(); taken = [a, u]
+        inBytes = this.view(a, u, false)                       // the caller's memory is not touched while the function runs
         if (inBytes.length > inMax)
           throw new JfScriptError(`INVOKE ${ix}: input is ${inBytes.length} bytes, declared in_max ${inMax}`)
       }
       const args = d.n_in === 0 ? [] : this.ds.splice(this.ds.length - d.n_in)
+      taken = [...args, ...taken]
       callerDs = this.ds
-      this.ds = args; this.rs = []; this.frames = []
-      savedMem = this.mem; savedTop = this.scratchTop
-      this.mem = new Uint8Array(savedMem.length)               // ⛔ zeroed: no residue from the caller
-      this.scratchTop = 0
-      this.chan.push({ in: inBytes, pos: 0, inmax: inMax, out: new Uint8Array(0), max: outMax })
+      this.held += callerDs.length + savedRs.length + savedFc   // still held while the function runs
+      this.ds = args; this.rs = []; this.frames = []; this.frameCells = 0
+      savedMem = this.mem; savedP = this.pmem; savedPl = this.plen
+      this.mem = null                                          // ⛔ fresh, zeroed when touched: no residue from the caller
+      this.pmem = new Uint8Array(0); this.plen = 0              // ⛔ nor the caller's pushes: no key reaches a function
+      // room: the caller's push space left, where the output is pushed on return
+      this.chan.push({ in: inBytes, pos: 0, inmax: inMax, out: new Uint8Array(0), olen: 0, max: outMax, room: this.pushSize - savedPl })
+      this.pbase = PUSH_BASE * (this.chan.length + 1)
 
       await this.exec(d.body, 0, /* covenant */ false)
       if (this.ds.length !== d.n_out)
         throw new JfScriptError(`INVOKE ${ix}: declared ${d.n_out} out, produced ${this.ds.length}`)
       if (this.frames.length) throw new JfScriptError(`INVOKE ${ix}: unbalanced locals frame`)
       results = this.ds
-      emitted = this.chan.pop().out
-      this.mem = savedMem; this.scratchTop = savedTop
+      const done = this.chan.pop(); emitted = done.out.subarray(0, done.olen)
+      this.mem = savedMem; this.pmem = savedP; this.plen = savedPl; this.pbase = savedBase
+      this.frameCells = savedFc; this.held = savedHeld
     } catch (e) {
       // ⚠ A failed call leaves NOTHING behind
       this.chan.splice(chanDepth)
-      if (savedMem !== undefined) { this.mem = savedMem; this.scratchTop = savedTop }
-      this.ds = savedDs; this.rs = savedRs; this.frames = savedFr
+      if (savedMem !== undefined) { this.mem = savedMem; this.pmem = savedP; this.plen = savedPl }
+      if (callerDs !== undefined) this.ds = callerDs
+      for (const c of taken) this.ds.push(c)
+      this.rs = savedRs; this.frames = savedFr
+      this.frameCells = savedFc; this.held = savedHeld; this.pbase = savedBase
       throw e
     } finally { this.depth-- }
-    this.ds = [...callerDs, ...results]
+    this.ds = callerDs
+    for (const r of results) this.ds.push(r)
     this.rs = savedRs; this.frames = savedFr
     if (outMax > 0) this.pushSpan(emitted)                     // the channel comes back as ( c-addr u ), above the outputs
   }
 }
 
+// ── judging a tick ─────────────────────────────────────────────────────────────────────────────────────
+/**
+ * JF revision 3's limits when a tick is judged. They are the version's, the same for every host: a limit
+ * that differed between hosts would be a verdict that differed between them. Taken from a BSV node's
+ * defaults: a script is at most 500,000 bytes (500 KB, BSV's KB being 1,000), and a tick runs at most the same
+ * number of instructions, each span read, written or pushed costing one more for every whole 64 bytes. At
+ * most 1,000 items are held at once, as BSV's MAX_STACK_ELEMENTS (stack and altstack), counting here the data and
+ * return stacks, the locals frames and what an INVOKE has set aside. Pushed bytes have their own 65,536 bytes,
+ * read-only. At most 100 signature checks a tick, weighted as BSV weights them (CHECKSIG and ED25519-CHECKSIG 1,
+ * CHECKMULTISIG its number of keys) and counted as each runs, before the check is made.
+ */
+export const TICK_MAX_SCRIPT = 500000
+export const TICK_LIMITS = Object.freeze({ maxOps: 500000, memSize: 65536, maxDepth: 64, maxItems: 1000, pushSize: 65536, maxSigOps: 100 })
+
+/** Byte pushes only: direct pushes (0 to 72 bytes) and STR8 / STR16 / STR32, each whole. */
+export function bytePushesOnly(s) {
+  const n = s.length
+  for (let p = 0; p < n;) {
+    const op = s[p++]
+    let len
+    if (op <= JF_PUSH_MAX) len = op
+    else if (op === JF_LIT.STR8) { if (p + 1 > n) return false; len = s[p]; p += 1 }
+    else if (op === JF_LIT.STR16) { if (p + 2 > n) return false; len = s[p] | (s[p + 1] << 8); p += 2 }
+    else if (op === JF_LIT.STR32) { if (p + 4 > n) return false; len = (s[p] | (s[p + 1] << 8) | (s[p + 2] << 16) | (s[p + 3] << 24)) >>> 0; p += 4 }
+    else return false
+    if (p + len > n) return false
+    p += len
+  }
+  return true
+}
+
+/**
+ * Judge a tick as a BSV node judges a spend (bitcoin-sv src/script/interpreter.cpp, VerifyScript):
+ *   1  the unlocking script is byte pushes only: direct pushes and STR8 / STR16 / STR32, each whole;
+ *   2  it runs, then the lock runs as a SECOND, separate run on the data stack and pushed bytes it left, so
+ *      nothing in the first can jump into the second or end it;
+ *   3  the tick is accepted when the lock leaves exactly one item and it is non-zero. Any error refuses it.
+ * A port of InterpreterJF::verifyTick in server/interpreter-jf.php. A refusal's errorBytes are PHP's message bytes:
+ * its text in UTF-8, and an abort's diagnostic appended as it was, which no JS string can always hold.
+ * @returns {Promise<{accepted: boolean, stack?: bigint[], error?: string, errorBytes?: Uint8Array}>}
+ */
+export async function verifyTick({ unlocking, lock, preimage, crypto = {} }) {
+  const refuse = (error, bytes = UTF8.encode(error)) => ({ accepted: false, error, errorBytes: bytes })
+  if (unlocking.length > TICK_MAX_SCRIPT || lock.length > TICK_MAX_SCRIPT) return refuse('a script is longer than 500000 bytes')
+  if (!bytePushesOnly(unlocking)) return refuse('the unlocking script is not byte pushes only')
+  const vm = new InterpreterJF({ ...TICK_LIMITS, crypto })
+  vm.setPreimage(preimage)
+  try {
+    vm.ds = []; vm.rs = []; vm.frames = []; vm.chan = []
+    vm.opCount = 0; vm.depth = 0; vm.frameCells = 0; vm.held = 0; vm.sigOps = 0
+    vm.mem = null
+    vm.pmem = new Uint8Array(0); vm.plen = 0; vm.pbase = PUSH_BASE
+    await vm.exec(unlocking, 0, true)
+    // the second run: the data stack and the pushed bytes carry over, and the op and signature counts run on
+    vm.rs = []; vm.frames = []; vm.depth = 0; vm.frameCells = 0
+    const i = vm.parseDefs(lock, 0)
+    await vm.exec(lock, i, true)
+    if (vm.frames.length) throw new JfScriptError('unbalanced locals frame')
+  } catch (e) {
+    if (e instanceof JfHostError) throw e                     // this host cannot judge: never a refusal
+    if (e instanceof JfScriptError)
+      return refuse(e.message, e.diagnostic === null ? UTF8.encode(e.message) : cat(UTF8.encode(e.diagnostic.length ? 'ABORT: ' : 'ABORT'), e.diagnostic))
+    return refuse(`the interpreter faulted: ${e.constructor?.name ?? 'Error'}`)
+  }
+  return { accepted: vm.ds.length === 1 && vm.ds[0] !== 0n, stack: vm.ds }
+}
+
+/**
+ * BIP66's strict DER, without a sighash byte (JF signs an explicit digest): one encoding per signature,
+ * so a holder cannot re-encode one into another that also verifies.
+ *   30 L 02 lenR R 02 lenS S   with L = total − 2, no negative and no padded integer
+ */
+export function isStrictDer(b) {
+  const n = b.length
+  if (n < 8 || n > 72) return false
+  if (b[0] !== 0x30 || b[1] !== n - 2 || b[2] !== 0x02) return false
+  const lr = b[3]
+  if (lr === 0 || 5 + lr >= n || b[4 + lr] !== 0x02) return false
+  const ls = b[5 + lr]
+  if (ls === 0 || lr + ls + 6 !== n) return false
+  if ((b[4] & 0x80) || (lr > 1 && b[4] === 0 && !(b[5] & 0x80))) return false
+  if ((b[6 + lr] & 0x80) || (ls > 1 && b[6 + lr] === 0 && !(b[7 + lr] & 0x80))) return false
+  return true
+}
+
 // ⚠⚠ SYMMETRIC division (truncate toward zero): BigInt's own, and the remainder takes the sign of the DIVIDEND.
 function divT(a, b) { if (b === 0n) throw new JfScriptError('division by zero'); return a / b }
 function modT(a, b) { if (b === 0n) throw new JfScriptError('division by zero'); return a % b }
+
+/** The first newline in b[from, to), or -1: four bytes at a time where aligned (3 times indexOf's speed). */
+export function newlineIn(b, from, to) {
+  let k = from
+  while (k < to && (b.byteOffset + k) % 4 !== 0) { if (b[k] === 10) return k; k++ }
+  const words = (to - k) >>> 2
+  if (words > 0) {
+    const w = new Uint32Array(b.buffer, b.byteOffset + k, words)
+    for (let j = 0; j < words; j++) {
+      const v = w[j] ^ 0x0a0a0a0a
+      if (((v - 0x01010101) & ~v & 0x80808080) !== 0) { k += j << 2; for (const e = k + 4; k < e; k++) if (b[k] === 10) return k }
+    }
+    k += words << 2
+  }
+  for (; k < to; k++) if (b[k] === 10) return k
+  return -1
+}
 
 /** H(result) = sha256( for each cell: 8 bytes little-endian ) — the §2b comparison hash for `JF`. */
 export function jf_stack_hash(cells, sha256) {
