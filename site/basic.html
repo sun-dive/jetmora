@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!-- jetForth BASIC - © 2026 sun-dive - Apache License 2.0 (see basic/LICENSE).
+     The compiler and the reader are basic/basic-jf.mjs and basic/unbasic-jf.mjs, copied here at deploy from
+     the same files the tests run (.cpanel.yml), never edited on the site. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>jetForth BASIC - write jetForth in BASIC, and read it back</title>
+<meta name="description" content="Write a program in BASIC and get jetForth, the script a jetmora thread runs. Paste jetForth and read it back as BASIC. Covenants with their state, real loops, and every rule a tick must meet, compiled in your browser.">
+<meta name="author" content="sun-dive">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://jetmora.org/basic.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="jetmora">
+<meta property="og:title" content="jetForth BASIC - write jetForth in BASIC, and read it back">
+<meta property="og:description" content="An easy way to write jetForth, as Bitcoin BASIC is for Bitcoin Script. Compile BASIC to jetForth, and read jetForth back as BASIC.">
+<meta property="og:url" content="https://jetmora.org/basic.html">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Ctext%20y='13'%20font-size='13'%3E%E2%8C%A8%3C/text%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#1a1a19; --dim:#5c5c58; --rule:#e2e0da;
+    --accent:#8a4b2a; --card:#f4f2ec; --code:#f0eee7; --ok:#2f6b2f; --bad:#a3342a;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+    --bg:#131311; --fg:#e8e6e0; --dim:#9c9a93; --rule:#2c2b28;
+    --accent:#d99460; --card:#1c1b19; --code:#1e1d1a; --ok:#8fc98f; --bad:#e8907f;
+  }}
+  :root[data-theme=dark]{
+    --bg:#131311; --fg:#e8e6e0; --dim:#9c9a93; --rule:#2c2b28;
+    --accent:#d99460; --card:#1c1b19; --code:#1e1d1a; --ok:#8fc98f; --bad:#e8907f;
+  }
+  :root{color-scheme:light dark}
+  :root[data-theme=light]{color-scheme:light} :root[data-theme=dark]{color-scheme:dark}
+  ::placeholder{color:var(--dim);opacity:1}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:17px/1.65 ui-serif,Georgia,'Times New Roman',serif;-webkit-text-size-adjust:100%}
+  .wrap{max-width:72rem;margin:0 auto;padding:3rem 1rem 5rem}
+  .narrow{max-width:44rem}
+  h1{font-size:2.4rem;line-height:1.1;margin:0 0 .3rem;letter-spacing:-.02em}
+  h1 small{display:block;font-size:1rem;font-weight:400;color:var(--dim);
+    letter-spacing:.02em;margin-top:.7rem;font-family:ui-sans-serif,system-ui,sans-serif}
+  h2{font-size:1.35rem;margin:3rem 0 .8rem;line-height:1.25;letter-spacing:-.01em}
+  p{margin:0 0 1.1rem}
+  a{color:var(--accent)}
+  .lede{font-size:1.15rem;line-height:1.55}
+  code,pre,textarea,input[type=text]{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace}
+  code{background:var(--code);padding:.12em .35em;border-radius:3px;font-size:.88em}
+  .tabs{display:flex;gap:.5rem;margin:2rem 0 1rem;flex-wrap:wrap}
+  .tab,button{font:600 .9rem ui-sans-serif,system-ui,sans-serif;border:1px solid var(--rule);
+    background:var(--card);color:var(--fg);padding:.5rem .9rem;border-radius:4px;cursor:pointer}
+  .tab[aria-selected=true]{border-color:var(--accent);color:var(--accent)}
+  button.go{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  @media(max-width:860px){.grid{grid-template-columns:1fr}}
+  .pane{min-width:0}
+  .pane h3{font:700 .78rem ui-sans-serif,system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--dim);margin:0 0 .5rem;display:flex;justify-content:space-between;gap:.5rem;flex-wrap:wrap}
+  .pane h3 span{text-transform:none;letter-spacing:0;font-weight:600;color:var(--accent)}
+  textarea,pre{width:100%;background:var(--code);color:var(--fg);border:1px solid var(--rule);border-radius:4px;
+    padding:.8rem;font-size:.82rem;line-height:1.5;margin:0}
+  textarea{min-height:16rem;resize:vertical}
+  pre{min-height:16rem;max-height:65vh;overflow:auto;white-space:pre}
+  .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.6rem 0 0}
+  .row label{font:600 .8rem ui-sans-serif,system-ui,sans-serif;color:var(--dim);min-width:11rem}
+  input[type=text]{flex:1 1 14rem;min-width:0;background:var(--code);color:var(--fg);border:1px solid var(--rule);
+    border-radius:4px;padding:.45rem .6rem;font-size:.82rem}
+  .ex{display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .6rem}
+  .ex button{font-weight:500;font-size:.8rem;padding:.3rem .6rem}
+  .msg{margin:.6rem 0 0;padding:.5rem .7rem;border-radius:4px;font:.8rem/1.5 ui-monospace,Menlo,Consolas,monospace;
+    white-space:pre-wrap;border:1px solid var(--rule)}
+  .msg.ok{color:var(--ok)} .msg.err{color:var(--bad)}
+  .note{color:var(--dim);font-size:.95rem}
+  .note b{color:var(--fg)}
+  .tbl{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.95rem;display:block;overflow-x:auto}
+  .tbl td{border-top:1px solid var(--rule);padding:.5rem .8rem .5rem 0;vertical-align:top}
+  .tbl td:first-child{white-space:nowrap;color:var(--dim);font-family:ui-sans-serif,system-ui,sans-serif;font-size:.9rem}
+  .tbl tr:first-child td{border-top:none}
+  footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--rule);color:var(--dim);font-size:.9rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="narrow">
+  <h1>jetForth BASIC<small>an easy way to write jetForth, as Bitcoin BASIC is for Bitcoin Script</small></h1>
+  <p class="lede">Write a program in BASIC and get jetForth, the script a jetmora thread runs. Paste jetForth
+  and read it back as BASIC. It all runs in this page: nothing you type leaves it.</p>
+</header>
+
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" aria-selected="true" data-t="write">BASIC to jetForth</button>
+  <button class="tab" role="tab" aria-selected="false" data-t="read">jetForth to BASIC</button>
+</div>
+
+<!-- ── BASIC → jetForth ─────────────────────────────────────────────────────────────────────────── -->
+<section id="write">
+  <div class="grid">
+    <div class="pane">
+      <h3>BASIC <span>VERSION · LET · IF · FOR · DIM · VERIFY</span></h3>
+      <div class="ex">
+        <button data-w="sum">a real loop</button>
+        <button data-w="pow">powers</button>
+        <button data-w="branch">IF and ELSE</button>
+        <button data-w="hash">a hash lock</button>
+        <button data-w="owned">a thread: ownership</button>
+        <button data-w="count">a thread that counts</button>
+      </div>
+      <textarea id="src" spellcheck="false" aria-label="BASIC source"></textarea>
+      <div class="row"><label for="stack">on the stack at the start</label>
+        <input id="stack" type="text" spellcheck="false" placeholder="bottom first, e.g. a, b, k$ ($ for bytes)"></div>
+      <div class="row"><label for="leave">left on the stack</label>
+        <input id="leave" type="text" spellcheck="false" placeholder="e.g. total"></div>
+      <div class="row"><label for="state">a thread's state</label>
+        <input id="state" type="text" spellcheck="false" placeholder="for DIM fields, e.g. owner = &amp;H…, n = 7"></div>
+      <div class="row"><button class="go" id="go-write">Compile</button>
+        <button id="copy-hex">Copy the hex</button></div>
+    </div>
+    <div class="pane">
+      <h3>jetForth <span id="write-stat"></span></h3>
+      <pre id="out-write">Write some BASIC and press Compile.</pre>
+      <div id="write-msg"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── jetForth → BASIC ─────────────────────────────────────────────────────────────────────────── -->
+<section id="read" hidden>
+  <div class="grid">
+    <div class="pane">
+      <h3>jetForth <span>hex</span></h3>
+      <textarea id="hex" spellcheck="false" aria-label="jetForth bytes in hex" placeholder="hex, e.g. from the other tab"></textarea>
+      <div class="row"><label for="rstack">on the stack at the start</label>
+        <input id="rstack" type="text" spellcheck="false" placeholder="names, bottom first: needed when the program takes inputs"></div>
+      <div class="row"><button class="go" id="go-read">Read</button>
+        <button id="copy-basic">Copy the listing</button></div>
+    </div>
+    <div class="pane">
+      <h3>read as BASIC <span id="read-stat"></span></h3>
+      <pre id="out-read">Paste jetForth and press Read.</pre>
+      <div id="read-msg"></div>
+    </div>
+  </div>
+</section>
+
+<section class="narrow">
+  <h2>What it writes</h2>
+  <table class="tbl">
+    <tr><td>a number</td><td>one 64-bit cell</td></tr>
+    <tr><td>bytes</td><td>two cells, <code>( c-addr u )</code>: where they are and how many</td></tr>
+    <tr><td>a variable</td><td>at an address fixed when compiling: one cell for a number, two for bytes</td></tr>
+    <tr><td><code>FOR … NEXT</code></td><td>a real loop. jetForth can branch back, so nothing is unrolled</td></tr>
+    <tr><td><code>^</code></td><td>a multiply loop. Nothing is worked out in advance: the script says what the program says</td></tr>
+    <tr><td><code>VERSION JF 3</code></td><td>the first line. It names the interpreter, and an entry carrying the script names
+      <code>nVersion</code> 0x464a0003</td></tr>
+  </table>
+
+  <h2>A thread</h2>
+  <p>With <code>DIM</code>, the program is a covenant: its fields are the thread's state, fixed-width, at the head
+  of the script. <code>DIM owner$20</code> is required, and holds HASH160 of the owner's key, as the deployed
+  Bitcoin covenants store it. The compiler writes the rules every tick must meet:</p>
+  <table class="tbl">
+    <tr><td>1 · the owner</td><td>the key's hash is the owner's, and its signature over the tick holds</td></tr>
+    <tr><td>2 · the next tick</td><td>the value goes up by one, and the tick's sequence number is that same number</td></tr>
+    <tr><td>3 · the same script</td><td>the next tip carries this script</td></tr>
+    <tr><td>4 · its state</td><td>with the fields your program sets, rebuilt into it</td></tr>
+  </table>
+  <p>The compiler writes the script once. After that the script rebuilds itself into each new tip, and the
+  rules travel with it.</p>
+
+  <h2>How a tick is judged</h2>
+  <p>As a BSV node judges a spend: the unlocking script is byte pushes only; it runs, then the lock runs on
+  what it left; the tick is accepted with exactly one non-zero item. JF revision 3's limits are the same on
+  every host: 500,000 instructions, each 64 bytes moved costing one more; 64 KB of memory; 64 KB of pushed
+  bytes, read-only; 1,000 items; 100 signature checks.</p>
+</section>
+
+<footer class="narrow">
+  <p>© 2026 sun-dive · Apache License 2.0. Part of <a href="/">jetmora</a>.
+  The compiler and reader here are the same files the project tests (<span id="ver"></span>).</p>
+</footer>
+</div>
+
+<script type="module">
+import { compileBasic, compileCovenant, JF_NVERSION, BASIC_JF_VERSION } from './basic/basic-jf.mjs'
+import { unbasic, unbasicListing, jfListing } from './basic/unbasic-jf.mjs'
+
+const $ = id => document.getElementById(id)
+const HEX = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
+const names = s => s.split(/[,\s]+/).map(x => x.trim()).filter(Boolean)
+const say = (el, cls, txt) => { el.innerHTML = ''
+  if (!txt) return
+  const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = txt; el.appendChild(d) }
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', String(x === t)))
+  $('write').hidden = t.dataset.t !== 'write'
+  $('read').hidden = t.dataset.t !== 'read'
+})
+
+/** "owner = &Habab…, n = 7" → { owner: [bytes], n: 7n } */
+function parseState(s) {
+  const st = {}
+  for (const part of s.split(/[,\n]+/).map(x => x.trim()).filter(Boolean)) {
+    const m = /^([A-Za-z_]\w*)\s*=\s*(.+)$/.exec(part)
+    if (!m) throw new Error(`state: "${part}" is not name = value`)
+    const v = m[2].trim()
+    if (/^&H/i.test(v)) {
+      const h = v.slice(2)
+      if (!/^([0-9a-f]{2})*$/i.test(h)) throw new Error(`state: ${m[1]} is not whole hex bytes`)
+      st[m[1]] = h.match(/../g)?.map(x => parseInt(x, 16)) ?? []
+    } else if (/^-?\d+$/.test(v)) st[m[1]] = BigInt(v)
+    else throw new Error(`state: ${m[1]} must be a number or &H bytes`)
+  }
+  return st
+}
+const stateText = st => Object.entries(st).map(([k, v]) =>
+  `${k} = ${Array.isArray(v) || v instanceof Uint8Array ? '&H' + HEX(v) : String(v)}`).join(', ')
+const same = (a, b) => a.length === b.length && a.every((x, k) => x === b[k])
+
+// ── BASIC → jetForth ────────────────────────────────────────────────────────────────────────────
+let lastHex = ''
+$('go-write').onclick = () => {
+  const out = $('out-write'), msg = $('write-msg'), stat = $('write-stat')
+  try {
+    const src = $('src').value
+    const covenant = /^\s*(\d+\s+)?DIM\b/mi.test(src)
+    const stack = names($('stack').value), leave = names($('leave').value)
+    const r = covenant ? compileCovenant(src, { state: parseState($('state').value) })
+                       : compileBasic(src, { stack, leave })
+    lastHex = HEX(r.bytes)
+    // read it back, and compile the reading again: the same bytes, or the listing says so
+    const u = unbasic(r.bytes, { names: r.names, stack })
+    const again = covenant
+      ? compileCovenant(u.lines.filter(l => !l.startsWith('REM')).join('\n'), { state: u.state })
+      : compileBasic(u.lines.join('\n'), { stack, leave: u.leave })
+    const trip = same(again.bytes, r.bytes)
+    out.textContent = `REM  ${r.bytes.length} bytes · nVersion 0x${JF_NVERSION.toString(16)} (JF revision ${r.revision})\n` +
+      `REM  memory reserved ${r.memory} B · bytes pushed ${r.pushed} B\n\n` +
+      lastHex.replace(/(.{64})/g, '$1\n') + '\n\nREM  the instructions\n' + jfListing(r.bytes) +
+      '\n\nREM  read back as BASIC\n' + unbasicListing(r.bytes, { names: r.names, stack })
+    stat.textContent = `${r.bytes.length} bytes`
+    $('hex').value = lastHex; $('rstack').value = $('stack').value
+    say(msg, trip ? 'ok' : 'err', (trip ? 'Read back, it compiles to the same bytes.' : '⚠ Read back, it compiles to different bytes.') +
+      (covenant ? `\nstate: ${stateText(u.state)}` : `\nassigned: ${r.assigned.join(', ') || 'nothing'}`))
+  } catch (e) { out.textContent = ''; stat.textContent = ''; lastHex = ''; say(msg, 'err', e.message) }
+}
+$('copy-hex').onclick = () => { if (lastHex) navigator.clipboard?.writeText(lastHex) }
+
+// ── jetForth → BASIC ────────────────────────────────────────────────────────────────────────────
+$('go-read').onclick = () => {
+  const out = $('out-read'), msg = $('read-msg'), stat = $('read-stat')
+  try {
+    const h = $('hex').value.replace(/\s+/g, '')
+    if (!h) throw new Error('nothing to read')
+    if (!/^([0-9a-f]{2})+$/i.test(h)) throw new Error('that is not whole hex bytes')
+    const bytes = Uint8Array.from(h.match(/../g), x => parseInt(x, 16))
+    const opts = { stack: names($('rstack').value) }
+    const u = unbasic(bytes, opts)
+    out.textContent = unbasicListing(bytes, opts) + '\n\nREM  the instructions\n' + jfListing(bytes)
+    stat.textContent = `${bytes.length} bytes → ${u.lines.length} line${u.lines.length === 1 ? '' : 's'}`
+    say(msg, u.stoppedAt ? 'err' : 'ok', u.stoppedAt ? '⚠ STOPPED: ' + u.stoppedAt +
+        (/below the bottom of the stack/.test(u.stoppedAt) ? '\nThe program takes inputs: name what is on the stack at the start.' : '')
+      : (u.covenant ? `A thread's covenant. state: ${stateText(u.state)}` : 'Read to the end.'))
+  } catch (e) { out.textContent = ''; stat.textContent = ''; say(msg, 'err', e.message) }
+}
+$('copy-basic').onclick = () => navigator.clipboard?.writeText($('out-read').textContent)
+
+// ── examples ────────────────────────────────────────────────────────────────────────────────────
+const OWNER = '&H' + 'ab'.repeat(20)
+const EX = {
+  sum: { src: 'VERSION JF 3\nREM  jetForth can branch back, so this is a loop, not ten copies\ntotal = 0\nFOR i = 1 TO 10\n  total = total + i * i\nNEXT i', leave: 'total' },
+  pow: { src: 'VERSION JF 3\nREM  ^ is a multiply loop: nothing is worked out in advance\ny = b ^ e', stack: 'b, e', leave: 'y' },
+  branch: { src: 'VERSION JF 3\nREM  a variable has a value before an IF may set it\nbig = 0\nIF a > b THEN\n  big = a\nELSE\n  big = b\nEND IF', stack: 'a, b', leave: 'big' },
+  hash: { src: 'VERSION JF 3\nREM  accepted only with the bytes whose SHA256 this is: the text "the secret"\nVERIFY SAMEBYTES(SHA256(k), &H368a693d784c7d1957ec748148a5de1e1f2e97f1f6360c69b0cfcf6471bbbf07)\nok = 1', stack: 'k$', leave: 'ok' },
+  owned: { src: 'VERSION JF 3\nREM  a thread its owner alone can tick: rules 1 to 4 are written for you\nDIM owner$20', state: `owner = ${OWNER}` },
+  count: { src: 'VERSION JF 3\nREM  a counter in the state: each tick must add one to n\nDIM owner$20\nDIM n%4\nn = n + 1', state: `owner = ${OWNER}, n = 7` },
+}
+document.querySelectorAll('[data-w]').forEach(b => b.onclick = () => {
+  const e = EX[b.dataset.w]
+  $('src').value = e.src; $('stack').value = e.stack ?? ''; $('leave').value = e.leave ?? ''; $('state').value = e.state ?? ''
+  $('go-write').click()
+})
+
+$('ver').textContent = `compiler ${BASIC_JF_VERSION}, JF revision 3`
+// something on screen from the first second; the read tab starts with the same program
+document.querySelector('[data-w=count]').click()
+$('go-read').click()
+</script>
+</body>
+</html>

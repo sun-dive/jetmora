@@ -1,5 +1,5 @@
 ---
-# jetmora — © 2026 sun-dive — Apache License 2.0 (see LICENSE).
+# jetmora — © 2026 sun-dive — Business Source License 1.1, as LICENSE says of the deploy file.
 # cPanel Git™ Version Control deployment for jetmora.org.
 # In cPanel → Git Version Control: "Update from Remote", THEN "Deploy HEAD Commit". Push ≠ live.
 # DEPLOYPATH mirrors the house convention ($HOME/<domain>/), as grafverse.com and bitgraf.com do.
@@ -15,7 +15,7 @@ deployment:
     - /bin/cp site/light-speed-transfers.html "$DEPLOYPATH/light-speed-transfers.html"   # the anchor-transfer paper v0.1 — the serious version; the Substack essay points here
     - /bin/cp site/og-light-speed.jpg "$DEPLOYPATH/og-light-speed.jpg"   # OG/Twitter card for the paper
     - /bin/cp site/robots.txt "$DEPLOYPATH/robots.txt"                   # allow all + sitemap pointer
-    - /bin/cp site/sitemap.xml "$DEPLOYPATH/sitemap.xml"                 # index, paper, spec, vectors
+    - /bin/cp site/sitemap.xml "$DEPLOYPATH/sitemap.xml"                 # index, compiler, paper, vectors
     # The specification and the vectors are published as static files so they can be cited and fetched.
     # ⚠ vectors/core.json is CC0 and IS the specification — an implementation reproducing it is conformant.
     # ⚠ spec/log.md is always the CURRENT version. Superseded versions are FROZEN and stay fetchable at
@@ -31,6 +31,13 @@ deployment:
     - /bin/mkdir -p "$DEPLOYPATH/img" && /bin/cp site/img/racers-shirt-88.webp "$DEPLOYPATH/img/"
     - /bin/mkdir -p "$DEPLOYPATH/js"
     - /bin/cp tools/entry.mjs tools/merkle.mjs tools/sha256.mjs "$DEPLOYPATH/js/"
+    # ── THE jetForth BASIC COMPILER, at /basic.html ───────────────────────────────────────────────
+    # ⚠ basic/ and tools/ops-jf.mjs are COPIED at deploy from the files the tests run, never edited on the
+    #   site. basic-jf.mjs imports ../tools/ops-jf.mjs, so the two folders keep their places side by side.
+    - /bin/cp site/basic.html "$DEPLOYPATH/basic.html"
+    - /bin/mkdir -p "$DEPLOYPATH/basic" "$DEPLOYPATH/tools"
+    - /bin/cp basic/basic-jf.mjs basic/unbasic-jf.mjs basic/LICENSE "$DEPLOYPATH/basic/"
+    - /bin/cp tools/ops-jf.mjs "$DEPLOYPATH/tools/ops-jf.mjs"
     - /bin/mkdir -p "$DEPLOYPATH/vectors" && /bin/cp vectors/core.json "$DEPLOYPATH/vectors/core.json"
     - /bin/cp vectors/LICENSE "$DEPLOYPATH/vectors/LICENSE"  # CC0 1.0, alongside the file it dedicates
     # ── THE THREAD SERVICE, at /threads/ ───────────────────────────────────────────────────────────
@@ -51,7 +58,7 @@ deployment:
     # ⛔ /log/ was the first home of the thread service, and the name was wrong: it is not a log. Removed, no redirect.
     - /bin/rm -rf "$DEPLOYPATH/log"
     # ⚠ emit-vectors.php and probe.php are development tools and are deliberately NOT deployed.
-    - /bin/cp LICENSE "$DEPLOYPATH/LICENSE"                  # Apache-2.0
+    - /bin/cp LICENSE "$DEPLOYPATH/LICENSE"                  # which licence covers which part
     - /bin/cp NOTICE "$DEPLOYPATH/NOTICE"                    # derivation + the Open BSV position + provenance
     - /bin/cp PROVENANCE.md "$DEPLOYPATH/PROVENANCE.md"      # the mint ledger
     - /bin/mkdir -p "$DEPLOYPATH/provenance"
