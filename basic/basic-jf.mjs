@@ -40,7 +40,7 @@
 import { JF_PUSH_MAX, JF_SMALL0, JF_LIT, JF_WORD } from '../tools/ops-jf.mjs'
 
 /** The version of this compiler. A script's bytes are a function of it. */
-export const BASIC_JF_VERSION = '0.2'
+export const BASIC_JF_VERSION = '0.3'
 
 /** The JF revision the bytes are numbered in: tools/ops-jf.mjs, revision 3. */
 export const JF_REVISION = 3
@@ -52,6 +52,17 @@ export const JF_NVERSION = ((0x46 << 24) | (0x4a << 16) | JF_REVISION) >>> 0
 
 /** 1.0 in the project's fixed point — 2^32, as in basic.ts. */
 export const BASIC_S = 2n ** 32n
+/** A number as written, exactly: a cell holds whole numbers, so a fraction is refused rather than rounded. */
+const exact = raw => {
+  if (!/^\d+$/.test(raw)) throw new Error(`BASIC: ${raw} is not a whole number, and a jetForth cell holds whole numbers`)
+  return BigInt(raw)
+}
+/** A constant the caller supplies, exactly as for a written number. */
+const exactConst = (name, v) => {
+  if (typeof v === 'bigint') return v
+  if (Number.isSafeInteger(v)) return BigInt(v)
+  throw new Error(`BASIC: the constant ${name} is ${v}, and a jetForth cell holds whole numbers (give a large one as a BigInt)`)
+}
 
 const I64_MAX = (1n << 63n) - 1n
 
@@ -88,7 +99,7 @@ function lex(src, internal = false) {
       while (j < src.length && /[0-9a-fA-F]/.test(src[j])) j++
       const h = src.slice(i + 2, j)
       if (!h.length || h.length % 2) {
-        throw new Error(`BASIC: &H${h} — a hex literal is whole BYTES, so it needs an even number of digits`)
+        throw new Error(`BASIC: &H${h}: a hex literal is whole BYTES, so it needs an even number of digits`)
       }
       const d = []
       for (let k = 0; k < h.length; k += 2) d.push(parseInt(h.slice(k, k + 2), 16))
@@ -144,7 +155,11 @@ class Parser {
     if (t && (t.v === v)) { this.p++; return true }
     return false
   }
-  expect(v) { if (!this.eat(v)) throw new Error(`BASIC: expected ${v}, found ${this.peek()?.v ?? 'end'}`) }
+  expect(v) {
+    if (this.eat(v)) return
+    const t = this.peek()?.v
+    throw new Error(`BASIC: expected ${v}, found ${t === undefined ? 'the end' : t === '\n' ? 'the end of the line' : t}`)
+  }
   atEnd() { return this.p >= this.t.length }
 
   expr(min = 0) {
@@ -164,7 +179,7 @@ class Parser {
   atom() {
     const t = this.next()
     if (!t) throw new Error('BASIC: expression ended early')
-    if (t.k === 'num') return { t: 'num', v: t.n }
+    if (t.k === 'num') return { t: 'num', v: exact(t.v) }
     if (t.k === 'hex') return { t: 'bytes', d: t.d }
     /* NOT is a keyword, so it is a prefix word here rather than an entry in the function table. */
     if (t.k === 'kw' && t.v === 'NOT') return { t: 'call', f: 'NOT', a: [this.atom()] }
@@ -213,7 +228,7 @@ function parseStmts(p, stopAt, lineScoped = false) {
     if (t.k === 'kw' && t.v === 'FOR') {
       /* A FOR spans lines and a line-scoped IF arm does not. */
       if (lineScoped) {
-        throw new Error('BASIC: a FOR cannot open inside an IF arm — an IF is line-scoped, so its arms ' +
+        throw new Error('BASIC: a FOR cannot open inside an IF arm: an IF is line-scoped, so its arms ' +
           'end where the line does, and a FOR does not. Put the FOR on its own line.')
       }
       p.next(); out.push(forStmt(p)); continue
@@ -224,7 +239,7 @@ function parseStmts(p, stopAt, lineScoped = false) {
       throw new Error(`BASIC: ${t.v === 'END' ? 'END IF' : 'ENDIF'} with no open IF block to close`)
     }
     if (t.k === 'kw' && t.v === 'DIM') {
-      if (lineScoped) throw new Error('BASIC: DIM declares the script\'s layout — it cannot sit inside an IF')
+      if (lineScoped) throw new Error('BASIC: DIM declares the script\'s layout: it cannot sit inside an IF')
       p.next(); out.push(dimStmt(p)); continue
     }
     if (t.k === 'kw' && t.v === 'VERSION') { p.next(); out.push(versionStmt(p)); continue }
@@ -241,11 +256,11 @@ function letStmt(p) {
   if (p.eat(',')) {
     const n2 = p.next()
     if (!n2 || n2.k !== 'name') throw new Error('BASIC: two names on the left, and the second is missing')
-    if (n2.v === n.v) throw new Error(`BASIC: ${n.v}, ${n.v} = SPLIT(…) — the halves need different names`)
+    if (n2.v === n.v) throw new Error(`BASIC: ${n.v}, ${n.v} = SPLIT(…): the halves need different names`)
     p.expect('=')
     const e = p.expr()
     if (e.t !== 'call' || e.f !== 'SPLIT' || e.a.length !== 2) {
-      throw new Error(`BASIC: ${n.v}, ${n2.v} = … needs SPLIT(bytes, at) on the right — it is the only ` +
+      throw new Error(`BASIC: ${n.v}, ${n2.v} = … needs SPLIT(bytes, at) on the right: it is the only ` +
         'word that produces two values, a left half and a right half')
     }
     return { t: 'split', left: n.v, right: n2.v, of: e.a[0], at: e.a[1] }
@@ -266,7 +281,7 @@ function ifStmt(p) {
     const els = p.eat('ELSE') ? parseStmts(p, ['END', 'ENDIF']) : []
     if (!p.eat('ENDIF')) {
       if (!p.eat('END')) throw new Error('BASIC: an IF written as a block has to be closed by END IF')
-      if (!p.eat('IF')) throw new Error('BASIC: END on its own — did you mean END IF?')
+      if (!p.eat('IF')) throw new Error('BASIC: END on its own: did you mean END IF?')
     }
     return { t: 'if', cond, then: thn, else: els }
   }
@@ -280,15 +295,15 @@ function dimStmt(p) {
   const fields = []
   do {
     const n = p.next()
-    if (!n || n.k !== 'name') throw new Error('BASIC: DIM wants a name — DIM v%5')
+    if (!n || n.k !== 'name') throw new Error('BASIC: DIM wants a name: DIM v%5')
     const sig = p.next()
     if (!sig || (sig.v !== '%' && sig.v !== '$')) {
-      throw new Error(`BASIC: DIM ${n.v} needs a WIDTH — ${n.v}%5 for a five-byte number, ${n.v}$20 for ` +
+      throw new Error(`BASIC: DIM ${n.v} needs a WIDTH: ${n.v}%5 for a five-byte number, ${n.v}$20 for ` +
         'twenty raw bytes. A field is a layout, and a layout has a size.')
     }
     const w = p.next()
     if (!w || w.k !== 'num' || !Number.isInteger(w.n) || w.n < 1 || w.n > 75) {
-      throw new Error(`BASIC: DIM ${n.v} — the width must be a whole number of bytes from 1 to 75`)
+      throw new Error(`BASIC: DIM ${n.v}: the width must be a whole number of bytes from 1 to 75`)
     }
     fields.push({ name: n.v, width: w.n, bytes: sig.v === '$' })
   } while (p.eat(','))
@@ -298,7 +313,7 @@ function dimStmt(p) {
 /** `FOR i = <from> TO <to> [STEP <s>] … NEXT [i]` — the body runs to NEXT, however many lines. */
 function forStmt(p) {
   const n = p.next()
-  if (!n || n.k !== 'name') throw new Error('BASIC: FOR wants a counter name — FOR i = 0 TO 9')
+  if (!n || n.k !== 'name') throw new Error('BASIC: FOR wants a counter name: FOR i = 0 TO 9')
   p.expect('=')
   const from = p.expr()
   p.expect('TO')
@@ -320,7 +335,7 @@ function forStmt(p) {
 function versionStmt(p) {
   const f = p.next(), r = p.next()
   if (!f || f.k !== 'name' || !/^[A-Z0-9]{2}$/.test(f.v) || !r || r.k !== 'num' || !Number.isInteger(r.n)) {
-    throw new Error('BASIC: VERSION names an instruction set and its revision — VERSION JF 3')
+    throw new Error('BASIC: VERSION names an instruction set and its revision: VERSION JF 3')
   }
   return { t: 'version', family: f.v, revision: r.n }
 }
@@ -471,7 +486,7 @@ class Emitter {
       if (this.frameNext > BUF_BASE) throw new Error('BASIC: the frame has run out of room for its variables')
     } else {
       addr = this.next; this.next += n
-      if (this.next > FRAME_BASE) throw new Error('BASIC: more variables than fit below the frame — the program is too large')
+      if (this.next > FRAME_BASE) throw new Error('BASIC: more variables than fit below the frame: the program is too large')
     }
     const v = { name, addr, type: type === 'bytes' ? 'bytes' : 'num', max }
     this.vars.set(name, v)
@@ -481,9 +496,9 @@ class Emitter {
   site(n, what) {
     if (this.loops) {
       throw new Error(`BASIC: ${what} writes its bytes to a place fixed when the program is compiled, and inside a ` +
-        'FOR loop it would write that place again on every trip — work it out before the loop')
+        'FOR loop it would write that place again on every trip: work it out before the loop')
     }
-    if (n === null) throw new Error(`BASIC: ${what} — the length of what it is given is not known when compiling`)
+    if (n === null) throw new Error(`BASIC: ${what}: the length of what it is given is not known when compiling`)
     const a = this.bufNext; this.bufNext += n
     return a
   }
@@ -491,8 +506,8 @@ class Emitter {
   store(v) { this.code.num(v.addr); this.code.word(v.type === 'bytes' ? '2!' : '!') }
 
   want(r, what, f) {
-    if (what === 'num' && !isNum(r.t)) throw new Error(`BASIC: ${f} works on numbers, and this is bytes — BIN2NUM turns bytes into a number`)
-    if (what === 'bytes' && r.t !== 'bytes') throw new Error(`BASIC: ${f} works on bytes, and this is a number — NUM2BIN turns a number into bytes`)
+    if (what === 'num' && !isNum(r.t)) throw new Error(`BASIC: ${f} works on numbers, and this is bytes: BIN2NUM turns bytes into a number`)
+    if (what === 'bytes' && r.t !== 'bytes') throw new Error(`BASIC: ${f} works on bytes, and this is a number: NUM2BIN turns a number into bytes`)
     return r
   }
 
@@ -503,8 +518,8 @@ class Emitter {
       return v
     }
     switch (e.t) {
-      case 'num': return BigInt(Math.round(e.v))
-      case 'var': return has(this.consts, e.v) ? BigInt(Math.round(this.consts[e.v])) : undefined
+      case 'num': return cell(e.v)
+      case 'var': return has(this.consts, e.v) ? cell(exactConst(e.v, this.consts[e.v])) : undefined
       case 'neg': { const x = this.constEval(e.e); return x === undefined ? undefined : -x }
       case 'bin': {
         if (!['+', '-', '*', '/', '^'].includes(e.op)) return undefined
@@ -515,10 +530,10 @@ class Emitter {
           case '-': return cell(l - r)
           case '*': return cell(l * r)
           case '/':
-            if (r === 0n) throw new Error('BASIC: a division by zero the compiler can already see — the tick would fail')
+            if (r === 0n) throw new Error('BASIC: a division by zero the compiler can already see: the tick would fail')
             return l / r
           case '^':
-            if (r < 0n) throw new Error(`BASIC: ${l} ^ ${r} — a negative power is not a whole number`)
+            if (r < 0n) throw new Error(`BASIC: ${l} ^ ${r}: a negative power is not a whole number`)
             if (r > 64n && (l > 1n || l < -1n)) throw new Error(`BASIC: ${l} ^ ${r} is past what a 64-bit cell holds`)
             return cell(l ** r)
         }
@@ -531,17 +546,18 @@ class Emitter {
   emit(e) {
     const c = this.code
     switch (e.t) {
-      case 'num': c.num(BigInt(Math.round(e.v))); return { t: 'num' }
+      case 'num': if (e.v > I64_MAX) throw new Error(`BASIC: ${e.v} is past what a 64-bit cell holds`)
+        c.num(e.v); return { t: 'num' }
       case 'bytes':
         if (this.loops) {
           throw new Error('BASIC: a byte literal is copied into the push space each time it runs, and inside a FOR loop ' +
-            'that is every trip — give it a name before the loop')
+            'that is every trip: give it a name before the loop')
         }
         c.push(e.d); return { t: 'bytes', max: e.d.length }
       case 'var': {
-        if (has(this.consts, e.v)) { c.num(BigInt(Math.round(this.consts[e.v]))); return { t: 'num' } }
+        if (has(this.consts, e.v)) { c.num(exactConst(e.v, this.consts[e.v])); return { t: 'num' } }
         const v = this.vars.get(e.v)
-        if (!v || (e.v.startsWith('#') && !this.internal)) throw new Error(`BASIC: ${e.v} has no value here — assign it first`)
+        if (!v || (e.v.startsWith('#') && !this.internal)) throw new Error(`BASIC: ${e.v} has no value here: assign it first`)
         this.fetch(v)
         return { t: v.type, max: v.max }
       }
@@ -609,8 +625,8 @@ class Emitter {
         if (f === 'NUM2BIN') {
           need(2)
           const w = this.constEval(e.a[1])
-          if (w === undefined) throw new Error('BASIC: NUM2BIN — the width has to be a number known when compiling, so its bytes have a place')
-          if (w < 0n || w > 65536n) throw new Error(`BASIC: NUM2BIN — a width of ${w} bytes; it is 0 to 65536`)
+          if (w === undefined) throw new Error('BASIC: NUM2BIN: the width has to be a number known when compiling, so its bytes have a place')
+          if (w < 0n || w > 65536n) throw new Error(`BASIC: NUM2BIN: a width of ${w} bytes; it is 0 to 65536`)
           this.want(this.emit(e.a[0]), 'num', f); this.want(this.emit(e.a[1]), 'num', f)
           c.num(this.site(Number(w), 'NUM2BIN')); c.word('NUM2BIN'); return { t: 'bytes', max: Number(w) }
         }
@@ -631,14 +647,14 @@ class Emitter {
           c.word('ED25519-CHECKSIG'); return { t: 'flag' }
         }
         if (f === 'SPLIT') {
-          throw new Error('BASIC: SPLIT gives back TWO values — a left half and a right half — so it ' +
+          throw new Error('BASIC: SPLIT gives back TWO values, a left half and a right half, so it ' +
             'needs two names: left, right = SPLIT(bytes, at)')
         }
         if (f === 'CHECKSIG') {
-          throw new Error('BASIC: CHECKSIG — jetForth\'s takes the digest it checks as well as the signature ' +
+          throw new Error('BASIC: CHECKSIG: jetForth\'s takes the digest it checks as well as the signature ' +
             'and the key, so its BASIC form is still to be decided')
         }
-        throw new Error(`BASIC: no such word — ${f}`)
+        throw new Error(`BASIC: no such word: ${f}`)
       }
     }
   }
@@ -653,7 +669,7 @@ class Emitter {
     if (!v) v = this.declare(name, r.t, r.t === 'bytes' ? max : null)
     else if ((v.type === 'bytes') !== (r.t === 'bytes')) {
       throw new Error(`BASIC: ${name} holds ${v.type === 'bytes' ? 'bytes' : 'a number'}, and this gives it ` +
-        `${r.t === 'bytes' ? 'bytes' : 'a number'} — a variable keeps one kind`)
+        `${r.t === 'bytes' ? 'bytes' : 'a number'}: a variable keeps one kind`)
     } else if (v.type === 'bytes') v.max = join(v.max, max)
     this.store(v)
     if (!this.assigned.includes(name)) this.assigned.push(name)
@@ -674,7 +690,7 @@ class Emitter {
       }
       if (s.t === 'for') { this.loop(s); continue }
       if (s.t === 'dim') {
-        throw new Error('BASIC: every DIM comes before the first statement that runs — the state is laid out at ' +
+        throw new Error('BASIC: every DIM comes before the first statement that runs: the state is laid out at ' +
           'the head of the script, before anything reads it')
       }
       if (s.t === 'version') throw new Error('BASIC: VERSION is said once, as the first statement')
@@ -685,7 +701,7 @@ class Emitter {
       assignedBy(s.then, names); assignedBy(s.else, names)
       for (const n of names) {
         if (!this.vars.has(n)) {
-          throw new Error(`BASIC: ${n} is assigned inside an IF but does not exist before it — ` +
+          throw new Error(`BASIC: ${n} is assigned inside an IF but does not exist before it: ` +
             'give it a value first, or one path leaves it with none')
         }
       }
@@ -718,7 +734,7 @@ class Emitter {
    */
   loop(s) {
     const c = this.code
-    if (this.open.has(s.name)) throw new Error(`BASIC: FOR ${s.name} is already open — a nested loop needs its own counter`)
+    if (this.open.has(s.name)) throw new Error(`BASIC: FOR ${s.name} is already open: a nested loop needs its own counter`)
     if (has(this.consts, s.name)) throw new Error(`BASIC: ${s.name} is a compile-time constant and cannot count a loop`)
     const old = this.vars.get(s.name)
     if (old && old.type === 'bytes') throw new Error(`BASIC: ${s.name} holds bytes, and a FOR counter is a number`)
@@ -789,11 +805,11 @@ const namesOf = em => Object.fromEntries([...em.vars.values()].filter(v => !v.na
 export function compileBasic(src, env = {}) {
   const prog = parseProgram(src)
   const v = prog.shift()
-  if (!v || v.t !== 'version') throw new Error(`BASIC: a jetForth program names its version first — VERSION JF ${JF_REVISION}`)
-  if (v.family !== 'JF' || v.revision !== JF_REVISION) throw new Error(`BASIC: VERSION ${v.family} ${v.revision} — this compiler emits JF revision ${JF_REVISION}`)
+  if (!v || v.t !== 'version') throw new Error(`BASIC: a jetForth program names its version first: VERSION JF ${JF_REVISION}`)
+  if (v.family !== 'JF' || v.revision !== JF_REVISION) throw new Error(`BASIC: VERSION ${v.family} ${v.revision}: this compiler emits JF revision ${JF_REVISION}`)
   if (findVersion(prog)) throw new Error('BASIC: VERSION is said once, as the first statement')
   if (prog.some(s => s.t === 'dim')) {
-    throw new Error('BASIC: DIM lays out a covenant\'s state at the head of its script — compile it with compileCovenant')
+    throw new Error('BASIC: DIM lays out a covenant\'s state at the head of its script: compile it with compileCovenant')
   }
   const em = new Emitter(env.consts ?? {})
   const inputs = (env.stack ?? []).map(raw => {
@@ -877,13 +893,13 @@ function covenantLayout(prog) {
   for (const s of prog) {
     if (s.t !== 'dim') { running = true; body.push(s); continue }
     if (running) {
-      throw new Error('BASIC: every DIM comes before the first statement that runs — the state is laid out at ' +
+      throw new Error('BASIC: every DIM comes before the first statement that runs: the state is laid out at ' +
         'the head of the script, before anything reads it')
     }
     for (const f of s.fields) {
       if (layout.some(g => g.name === f.name)) throw new Error(`BASIC: ${f.name} is DIMmed twice`)
-      if (f.bytes && f.width > JF_PUSH_MAX) throw new Error(`BASIC: DIM ${f.name}$${f.width} — a field is one direct push, at most ${JF_PUSH_MAX} bytes`)
-      if (!f.bytes && f.width > 8) throw new Error(`BASIC: DIM ${f.name}%${f.width} — a number is a 64-bit cell, so at most 8 bytes`)
+      if (f.bytes && f.width > JF_PUSH_MAX) throw new Error(`BASIC: DIM ${f.name}$${f.width}: a field is one direct push, at most ${JF_PUSH_MAX} bytes`)
+      if (!f.bytes && f.width > 8) throw new Error(`BASIC: DIM ${f.name}%${f.width}: a number is a 64-bit cell, so at most 8 bytes`)
       layout.push(f)
     }
   }
@@ -904,7 +920,7 @@ function fieldBytes(f, v) {
   }
   const n = BigInt(v)
   if (n < 0n || n >= 1n << BigInt(8 * f.width) || n > I64_MAX) {
-    throw new Error(`BASIC: ${f.name} = ${v} does not fit ${f.width} bytes — widen the DIM`)
+    throw new Error(`BASIC: ${f.name} = ${v} does not fit ${f.width} bytes: widen the DIM`)
   }
   return le(n, f.width)
 }
@@ -948,8 +964,8 @@ function buildCovenant(layout, body, state, L, written, consts) {
 export function compileCovenant(src, env = {}) {
   const prog = parseProgram(src)
   const v = prog.shift()
-  if (!v || v.t !== 'version') throw new Error(`BASIC: a jetForth program names its version first — VERSION JF ${JF_REVISION}`)
-  if (v.family !== 'JF' || v.revision !== JF_REVISION) throw new Error(`BASIC: VERSION ${v.family} ${v.revision} — this compiler emits JF revision ${JF_REVISION}`)
+  if (!v || v.t !== 'version') throw new Error(`BASIC: a jetForth program names its version first: VERSION JF ${JF_REVISION}`)
+  if (v.family !== 'JF' || v.revision !== JF_REVISION) throw new Error(`BASIC: VERSION ${v.family} ${v.revision}: this compiler emits JF revision ${JF_REVISION}`)
   if (findVersion(prog)) throw new Error('BASIC: VERSION is said once, as the first statement')
   const { layout, body } = covenantLayout(prog)
   const all = new Set(); writes(body, all)
@@ -969,7 +985,7 @@ export function compileCovenant(src, env = {}) {
     }
     L = r.bytes.length
   }
-  throw new Error('BASIC: the script\'s length did not settle — it sits where a varint changes size')
+  throw new Error('BASIC: the script\'s length did not settle: it sits where a varint changes size')
 }
 
 /**

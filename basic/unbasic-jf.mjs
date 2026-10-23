@@ -34,7 +34,7 @@ export function disassemble(b) {
   let i = 0
   while (i < b.length) {
     const at = i, op = b[i++]
-    if (at === 0 && op === JF_RESERVED0) throw new Error('a DEFS header — stdForth functions, which this reader does not read')
+    if (at === 0 && op === JF_RESERVED0) throw new Error('a DEFS header: stdForth functions, which this reader does not read')
     if (op <= JF_PUSH_MAX) {
       if (i + op > b.length) throw new Error(`a push past the end, at ${at}`)
       out.push({ at, size: 1 + op, name: 'PUSH', data: b.slice(i, i + op) }); i += op; continue
@@ -49,7 +49,7 @@ export function disassemble(b) {
         let v = u(i, w); if (v >> BigInt(8 * w - 1)) v -= 1n << BigInt(8 * w)
         out.push({ at, size: 1 + w, name: 'NUM', value: v }); i += w; continue
       }
-      if (lit === 'LITBIG') throw new Error(`LITBIG at ${at} — a number wider than a cell, which this reader does not read`)
+      if (lit === 'LITBIG') throw new Error(`LITBIG at ${at}: a number wider than a cell, which this reader does not read`)
       const w = { STR8: 1, STR16: 2, STR32: 4 }[lit]
       const n = Number(u(i, w)); i += w
       if (i + n > b.length) throw new Error(`a string past the end, at ${at}`)
