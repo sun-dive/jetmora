@@ -4,15 +4,17 @@
  * checked by reading it.
  *
  * The method is grafverse/mint/src/unbasic.ts's: symbolic execution, on a stack of expressions instead of
- * values. What it reads is what basic-jf.mjs emits — its prologue, its loops, its heap — and anything it
- * does not model stops the reading, by name, at the instruction. It never guesses: a listing that quietly
- * skipped an instruction would be believed.
+ * values. Variables are cells at fixed addresses, so `addr @` reads one and `addr !` assigns it; anything
+ * the reader does not model stops the reading, by name, at the instruction. It never guesses: a listing
+ * that quietly skipped an instruction would be believed.
  *
- * Variables come back named by their local slot (`v12`) unless the names are supplied; the compiler
- * returns them as `names`.
+ * A covenant is read by its parts: the pushes at its head are its DIM fields; its frame and rebuild are
+ * found by laying them down again for that layout, and must match byte for byte; what lies between is
+ * the program. Variables come back named by their address (`v24`) unless the names are supplied; the
+ * compiler returns them as `names`.
  */
 import { JF_PUSH_MAX, JF_SMALL0, JF_SMALL_NEG1, JF_LIT, JF_WORD, JF_ESC0, JF_RESERVED0, jf_op_name } from '../tools/ops-jf.mjs'
-import { JF_NVERSION, JF_REVISION } from './basic-jf.mjs'
+import { JF_NVERSION, JF_REVISION, covenantFrame } from './basic-jf.mjs'
 
 const NAME = new Map(Object.entries(JF_WORD).map(([k, v]) => [v, k]))
 const LIT = new Map(Object.entries(JF_LIT).map(([k, v]) => [v, k]))
@@ -94,41 +96,27 @@ const pow = (l, r) => ({ txt: `${wrap(l, 7)} ^ ${wrap(r, 6)}`, bp: 6, simple: fa
 
 /* A cell on the symbolic stack:
      { k: 'n', v, flag, cmp?, l?, r?, istrue? }   a number; `flag` when it is -1 or 0
-     { k: 'a', b } { k: 'u', b }                   the two cells of a byte string b, address then length
-     { k: 'hp' }                                   the heap pointer, where the next bytes will be written */
+     { k: 'a', b } { k: 'u', b }                   the two cells of a byte string b, address then length */
 const N = (v, flag = false, more = {}) => ({ k: 'n', v, flag, ...more })
+const HASH = { SHA256: 32n, HASH256: 32n, HASH160: 20n, RIPEMD160: 20n, SHA1: 20n }
 
 class Stop extends Error {}
 
 /**
- * Read bytecode as BASIC.
- * @param {Uint8Array} bytes
- * @param {{ names?: Record<number, string>, stack?: string[], nVersion?: number }} [opts]
- *   names     local slot → variable name (compileBasic returns this)
- *   stack     what the unlocking script leaves, bottom first, `$` for bytes — as given to the compiler
- *   nVersion  the version the entry names; bytes numbered in another revision are not read as this one
- * @returns {{ lines: string[], covenant: boolean, leave: string[], stack: string[], stoppedAt?: string }}
+ * The reading machine over a run of instructions. `vars` is what the reader knows of memory:
+ * address → { name, type: 'n' | 'b' | 'hidden' }; a store to an address it does not know declares it.
  */
-export function unbasic(bytes, opts = {}) {
+function machine(ins, vars, nameOf) {
   const lines = []
-  if (opts.nVersion !== undefined && opts.nVersion >>> 0 !== JF_NVERSION) {
-    return { lines, covenant: false, leave: [], stack: [],
-      stoppedAt: `the entry names version 0x${(opts.nVersion >>> 0).toString(16)}, and this reader reads JF revision ${JF_REVISION} (0x${JF_NVERSION.toString(16)})` }
-  }
   const say = (depth, s) => lines.push('  '.repeat(depth) + s)
-  let ins
-  try { ins = disassemble(bytes) } catch (e) { return { lines, covenant: false, leave: [], stack: [], stoppedAt: e.message } }
-  lines.push(`VERSION JF ${JF_REVISION}`)
-  const idxAt = new Map(ins.map((x, k) => [x.at, k]))
-  const is = (k, name, arg) => ins[k] && ins[k].name === name && (arg === undefined || ins[k].arg === arg)
-
-  /** local slot → { name, type: 'n'|'b'|'lit'|'hp'|'fl', lit? } */
-  const L = new Map()
-  const nameOf = k => opts.names?.[k] ?? `v${k}`
   const st = []
-  const rs = []
-  let hp = -1, fl = -1, covenant = false
-  const leave = [], inputs = []
+  const written = new Set()          // the names this reading assigns
+  const idxAt = new Map(ins.map((x, k) => [x.at, k]))
+  /* a branch to just past the last instruction read lands at the end of the run */
+  if (ins.length) idxAt.set(ins[ins.length - 1].at + ins[ins.length - 1].size, ins.length)
+  const is = (k, name, arg) => ins[k] !== undefined && ins[k].name === name && (arg === undefined || ins[k].arg === arg)
+  const isNum = (k, v) => ins[k] !== undefined && ins[k].name === 'NUM' && (v === undefined || ins[k].value === BigInt(v))
+  const addrAt = k => Number(ins[k].value)
 
   /** Loops: a BRANCH back to an earlier instruction. top index → { back: index of that BRANCH }. */
   const loops = new Map()
@@ -145,67 +133,54 @@ export function unbasic(bytes, opts = {}) {
   /** A flag made with 0<> renders as the value it was made from, inside AND and OR. */
   const plain = c => c.istrue ?? c.v
 
-  // ── the compiler's idioms, matched instruction for instruction ──
-  /** `2DUP + DUP (LOCAL@) fl > (ABORT") "" (LOCAL!) hp` — the heap pointer moved past what was written. */
-  const commitAt = k => is(k, '2DUP') && is(k + 1, '+') && is(k + 2, 'DUP') && is(k + 3, '(LOCAL@)', fl)
-    && is(k + 4, '>') && is(k + 5, '(ABORT")') && ins[k + 5].data.length === 0 && is(k + 6, '(LOCAL!)', hp)
-  const HASH = { SHA256: 32n, HASH256: 32n, HASH160: 20n, RIPEMD160: 20n, SHA1: 20n }
+  /** The variable at an address, declared by its first store. */
+  const varFor = (addr, type) => {
+    let v = vars.get(addr)
+    if (!v) { v = { name: nameOf(addr), type }; vars.set(addr, v) }
+    if (v.type !== type) throw new Stop(`address ${addr} holds ${v.type === 'b' ? 'bytes' : 'a number'} and is given ${type === 'b' ? 'bytes' : 'a number'}`)
+    return v
+  }
+  const read = (addr, type) => {
+    const v = vars.get(addr)
+    if (!v || v.type === 'hidden') throw new Stop(`address ${addr} is read before anything is stored there`)
+    if (v.type !== type) throw new Stop(`address ${addr} holds ${v.type === 'b' ? 'bytes' : 'a number'}`)
+    return v
+  }
 
-  /**
-   * Straight-line code from k, statement by statement, to `end` (an instruction index).
-   * Structure — IF and FOR — is read where its branches say it is.
-   */
+  /** Straight-line code from k, statement by statement, to `end` (an instruction index). */
   function block(k, end, depth) {
     while (k < end) {
       const x = ins[k]
-      const where = `${x.name} at ${x.at}`
+      const where = `${x.name === 'NUM' ? String(x.value) : x.name} at ${x.at}`
       try {
-        // ── a FOR: its counter, limit and step are stored straight before the top of the loop ──
-        if (x.name === '(LOCAL!)') {
-          let t = k; while (t < end && ins[t].name === '(LOCAL!)') t++
-          if (loops.has(t) && (t - k === 2 || t - k === 3)) { k = forLoop(k, t, depth); continue }
+        // a FOR: its counter, limit and step are stored straight before the top of the loop
+        if (x.name === 'NUM' && is(k + 1, '!')) {
+          let t = k, pairs = 0
+          while (t < end && isNum(t) && is(t + 1, '!')) { t += 2; pairs++ }
+          if (loops.has(t) && (pairs === 2 || pairs === 3)) { k = forLoop(k, t, pairs, depth); continue }
         }
         switch (x.name) {
-          case 'NUM': st.push(N(atom(String(x.value)))); k++; continue
+          case 'NUM': {
+            const next = ins[k + 1]?.name, addr = Number(x.value)
+            if (next === '@') { st.push(N(atom(read(addr, 'n').name))); k += 2; continue }
+            if (next === '2@') { pushBytes(atom(read(addr, 'b').name)); k += 2; continue }
+            if (next === '!') {
+              const val = popNum(), v = varFor(addr, 'n')
+              written.add(v.name); say(depth, `${v.name} = ${val.v.txt}`); k += 2; continue
+            }
+            if (next === '2!') {
+              const b = popBytes(), v = varFor(addr, 'b')
+              written.add(v.name); say(depth, `${v.name} = ${b.txt}`); k += 2; continue
+            }
+            if (next === 'CAT') { const b2 = popBytes(), b1 = popBytes(); pushBytes(call('CAT', b1, b2)); k += 2; continue }
+            if (next === 'NUM2BIN') { const w = popNum(), v = popNum(); pushBytes(call('NUM2BIN', v.v, w.v)); k += 2; continue }
+            if (next === 'PREIMAGE') { pushBytes(call('PREIMAGE')); k += 2; continue }
+            if (HASH[next] !== undefined && isNum(k + 2, addr) && isNum(k + 3, HASH[next])) {
+              pushBytes(call(next, popBytes())); k += 4; continue
+            }
+            st.push(N(atom(String(x.value)))); k++; continue
+          }
           case 'PUSH': pushBytes(atom(`&H${HEX(x.data)}`)); k++; continue
-          case '(LOCAL@)': {
-            const l = L.get(x.arg)
-            if (!l) throw new Stop(`local ${x.arg} is read before anything is stored in it`)
-            if (l.type === 'hp') {
-              const h = Object.keys(HASH).find(f => is(k + 1, 'DUP') && is(k + 2, '>R') && is(k + 3, f) && is(k + 4, 'R>')
-                && is(k + 5, 'NUM') && ins[k + 5].value === HASH[f] && commitAt(k + 6))
-              if (h) { pushBytes(call(h, popBytes())); k += 13; continue }
-              st.push({ k: 'hp' }); k++; continue
-            }
-            if (l.type === 'n') { st.push(N(atom(l.name))); k++; continue }
-            if (!is(k + 1, '(LOCAL@)', x.arg + 1)) throw new Stop(`half of the byte string in local ${x.arg}`)
-            pushBytes(l.type === 'lit' ? l.lit : atom(l.name)); k += 2; continue
-          }
-          case '(LOCAL!)': {
-            const top = st[st.length - 1]
-            if (!top) throw new Stop('a store with nothing to store')
-            if (top.k === 'n') {
-              const v = popNum()
-              const l = L.get(x.arg) ?? { name: nameOf(x.arg), type: 'n' }
-              if (l.type !== 'n') throw new Stop(`local ${x.arg} held bytes and is given a number`)
-              L.set(x.arg, l); say(depth, `${l.name} = ${v.v.txt}`); k++; continue
-            }
-            if (!is(k + 1, '(LOCAL!)', x.arg - 1)) throw new Stop('half of a byte string stored')
-            const b = popBytes()
-            const l = L.get(x.arg - 1) ?? { name: nameOf(x.arg - 1), type: 'b' }
-            if (l.type !== 'b') throw new Stop(`local ${x.arg - 1} is given bytes`)
-            L.set(x.arg - 1, l); say(depth, `${l.name} = ${b.txt}`); k += 2; continue
-          }
-          case 'DUP': {
-            // `DUP 0< (ABORT") 1 SWAP 0 (?DO) OVER * (LOOP) NIP` — the compiler's `^`
-            if (is(k + 1, '0<') && is(k + 2, '(ABORT")') && ins[k + 2].data.length === 0
-              && is(k + 3, 'NUM') && ins[k + 3].value === 1n && is(k + 4, 'SWAP') && is(k + 5, 'NUM') && ins[k + 5].value === 0n
-              && is(k + 6, '(?DO)', ins[k + 10]?.at) && is(k + 7, 'OVER') && is(k + 8, '*') && is(k + 9, '(LOOP)', ins[k + 7].at)
-              && is(k + 10, 'NIP')) {
-              const r = popNum(), l = popNum(); st.push(N(pow(l.v, r.v))); k += 11; continue
-            }
-            throw new Stop('DUP outside a sequence the compiler emits')
-          }
           case 'NIP': {
             const t = pop(), s = pop()
             if (t.k === 'u' && s.k === 'a' && t.b === s.b) { st.push(N(call('SIZE', t.b))); k++; continue }
@@ -213,24 +188,17 @@ export function unbasic(bytes, opts = {}) {
           }
           case 'BIN2NUM': st.push(N(call('BIN2NUM', popBytes()))); k++; continue
           case 'BYTES=': { const b2 = popBytes(), b1 = popBytes(); st.push(N(call('SAMEBYTES', b1, b2), true)); k++; continue }
-          case 'CAT': case 'NUM2BIN': {
-            if (pop().k !== 'hp') throw new Stop(`${x.name} writing somewhere other than the heap`)
-            if (!commitAt(k + 1)) throw new Stop(`${x.name} whose result the heap pointer does not move past`)
-            if (x.name === 'CAT') { const b2 = popBytes(), b1 = popBytes(); pushBytes(call('CAT', b1, b2)) }
-            else { const w = popNum(), v = popNum(); pushBytes(call('NUM2BIN', v.v, w.v)) }
-            k += 8; continue
+          case 'ED25519-CHECKSIG': {
+            const m = popBytes(), p = popBytes(), s = popBytes(); st.push(N(call('ED25519SIG', s, p, m), true)); k++; continue
           }
           case 'SPLIT': {
             const n = popNum(), b = popBytes()
-            const r = ins[k + 1]?.arg, l = ins[k + 3]?.arg
-            if (!(is(k + 1, '(LOCAL!)') && is(k + 2, '(LOCAL!)', r - 1) && is(k + 3, '(LOCAL!)') && is(k + 4, '(LOCAL!)', l - 1)))
+            if (!(isNum(k + 1) && is(k + 2, '2!') && isNum(k + 3) && is(k + 4, '2!'))) {
               throw new Stop('SPLIT whose halves are not stored straight away')
-            for (const s of [l - 1, r - 1]) {
-              const v = L.get(s) ?? { name: nameOf(s), type: 'b' }
-              if (v.type !== 'b') throw new Stop(`local ${s} is given bytes`)
-              L.set(s, v)
             }
-            say(depth, `${L.get(l - 1).name}, ${L.get(r - 1).name} = SPLIT(${b.txt}, ${n.v.txt})`)
+            const r = varFor(addrAt(k + 1), 'b'), l = varFor(addrAt(k + 3), 'b')
+            written.add(l.name); written.add(r.name)
+            say(depth, `${l.name}, ${r.name} = SPLIT(${b.txt}, ${n.v.txt})`)
             k += 5; continue
           }
           case '+': case '-': case '*': case '/': {
@@ -258,6 +226,16 @@ export function unbasic(bytes, opts = {}) {
             else throw new Stop('*/ that is neither FMUL nor FDIV')
             k++; continue
           }
+          case 'DUP': {
+            // `DUP 0< (ABORT") 1 SWAP 0 (?DO) OVER * (LOOP) NIP` — the compiler's `^`
+            if (is(k + 1, '0<') && is(k + 2, '(ABORT")') && ins[k + 2].data.length === 0
+              && isNum(k + 3, 1) && is(k + 4, 'SWAP') && isNum(k + 5, 0)
+              && is(k + 6, '(?DO)', ins[k + 10]?.at) && is(k + 7, 'OVER') && is(k + 8, '*') && is(k + 9, '(LOOP)', ins[k + 7].at)
+              && is(k + 10, 'NIP')) {
+              const r = popNum(), l = popNum(); st.push(N(pow(l.v, r.v))); k += 11; continue
+            }
+            throw new Stop('DUP outside a sequence the compiler emits')
+          }
           case '0<>': { const v = popNum(); st.push(N(call('ISTRUE', v.v), true, { istrue: v.v })); k++; continue }
           case '0=': {
             const v = popNum()
@@ -271,7 +249,7 @@ export function unbasic(bytes, opts = {}) {
         }
         throw new Stop('this reader does not model it')
       } catch (e) {
-        if (e instanceof Stop) throw new Stop(`${where}: ${e.message}`)
+        if (e instanceof Stop && !e.message.includes(' at ')) throw new Stop(`${where}: ${e.message}`)
         throw e
       }
     }
@@ -301,95 +279,158 @@ export function unbasic(bytes, opts = {}) {
 
   /**
    * FOR at the setup stores [k, top): ( from to [step] ) stored to [st] lim i, then the test, the body, and
-   * `i 1+` or `i st +` stored back to i before the BRANCH to the top.
+   * `i @ 1+` or `i @ st @ +` stored back to i before the BRANCH to the top.
    */
-  function forLoop(k, top, depth) {
-    const n = top - k
-    const iK = ins[top - 1].arg, limK = ins[top - 2].arg, stK = n === 3 ? ins[k].arg : -1
+  function forLoop(k, top, pairs, depth) {
+    const iK = addrAt(top - 2), limK = addrAt(top - 4), stK = pairs === 3 ? addrAt(k) : -1
     const vals = []
-    for (let t = 0; t < n; t++) vals.unshift(popNum())  // bottom first: from, to, [step]
+    for (let t = 0; t < pairs; t++) vals.unshift(popNum())   // bottom first: from, to, [step]
     const [vFrom, vTo, vStep] = vals
     const t = top
-    const test = (at, cmp) => is(at, '(LOCAL@)', iK) && is(at + 1, '(LOCAL@)', limK) && is(at + 2, cmp) && is(at + 3, '0=')
+    const test = (at, cmp) => isNum(at, iK) && is(at + 1, '@') && isNum(at + 2, limK) && is(at + 3, '@') && is(at + 4, cmp) && is(at + 5, '0=')
     let body
-    if (test(t, '>') && is(t + 4, '0BRANCH')) body = t + 5
-    else if (test(t, '<') && is(t + 4, '0BRANCH')) {
-      if (stK < 0) throw new Stop('a downward test with no STEP')
-      body = t + 5
-    } else if (stK >= 0 && is(t, '(LOCAL@)', stK) && is(t + 1, '0<') && is(t + 2, '0BRANCH') && test(t + 3, '<')
-      && is(t + 7, 'BRANCH') && test(t + 8, '>') && is(t + 12, '0BRANCH')
-      && ins[t + 2].arg === ins[t + 8].at && ins[t + 7].arg === ins[t + 12].at) body = t + 13
+    if (test(t, '>') && is(t + 6, '0BRANCH')) body = t + 7
+    else if (stK >= 0 && test(t, '<') && is(t + 6, '0BRANCH')) body = t + 7
+    else if (stK >= 0 && isNum(t, stK) && is(t + 1, '@') && is(t + 2, '0<') && is(t + 3, '0BRANCH') && test(t + 4, '<')
+      && is(t + 10, 'BRANCH') && test(t + 11, '>') && is(t + 17, '0BRANCH')
+      && ins[t + 3].arg === ins[t + 11].at && ins[t + 10].arg === ins[t + 17].at) body = t + 18
     else throw new Stop('a loop whose test this reader does not recognise')
     const back = loops.get(top).back
-    const endAt = ins[body - 1].arg
-    if (endAt !== ins[back].at + 3) throw new Stop('a loop whose exit is not straight after its BRANCH back')
+    if (ins[body - 1].arg !== ins[back].at + 3) throw new Stop('a loop whose exit is not straight after its BRANCH back')
     const inc = stK < 0
-      ? is(back - 3, '(LOCAL@)', iK) && is(back - 2, '1+') && is(back - 1, '(LOCAL!)', iK) ? back - 3 : -1
-      : is(back - 4, '(LOCAL@)', iK) && is(back - 3, '(LOCAL@)', stK) && is(back - 2, '+') && is(back - 1, '(LOCAL!)', iK) ? back - 4 : -1
+      ? isNum(back - 5, iK) && is(back - 4, '@') && is(back - 3, '1+') && isNum(back - 2, iK) && is(back - 1, '!') ? back - 5 : -1
+      : isNum(back - 7, iK) && is(back - 6, '@') && isNum(back - 5, stK) && is(back - 4, '@') && is(back - 3, '+')
+        && isNum(back - 2, iK) && is(back - 1, '!') ? back - 7 : -1
     if (inc < 0) throw new Stop('a loop whose counter does not step')
-    const i = L.get(iK) ?? { name: nameOf(iK), type: 'n' }
-    L.set(iK, i)
-    L.set(limK, { name: '#lim', type: 'hidden' })
-    if (stK >= 0) L.set(stK, { name: '#st', type: 'hidden' })
+    const i = varFor(iK, 'n')
+    vars.set(limK, { name: '#lim', type: 'hidden' })
+    if (stK >= 0) vars.set(stK, { name: '#st', type: 'hidden' })
+    written.add(i.name)
     say(depth, `FOR ${i.name} = ${vFrom.v.txt} TO ${vTo.v.txt}${vStep ? ` STEP ${vStep.v.txt}` : ''}`)
     block(body, inc, depth + 1)
     say(depth, `NEXT ${i.name}`)
     return back + 1
   }
 
+  return { lines, st, written, block, is, isNum }
+}
+
+/** A field's value in the head of the script: a number for `%`, its bytes for `$`. */
+const fieldValue = (f, data) => f.bytes ? [...data] : [...data].reverse().reduce((v, b) => (v << 8n) | BigInt(b), 0n)
+
+/**
+ * The covenant in a script, if there is one: its head pushes, the binding that follows them, and a frame
+ * and rebuild that are byte for byte what the compiler lays down for that layout.
+ */
+function readCovenant(bytes, ins, opts) {
+  let n = 0
+  while (ins[n]?.name === 'PUSH' && ins[n].data.length >= 1 && ins[n].data.length <= JF_PUSH_MAX) n++
+  if (n === 0) return null
+  // the binding: the fields from the top down — a number through BIN2NUM — then the key and the signature
+  const kinds = []
+  let k = n
+  for (let i = n - 1; i >= 0; i--) {
+    if (ins[k]?.name === 'BIN2NUM' && ins[k + 1]?.name === 'NUM' && ins[k + 2]?.name === '!') { kinds[i] = { bytes: false, addr: Number(ins[k + 1].value) }; k += 3 }
+    else if (ins[k]?.name === 'NUM' && ins[k + 1]?.name === '2!') { kinds[i] = { bytes: true, addr: Number(ins[k].value) }; k += 2 }
+    else return null
+  }
+  const layoutOf = ownerIdx => ins.slice(0, n).map((x, i) => ({
+    name: i === ownerIdx ? 'owner' : (opts.names?.[kinds[i].addr] ?? `f${i}`), width: x.data.length, bytes: kinds[i].bytes,
+  }))
+  const L = bytes.length
+  const same = (at, part) => part.length <= L - at && part.every((b, j) => bytes[at + j] === b)
+  for (let o = 0; o < n; o++) {
+    if (!kinds[o].bytes || ins[o].data.length !== 20) continue
+    const layout = layoutOf(o)
+    const dollars = layout.filter(f => f.bytes).map(f => f.name)
+    const numbers = layout.filter(f => !f.bytes).map(f => f.name)
+    const { H, frame } = covenantFrame(layout, L, [])
+    if (!same(H, frame)) continue
+    // which fields the program writes decides the rebuild: try each, then hold the reading to it
+    const tries = [[]]
+    for (let m = 0; m < 1 << dollars.length; m++) {
+      const d = dollars.filter((_, j) => m >> j & 1)
+      if (d.length) tries.push(d)
+      if (numbers.length) tries.push([...d, numbers[0]])
+    }
+    for (const written of tries) {
+      const { rebuild } = covenantFrame(layout, L, written)
+      if (!same(L - rebuild.length, rebuild)) continue
+      const start = H + frame.length, stop = L - rebuild.length
+      const vars = new Map(layout.map((f, i) => [kinds[i].addr, { name: f.name, type: f.bytes ? 'b' : 'n' }]))
+      const body = disassemble(bytes.slice(start, stop))
+      const m = machine(body, vars, a => opts.names?.[a] ?? `v${a}`)
+      let stoppedAt
+      try { m.block(0, body.length, 0); if (m.st.length) throw new Stop('values left on the stack at the end of the program') }
+      catch (e) { if (!(e instanceof Stop)) throw e; stoppedAt = e.message }
+      const wrote = layout.filter(f => m.written.has(f.name)).map(f => f.name)
+      const holds = wrote.length === 0 ? written.length === 0
+        : written.length > 0 && dollars.every(d => wrote.includes(d) === written.includes(d))
+      if (!holds && !stoppedAt) continue
+      return {
+        covenant: true, layout, stoppedAt,
+        state: Object.fromEntries(layout.map((f, i) => [f.name, fieldValue(f, ins[i].data)])),
+        lines: [`VERSION JF ${JF_REVISION}`, ...layout.map(f => `DIM ${f.name}${f.bytes ? '$' : '%'}${f.width}`),
+          "REM  rules 1 to 4 are the frame: the owner's signature, value + 1 and nSequence, the script rebuilt", ...m.lines],
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Read bytecode as BASIC.
+ * @param {Uint8Array} bytes
+ * @param {{ names?: Record<number, string>, stack?: string[], nVersion?: number }} [opts]
+ *   names     address → variable name (the compiler returns this)
+ *   stack     what is on the stack when a program starts, bottom first, as given to compileBasic
+ *   nVersion  the version the entry names; bytes numbered in another revision are not read as this one
+ * @returns {{ lines: string[], covenant: boolean, leave: string[], stack: string[], state?: object, stoppedAt?: string }}
+ */
+export function unbasic(bytes, opts = {}) {
+  const lines = [`VERSION JF ${JF_REVISION}`]
+  if (opts.nVersion !== undefined && opts.nVersion >>> 0 !== JF_NVERSION) {
+    return { lines: [], covenant: false, leave: [], stack: [],
+      stoppedAt: `the entry names version 0x${(opts.nVersion >>> 0).toString(16)}, and this reader reads JF revision ${JF_REVISION} (0x${JF_NVERSION.toString(16)})` }
+  }
+  let ins
+  try { ins = disassemble(bytes) } catch (e) { return { lines, covenant: false, leave: [], stack: [], stoppedAt: e.message } }
+  const cov = readCovenant(bytes, ins, opts)
+  if (cov) return { ...cov, leave: [], stack: [] }
+
+  // a program: what is on the stack is bound to variables first, then the program, then what it leaves
+  const vars = new Map()
+  const m = machine(ins, vars, a => opts.names?.[a] ?? `v${a}`)
+  const inputs = opts.stack ?? []
+  let addr = 0, k = 0
   try {
-    let k = 0
-    if (is(0, '(FRAME)')) {
-      // ── the prologue ──
-      let slot = 0
-      for (const raw of opts.stack ?? []) {
-        const b = raw.endsWith('$'), name = b ? raw.slice(0, -1) : raw
-        L.set(slot, { name, type: b ? 'b' : 'n' }); inputs.push(raw); slot += b ? 2 : 1
-      }
-      if (slot !== ins[0].arg) {
-        if ((opts.stack ?? []).length) throw new Stop(`(FRAME) ${ins[0].arg} takes ${ins[0].arg} cells from the unlocking script, and ${slot} are named`)
-        for (let s = 0; s < ins[0].arg; s++) { L.set(s, { name: `in${s}`, type: 'n' }); inputs.push(`in${s}`) }
-      }
-      k = 1
-      while (is(k, 'PUSH') && ins[k].data.length && is(k + 1, '(LOCAL!)') && is(k + 2, '(LOCAL!)', ins[k + 1].arg - 1)) {
-        L.set(ins[k + 2].arg, { name: '#lit', type: 'lit', lit: atom(`&H${HEX(ins[k].data)}`) }); k += 3
-      }
-      if (!(is(k, 'PUSH') && ins[k].data.length === 0 && is(k + 1, 'DROP') && is(k + 2, '(LOCAL!)')
-        && is(k + 3, 'NUM') && ins[k + 3].value === 0n && is(k + 4, '(LOCAL!)')))
-        throw new Stop(`instruction ${k}: the heap is not set up where a compiled program sets it up`)
-      fl = ins[k + 2].arg; hp = ins[k + 4].arg
-      L.set(fl, { name: '#fl', type: 'fl' }); L.set(hp, { name: '#hp', type: 'hp' })
-      k += 5
-      if (is(k, '(LOCAL@)', hp) && is(k + 1, 'PREIMAGE') && commitAt(k + 2) && is(k + 9, '(LOCAL!)') && is(k + 10, '(LOCAL!)', ins[k + 9].arg - 1)) {
-        covenant = true
-        lines.push('REM  a covenant: preimage is the tick\'s own, and running to the end accepts it')
-        L.set(ins[k + 10].arg, { name: 'preimage', type: 'b' })
-        k += 11
-      }
+    const bound = inputs.map(raw => {
+      const bytesIn = raw.endsWith('$'), name = raw.replace(/\$$/, '')
+      const v = { name, type: bytesIn ? 'b' : 'n', addr }
+      addr += bytesIn ? 16 : 8
+      if (bytesIn) { const b = atom(name); m.st.push({ k: 'a', b }, { k: 'u', b }) } else m.st.push(N(atom(name)))
+      return v
+    })
+    for (const v of [...bound].reverse()) {
+      if (!(m.isNum(k, v.addr) && m.is(k + 1, v.type === 'b' ? '2!' : '!'))) throw new Stop(`the program does not begin by storing ${v.name}`)
+      m.st.splice(m.st.length - (v.type === 'b' ? 2 : 1))
+      vars.set(v.addr, { name: v.name, type: v.type })
+      k += 2
     }
-    // ── the epilogue: (UNFRAME), TRUE for a covenant, and what the program leaves before it ──
-    let end = ins.length
-    if (covenant) {
-      if (!(is(end - 1, 'TRUE') && is(end - 2, '(UNFRAME)'))) throw new Stop('a covenant that does not end with its verdict')
-      end -= 2
-    } else if (is(0, '(FRAME)')) {
-      if (!is(end - 1, '(UNFRAME)')) throw new Stop('a program that does not close its frame')
-      end -= 1
+    // what it leaves is the run of fetches at its end: no statement ends with one
+    let lv = ins.length
+    while (lv - 2 >= k && m.isNum(lv - 2) && (m.is(lv - 1, '@') || m.is(lv - 1, '2@'))) lv -= 2
+    m.block(k, lv, 0)
+    const leave = []
+    for (let t = lv; t < ins.length; t += 2) {
+      const v = vars.get(Number(ins[t].value))
+      if (!v) throw new Stop(`address ${ins[t].value} is left on the stack without a value`)
+      leave.push(v.name)
     }
-    // what is left is the run of fetches straight before (UNFRAME): no statement ends with a fetch
-    let lv = end
-    while (lv > k && is(lv - 1, '(LOCAL@)')) lv--
-    block(k, lv, 0)
-    for (let t = lv; t < end; t++) {
-      const l = L.get(ins[t].arg)
-      if (!l) throw new Stop(`local ${ins[t].arg} is left on the stack without a value`)
-      if (l.type === 'b') { if (!is(t + 1, '(LOCAL@)', ins[t].arg + 1)) throw new Stop('half a byte string left'); t++ }
-      leave.push(l.name)
-    }
-    return { lines, covenant, leave, stack: inputs }
+    return { lines: [...lines, ...m.lines], covenant: false, leave, stack: inputs }
   } catch (e) {
     if (!(e instanceof Stop)) throw e
-    return { lines, covenant, leave, stack: inputs, stoppedAt: e.message }
+    return { lines: [...lines, ...m.lines], covenant: false, leave: [], stack: inputs, stoppedAt: e.message }
   }
 }
 

@@ -3,15 +3,16 @@
  * BASIC → jetForth: the compiler for jetmora's covenants.
  *
  * jetmora BASIC is an easy way to write jetForth, as Bitcoin BASIC is an easy way to write Bitcoin
- * Script. The language is BRC-173, the one the Bitcoin compiler takes. Its lexer and parser are copied from
- * grafverse/mint/src/basic.ts (BASIC_VERSION 1.0), which is never edited from here. The emitter is new,
- * because jetForth is a Forth and not Script:
+ * Script: the methods of writing a covenant by hand, behind a BASIC front end. The language is BRC-173,
+ * the one the Bitcoin compiler takes. Its lexer and parser are copied from grafverse/mint/src/basic.ts
+ * (BASIC_VERSION 1.0), which is never edited from here. The emitter writes what the hand-written jetForth
+ * covenants do (server/verify-wired.php):
  *
  *   values      a number is one 64-bit cell; bytes are two cells, ( c-addr u ), the bytes in memory
- *   variables   locals — (LOCAL@) and (LOCAL!) — so the two arms of an IF never have to balance a stack
+ *   variables   cells at fixed addresses, chosen when compiling: `addr @`, `addr !`; bytes `addr 2@`, `addr 2!`
+ *   bytes made  CAT, NUM2BIN, the hashes and PREIMAGE each write to their own fixed place
  *   loops       FOR … NEXT is a loop that branches back to its test. It is never unrolled
  *   truth       a comparison gives -1 or 0: jetForth's TRUE, every bit set
- *   bytes made  CAT, NUM2BIN, the hashes and PREIMAGE write at the heap pointer, which only grows
  *
  * THE HARD RULE carries over from basic.ts as it stands:
  *   1. the compiled script says what the program says: `x = 2 * 3 + 4` emits a multiply and an add;
@@ -19,27 +20,27 @@
  *   3. never improve a released version in place: a new version, proved against the old one.
  *
  * A program names its version as its first statement, `VERSION JF 3`, and the compiler refuses one it
- * does not emit. The bytes are numbered in that revision, and every result carries `nVersion`: the
- * version an entry carrying the script must name, so the interpreter for that revision runs it.
+ * does not emit. Every result carries `nVersion`: the version an entry carrying the script must name.
  *
- * ── THE LAYOUT OF A COMPILED PROGRAM ───────────────────────────────────────────────────────────────
- *   (FRAME) n                     the unlocking script's values become locals 0 … n-1
- *   <literal> (LOCAL!) (LOCAL!)   every byte literal, pushed once, here
- *   PUSH0 DROP (LOCAL!) fl        the floor: the lowest address the literals reached
- *   0 (LOCAL!) hp                 the heap starts at address 0 and grows up to the floor
- *   [PREIMAGE, for a covenant]    → the variable `preimage`
- *   the program
- *   (UNFRAME) [TRUE, for a covenant]
+ * ── A COVENANT ─────────────────────────────────────────────────────────────────────────────────────
+ * The compiler writes the script once. Every rule a tick must meet is in it, and each tick the script
+ * rebuilds itself into the new tip, as a Bitcoin covenant rebuilds itself into its next output:
  *
- * Literals are pushed in the prologue because the interpreter keeps each literal pushed at run time in
- * memory, growing down from the top. Pushed once, before anything else, they sit above a floor that never
- * moves, and every block the heap hands out is checked against it: a program that would reach a literal
- * is refused rather than overwrite it.
+ *   <f0> … <fn>     the DIM fields: the thread's state, as pushes at the head of the script
+ *   the frame       bind the fields and the unlocking pushes ( sig pub ); then rules 1 and 2:
+ *                   signed by the owner over HASH256(PREIMAGE); value + 1, and nSequence equal to it
+ *   the program     the covenant's own rules; it may assign the fields
+ *   the rebuild     rules 3 and 4: the successor is this script with its new state, value + 1,
+ *                   and HASH256 of it is the tick's hashOutputs
+ *   TRUE
+ *
+ * A tick is run as its unlocking script (direct pushes only) followed by this one, and is accepted when
+ * it leaves exactly one non-zero cell.
  */
 import { JF_PUSH_MAX, JF_SMALL0, JF_LIT, JF_WORD } from '../tools/ops-jf.mjs'
 
 /** The version of this compiler. A script's bytes are a function of it. */
-export const BASIC_JF_VERSION = '0.1'
+export const BASIC_JF_VERSION = '0.2'
 
 /** The JF revision the bytes are numbered in: tools/ops-jf.mjs, revision 3. */
 export const JF_REVISION = 3
@@ -68,7 +69,7 @@ const KEYWORDS = new Set([
  * same variable.
  * @returns {{k: string, v: string, n?: number, d?: number[]}[]}
  */
-function lex(src) {
+function lex(src, internal = false) {
   const out = []
   let i = 0
   while (i < src.length) {
@@ -98,8 +99,8 @@ function lex(src) {
       const raw = src.slice(i, j).replace(/_/g, '')
       out.push({ k: 'num', v: raw, n: Number(raw) }); i = j; continue
     }
-    if (/[A-Za-z]/.test(c)) {
-      let j = i; while (j < src.length && /[A-Za-z0-9_]/.test(src[j])) j++
+    if (/[A-Za-z]/.test(c) || (internal && c === '#')) {
+      let j = i + 1; while (j < src.length && /[A-Za-z0-9_]/.test(src[j])) j++
       const w = src.slice(i, j)
       const up = w.toUpperCase()
       if (up === 'REM') { while (i < src.length && src[i] !== '\n') i++; continue }
@@ -324,8 +325,8 @@ function versionStmt(p) {
   return { t: 'version', family: f.v, revision: r.n }
 }
 
-function parseProgram(src) {
-  const p = new Parser(lex(src))
+function parseProgram(src, internal = false) {
+  const p = new Parser(lex(src, internal))
   const prog = parseStmts(p, [])
   if (!p.atEnd()) throw new Error(`BASIC: stopped making sense at ${p.peek()?.v}`)
   return prog
@@ -340,19 +341,16 @@ const W = name => {
 }
 const le = (v, n) => { const o = []; let u = v < 0n ? v + (1n << BigInt(8 * n)) : v
   for (let k = 0; k < n; k++) { o.push(Number(u & 0xffn)); u >>= 8n } return o }
+const hex = d => d.map(b => b.toString(16).padStart(2, '0')).join('')
 
 /** Instructions and labels. Every instruction's size is known when it is laid down, so one pass places the labels. */
 class Code {
   constructor() { this.parts = []; this.nlab = 0 }
   bytes(...b) { this.parts.push(b) }
   word(name) { this.bytes(W(name)) }
-  /** `(LOCAL@) k` or `(LOCAL!) k`. */
-  local(name, k) {
-    if (k > 255) throw new Error('BASIC: more than 256 locals — the program has too many variables')
-    this.bytes(W(name), k)
-  }
   /** The smallest form that holds v. A negative constant is its magnitude and NEGATE, as `-5` is written. */
   num(v) {
+    v = BigInt(v)
     if (v < 0n) { this.num(-v); this.word('NEGATE'); return }
     if (v > I64_MAX) throw new Error(`BASIC: ${v} is past what a 64-bit cell holds`)
     if (v <= 8n) this.bytes(JF_SMALL0 + Number(v))
@@ -363,6 +361,7 @@ class Code {
   }
   /** A byte literal: a direct push to 72 bytes, then STR8 and STR16. Leaves ( c-addr u ). */
   push(d) {
+    this.pushed = (this.pushed ?? 0) + d.length
     if (d.length <= JF_PUSH_MAX) this.bytes(d.length, ...d)
     else if (d.length <= 0xff) this.bytes(JF_LIT.STR8, d.length, ...d)
     else if (d.length <= 0xffff) this.bytes(JF_LIT.STR16, ...le(BigInt(d.length), 2), ...d)
@@ -388,7 +387,7 @@ class Code {
       if (off < -0x8000 || off > 0x7fff) throw new Error('BASIC: a branch longer than 32 KB')
       out.push(p.branch, ...le(BigInt(off), 2))
     }
-    return Uint8Array.from(out)
+    return out
   }
 }
 
@@ -408,96 +407,113 @@ const ARITH = { '+': '+', '-': '-', '*': '*', '/': '/' }
 const CMP = { '=': '=', '<>': '<>', '<': '<', '>': '>' }
 
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
+/** The larger of two lengths; unknown if either is. */
+const join = (a, b) => (a === null || b === null ? null : Math.max(a, b))
+const isNum = t => t === 'num' || t === 'flag'
 const findVersion = ss => ss.some(s => s.t === 'version'
   || (s.t === 'if' && (findVersion(s.then) || findVersion(s.else))) || (s.t === 'for' && findVersion(s.body)))
-const isNum = t => t === 'num' || t === 'flag'
+
+/** Which variables a block assigns. A FOR counter is left out: the IF rule below is about the program's values. */
+function assignedBy(ss, into) {
+  for (const s of ss) {
+    if (s.t === 'let') into.add(s.name)
+    else if (s.t === 'split') { into.add(s.left); into.add(s.right) }
+    else if (s.t === 'for') assignedBy(s.body, into)
+    else if (s.t === 'verify' || s.t === 'dim' || s.t === 'version') continue
+    else { assignedBy(s.then, into); assignedBy(s.else, into) }
+  }
+}
+/** Every name a block writes, FOR counters too. */
+function writes(ss, into) {
+  for (const s of ss) {
+    if (s.t === 'for') { into.add(s.name); writes(s.body, into) }
+    else if (s.t === 'if') { writes(s.then, into); writes(s.else, into) }
+    else if (s.t === 'let' || s.t === 'split') assignedBy([s], into)
+  }
+}
 
 /**
- * @typedef {{ name: string, k: number, type: 'num'|'bytes' }} Local
- * @typedef {{ stack?: string[], consts?: Record<string, number>, leave?: string[] }} BasicEnv
- *   stack   what the unlocking script leaves, bottom first; a name ending in `$` is bytes
- *   consts  named constants, substituted where they are read
- *   leave   variables whose values the program leaves on the stack, in order
+ * Memory, laid out when compiling. Variables are low, so the program's addresses are short to write; the
+ * frame's own variables sit at a fixed place, so the frame's bytes are the same whatever the program is;
+ * the byte strings words make sit above both. Pushed bytes are not in this memory: the interpreter keeps them
+ * in a push space of their own, read-only.
  */
+const FRAME_BASE = 4096, BUF_BASE = 4608
+/** JF revision 3's program memory and push space, and the signature and key a covenant's tick pushes. */
+const MEMORY = 65536, PUSH_MEM = 65536, TICK_PUSHES = 64 + 32
 
-function compile(src, env, covenant) {
-  const prog = parseProgram(src)
-  /* The version is part of the source, so the source hash a genesis commits to fixes it too. */
-  const v = prog.shift()
-  if (!v || v.t !== 'version') {
-    throw new Error(`BASIC: a jetForth program names its version first — VERSION JF ${JF_REVISION}`)
+/**
+ * Emits statements into `code`, allocating every variable and every made byte string a fixed address.
+ * @typedef {{ name: string, addr: number, type: 'num'|'bytes', max: number|null }} Var
+ */
+class Emitter {
+  constructor(consts = {}) {
+    this.consts = consts
+    /** @type {Map<string, Var>} */
+    this.vars = new Map()
+    this.next = 0                // the next free address for a variable
+    this.frameNext = FRAME_BASE  // … for one of the frame's own
+    this.bufNext = BUF_BASE      // … for a byte string a word makes
+    this.code = new Code()
+    this.loops = 0               // how many FOR bodies deep
+    this.open = new Set()        // FOR counters whose loops are open
+    this.hidden = 0
+    this.internal = false        // emitting the frame: its own words and names are allowed
+    this.preMax = 0
+    this.assigned = []
+    this.loopMax = []            // per open FOR: the longest a byte string can be inside it
   }
-  if (v.family !== 'JF' || v.revision !== JF_REVISION) {
-    throw new Error(`BASIC: VERSION ${v.family} ${v.revision} — this compiler emits JF revision ${JF_REVISION}`)
+  declare(name, type, max = null) {
+    const n = type === 'bytes' ? 16 : 8
+    let addr
+    if (this.internal) {
+      addr = this.frameNext; this.frameNext += n
+      if (this.frameNext > BUF_BASE) throw new Error('BASIC: the frame has run out of room for its variables')
+    } else {
+      addr = this.next; this.next += n
+      if (this.next > FRAME_BASE) throw new Error('BASIC: more variables than fit below the frame — the program is too large')
+    }
+    const v = { name, addr, type: type === 'bytes' ? 'bytes' : 'num', max }
+    this.vars.set(name, v)
+    return v
   }
-  if (findVersion(prog)) throw new Error('BASIC: VERSION is said once, as the first statement')
-  if (prog.some(s => s.t === 'dim')) {
-    throw new Error('BASIC: DIM is the state layout, and how a jetmora covenant carries its state is still ' +
-      'to be decided — this version compiles programs without it')
+  /** A fixed place for a byte string a word makes. Inside a loop the place would be rewritten every trip. */
+  site(n, what) {
+    if (this.loops) {
+      throw new Error(`BASIC: ${what} writes its bytes to a place fixed when the program is compiled, and inside a ` +
+        'FOR loop it would write that place again on every trip — work it out before the loop')
+    }
+    if (n === null) throw new Error(`BASIC: ${what} — the length of what it is given is not known when compiling`)
+    const a = this.bufNext; this.bufNext += n
+    return a
   }
-  const consts = env.consts ?? {}
-  const body = new Code()
-  /** @type {Map<string, Local>} */
-  const locals = new Map()
-  let nextLocal = 0
-  const alloc = (name, type) => {
-    const l = { name, k: nextLocal, type: type === 'bytes' ? 'bytes' : 'num' }
-    nextLocal += l.type === 'bytes' ? 2 : 1
-    locals.set(name, l)
-    return l
-  }
+  fetch(v) { this.code.num(v.addr); this.code.word(v.type === 'bytes' ? '2@' : '@') }
+  store(v) { this.code.num(v.addr); this.code.word(v.type === 'bytes' ? '2!' : '!') }
 
-  // The unlocking script's values, bottom first — they become locals 0 … n-1, in that order.
-  for (const raw of env.stack ?? []) {
-    const bytes = raw.endsWith('$'), name = bytes ? raw.slice(0, -1) : raw
-    if (locals.has(name)) throw new Error(`BASIC: ${name} is named twice on the stack`)
-    alloc(name, bytes ? 'bytes' : 'num')
-  }
-  const nIn = nextLocal
-  const hp = alloc('#hp', 'num').k, fl = alloc('#fl', 'num').k
-  if (covenant) {
-    if (locals.has('preimage')) throw new Error('BASIC: preimage is supplied by the covenant frame')
-    alloc('preimage', 'bytes')
-  }
-  /** hex → the local holding that literal's ( c-addr u ). */
-  const literals = new Map()
-  const assigned = []
-  /** FOR counters whose loops are open. */
-  const open = new Set()
-  let hidden = 0
-
-  const fetch = l => { body.local('(LOCAL@)', l.k); if (l.type === 'bytes') body.local('(LOCAL@)', l.k + 1) }
-  const store = l => { if (l.type === 'bytes') body.local('(LOCAL!)', l.k + 1); body.local('(LOCAL!)', l.k) }
-  /** After a word that wrote ( d u ) at the heap pointer: move the pointer past it, refusing to reach the floor. */
-  const commit = () => {
-    body.word('2DUP'); body.word('+'); body.word('DUP'); body.local('(LOCAL@)', fl); body.word('>')
-    body.abortIf(); body.local('(LOCAL!)', hp)
-  }
-
-  const want = (t, what, f) => {
-    if (what === 'num' && !isNum(t)) throw new Error(`BASIC: ${f} works on numbers, and this is bytes — BIN2NUM turns bytes into a number`)
-    if (what === 'bytes' && t !== 'bytes') throw new Error(`BASIC: ${f} works on bytes, and this is a number — NUM2BIN turns a number into bytes`)
+  want(r, what, f) {
+    if (what === 'num' && !isNum(r.t)) throw new Error(`BASIC: ${f} works on numbers, and this is bytes — BIN2NUM turns bytes into a number`)
+    if (what === 'bytes' && r.t !== 'bytes') throw new Error(`BASIC: ${f} works on bytes, and this is a number — NUM2BIN turns a number into bytes`)
+    return r
   }
 
-  /** The value of an expression if it is knowable now — only for the direction of a STEP. */
-  function constEval(e) {
+  /** The value of an expression if it is knowable now — for the direction of a STEP and the width of NUM2BIN. */
+  constEval(e) {
     const cell = v => {
       if (v > I64_MAX || v < -I64_MAX) throw new Error(`BASIC: ${v} is past what a 64-bit cell holds`)
       return v
     }
     switch (e.t) {
       case 'num': return BigInt(Math.round(e.v))
-      case 'var': return has(consts, e.v) ? BigInt(Math.round(consts[e.v])) : undefined
-      case 'neg': { const x = constEval(e.e); return x === undefined ? undefined : -x }
+      case 'var': return has(this.consts, e.v) ? BigInt(Math.round(this.consts[e.v])) : undefined
+      case 'neg': { const x = this.constEval(e.e); return x === undefined ? undefined : -x }
       case 'bin': {
         if (!['+', '-', '*', '/', '^'].includes(e.op)) return undefined
-        const l = constEval(e.l), r = constEval(e.r)
+        const l = this.constEval(e.l), r = this.constEval(e.r)
         if (l === undefined || r === undefined) return undefined
         switch (e.op) {
           case '+': return cell(l + r)
           case '-': return cell(l - r)
           case '*': return cell(l * r)
-          /* BigInt division truncates toward zero, as jetForth's `/` does. */
           case '/':
             if (r === 0n) throw new Error('BASIC: a division by zero the compiler can already see — the tick would fail')
             return l / r
@@ -511,93 +527,108 @@ function compile(src, env, covenant) {
     return undefined
   }
 
-  /** Emit an expression. @returns {'num'|'flag'|'bytes'} */
-  function emit(e) {
+  /** Emit an expression. @returns {{ t: 'num'|'flag'|'bytes', max?: number|null }} */
+  emit(e) {
+    const c = this.code
     switch (e.t) {
-      case 'num': body.num(BigInt(Math.round(e.v))); return 'num'
-      case 'bytes': {
-        const h = e.d.map(b => b.toString(16).padStart(2, '0')).join('')
-        let k = literals.get(h)
-        if (k === undefined) { k = alloc(`#lit${literals.size}`, 'bytes').k; literals.set(h, k) }
-        body.local('(LOCAL@)', k); body.local('(LOCAL@)', k + 1)
-        return 'bytes'
-      }
+      case 'num': c.num(BigInt(Math.round(e.v))); return { t: 'num' }
+      case 'bytes':
+        if (this.loops) {
+          throw new Error('BASIC: a byte literal is copied into the push space each time it runs, and inside a FOR loop ' +
+            'that is every trip — give it a name before the loop')
+        }
+        c.push(e.d); return { t: 'bytes', max: e.d.length }
       case 'var': {
-        if (has(consts, e.v)) { body.num(BigInt(Math.round(consts[e.v]))); return 'num' }
-        const l = locals.get(e.v)
-        if (!l || e.v.startsWith('#')) throw new Error(`BASIC: ${e.v} has no value here — assign it first`)
-        fetch(l)
-        return l.type
+        if (has(this.consts, e.v)) { c.num(BigInt(Math.round(this.consts[e.v]))); return { t: 'num' } }
+        const v = this.vars.get(e.v)
+        if (!v || (e.v.startsWith('#') && !this.internal)) throw new Error(`BASIC: ${e.v} has no value here — assign it first`)
+        this.fetch(v)
+        return { t: v.type, max: v.max }
       }
-      case 'neg': want(emit(e.e), 'num', '-'); body.word('NEGATE'); return 'num'
+      case 'neg': this.want(this.emit(e.e), 'num', '-'); c.word('NEGATE'); return { t: 'num' }
       case 'bin': {
         /* `^` is a multiply loop, because JF revision 3 has no power word. jetForth can express a power,
            so nothing is folded: `2 ^ 8` is this loop too. A negative exponent is refused when it runs.
              ( b e )  DUP 0< (ABORT")  1 SWAP  0 (?DO) OVER * (LOOP)  NIP  ( b^e )                      */
         if (e.op === '^') {
-          want(emit(e.l), 'num', '^'); want(emit(e.r), 'num', '^')
-          body.word('DUP'); body.word('0<'); body.abortIf()
-          body.num(1n); body.word('SWAP'); body.num(0n)
-          const top = body.label(), end = body.label()
-          body.branch('(?DO)', end)
-          body.place(top); body.word('OVER'); body.word('*'); body.branch('(LOOP)', top)
-          body.place(end); body.word('NIP')
-          return 'num'
+          this.want(this.emit(e.l), 'num', '^'); this.want(this.emit(e.r), 'num', '^')
+          c.word('DUP'); c.word('0<'); c.abortIf()
+          c.num(1n); c.word('SWAP'); c.num(0n)
+          const top = c.label(), end = c.label()
+          c.branch('(?DO)', end)
+          c.place(top); c.word('OVER'); c.word('*'); c.branch('(LOOP)', top)
+          c.place(end); c.word('NIP')
+          return { t: 'num' }
         }
         /* AND and OR are BASIC's: true when both (either) are non-zero. A value that is not already a
            flag is made one with 0<> first, so the bitwise word gives the logical answer. */
         if (e.op === 'AND' || e.op === 'OR') {
           for (const side of [e.l, e.r]) {
-            const t = emit(side)
-            want(t, 'num', e.op)
-            if (t !== 'flag') body.word('0<>')
+            const r = this.want(this.emit(side), 'num', e.op)
+            if (r.t !== 'flag') c.word('0<>')
           }
-          body.word(e.op); return 'flag'
+          c.word(e.op); return { t: 'flag' }
         }
-        const tl = emit(e.l), tr = emit(e.r)
-        want(tl, 'num', e.op); want(tr, 'num', e.op)
-        if (ARITH[e.op]) { body.word(ARITH[e.op]); return 'num' }
-        if (CMP[e.op]) { body.word(CMP[e.op]); return 'flag' }
-        if (e.op === '<=') { body.word('>'); body.word('0='); return 'flag' }
-        if (e.op === '>=') { body.word('<'); body.word('0='); return 'flag' }
+        this.want(this.emit(e.l), 'num', e.op); this.want(this.emit(e.r), 'num', e.op)
+        if (ARITH[e.op]) { c.word(ARITH[e.op]); return { t: 'num' } }
+        if (CMP[e.op]) { c.word(CMP[e.op]); return { t: 'flag' } }
+        if (e.op === '<=') { c.word('>'); c.word('0='); return { t: 'flag' } }
+        if (e.op === '>=') { c.word('<'); c.word('0='); return { t: 'flag' } }
         throw new Error(`BASIC: no jetForth word for ${e.op}`)
       }
       case 'call': {
         const f = e.f
         const need = n => { if (e.a.length !== n) throw new Error(`BASIC: ${f} takes ${n} argument(s), got ${e.a.length}`) }
         if (NUMWORD[f]) {
-          const [w, n, r] = NUMWORD[f]
+          const [w, n, t] = NUMWORD[f]
           need(n)
-          for (const x of e.a) want(emit(x), 'num', f)
-          body.word(w); return r
+          for (const x of e.a) this.want(this.emit(x), 'num', f)
+          c.word(w); return { t }
         }
         // trunc(x·y / 2^32) and trunc(x·2^32 / y). The word */ keeps the product at double width, which a
         // 64-bit cell needs: 1.0 × 1.0 is already 2^64.
         if (f === 'FMUL' || f === 'FDIV') {
           need(2)
-          want(emit(e.a[0]), 'num', f)
-          if (f === 'FMUL') { want(emit(e.a[1]), 'num', f); body.num(BASIC_S) }
-          else { body.num(BASIC_S); want(emit(e.a[1]), 'num', f) }
-          body.word('*/'); return 'num'
+          this.want(this.emit(e.a[0]), 'num', f)
+          if (f === 'FMUL') { this.want(this.emit(e.a[1]), 'num', f); c.num(BASIC_S) }
+          else { c.num(BASIC_S); this.want(this.emit(e.a[1]), 'num', f) }
+          c.word('*/'); return { t: 'num' }
         }
-        if (f === 'SIZE') { need(1); want(emit(e.a[0]), 'bytes', f); body.word('NIP'); return 'num' }
-        if (f === 'BIN2NUM') { need(1); want(emit(e.a[0]), 'bytes', f); body.word('BIN2NUM'); return 'num' }
+        if (f === 'SIZE') { need(1); this.want(this.emit(e.a[0]), 'bytes', f); c.word('NIP'); return { t: 'num' } }
+        if (f === 'BIN2NUM') { need(1); this.want(this.emit(e.a[0]), 'bytes', f); c.word('BIN2NUM'); return { t: 'num' } }
         if (f === 'SAMEBYTES') {
-          need(2); want(emit(e.a[0]), 'bytes', f); want(emit(e.a[1]), 'bytes', f)
-          body.word('BYTES='); return 'flag'
+          need(2); this.want(this.emit(e.a[0]), 'bytes', f); this.want(this.emit(e.a[1]), 'bytes', f)
+          c.word('BYTES='); return { t: 'flag' }
         }
         if (f === 'CAT') {
-          need(2); want(emit(e.a[0]), 'bytes', f); want(emit(e.a[1]), 'bytes', f)
-          body.local('(LOCAL@)', hp); body.word('CAT'); commit(); return 'bytes'
+          need(2)
+          const a = this.want(this.emit(e.a[0]), 'bytes', f), b = this.want(this.emit(e.a[1]), 'bytes', f)
+          const max = a.max === null || b.max === null ? null : a.max + b.max
+          c.num(this.site(max, 'CAT')); c.word('CAT'); return { t: 'bytes', max }
         }
         if (f === 'NUM2BIN') {
-          need(2); want(emit(e.a[0]), 'num', f); want(emit(e.a[1]), 'num', f)
-          body.local('(LOCAL@)', hp); body.word('NUM2BIN'); commit(); return 'bytes'
+          need(2)
+          const w = this.constEval(e.a[1])
+          if (w === undefined) throw new Error('BASIC: NUM2BIN — the width has to be a number known when compiling, so its bytes have a place')
+          if (w < 0n || w > 65536n) throw new Error(`BASIC: NUM2BIN — a width of ${w} bytes; it is 0 to 65536`)
+          this.want(this.emit(e.a[0]), 'num', f); this.want(this.emit(e.a[1]), 'num', f)
+          c.num(this.site(Number(w), 'NUM2BIN')); c.word('NUM2BIN'); return { t: 'bytes', max: Number(w) }
         }
         if (HASHES[f]) {
-          need(1); want(emit(e.a[0]), 'bytes', f)
-          body.local('(LOCAL@)', hp); body.word('DUP'); body.word('>R'); body.word(f); body.word('R>')
-          body.num(BigInt(HASHES[f])); commit(); return 'bytes'
+          need(1); this.want(this.emit(e.a[0]), 'bytes', f)
+          const d = this.site(HASHES[f], f)
+          c.num(d); c.word(f); c.num(d); c.num(BigInt(HASHES[f]))
+          return { t: 'bytes', max: HASHES[f] }
+        }
+        // the frame's own words
+        if (this.internal && f === 'PREIMAGE') {
+          need(0); c.num(this.site(this.preMax, 'PREIMAGE')); c.word('PREIMAGE'); return { t: 'bytes', max: this.preMax }
+        }
+        if (this.internal && f === 'DEPTH') { need(0); c.word('DEPTH'); return { t: 'num' } }
+        if (this.internal && f === 'ED25519SIG') {
+          need(3)
+          for (const x of e.a) this.want(this.emit(x), 'bytes', f)
+          c.word('ED25519-CHECKSIG'); return { t: 'flag' }
         }
         if (f === 'SPLIT') {
           throw new Error('BASIC: SPLIT gives back TWO values — a left half and a right half — so it ' +
@@ -612,68 +643,63 @@ function compile(src, env, covenant) {
     }
   }
 
-  /** Assign the value on top to `name`, creating it on first assignment. */
-  function assign(name, t) {
-    if (has(consts, name)) throw new Error(`BASIC: ${name} is a compile-time constant and cannot be assigned`)
-    let l = locals.get(name)
-    if (!l) l = alloc(name, t)
-    else if ((l.type === 'bytes') !== (t === 'bytes')) {
-      throw new Error(`BASIC: ${name} holds ${l.type === 'bytes' ? 'bytes' : 'a number'}, and this gives it ` +
-        `${t === 'bytes' ? 'bytes' : 'a number'} — a variable keeps one kind`)
-    }
-    store(l)
-    if (!assigned.includes(name)) assigned.push(name)
+  /** Assign what `r` describes, on top of the stack, to `name`, creating it on first assignment. */
+  assign(name, r) {
+    if (has(this.consts, name)) throw new Error(`BASIC: ${name} is a compile-time constant and cannot be assigned`)
+    let v = this.vars.get(name)
+    /* Inside a loop a byte string can only be one that existed when the loop began, or part of one, so the
+       longest of those bounds it — whatever trip this is. */
+    const max = r.t === 'bytes' && this.loopMax.length ? join(r.max, this.loopMax[this.loopMax.length - 1]) : r.max
+    if (!v) v = this.declare(name, r.t, r.t === 'bytes' ? max : null)
+    else if ((v.type === 'bytes') !== (r.t === 'bytes')) {
+      throw new Error(`BASIC: ${name} holds ${v.type === 'bytes' ? 'bytes' : 'a number'}, and this gives it ` +
+        `${r.t === 'bytes' ? 'bytes' : 'a number'} — a variable keeps one kind`)
+    } else if (v.type === 'bytes') v.max = join(v.max, max)
+    this.store(v)
+    if (!this.assigned.includes(name)) this.assigned.push(name)
   }
 
-  /** Which variables a block assigns. */
-  function assignedBy(ss, into) {
+  run(ss) {
+    const c = this.code
     for (const s of ss) {
-      if (s.t === 'let') into.add(s.name)
-      else if (s.t === 'split') { into.add(s.left); into.add(s.right) }
-      else if (s.t === 'for') assignedBy(s.body, into)
-      else if (s.t === 'verify') continue
-      else { assignedBy(s.then, into); assignedBy(s.else, into) }
-    }
-  }
-
-  function run(ss) {
-    for (const s of ss) {
-      if (s.t === 'let') { assign(s.name, emit(s.e)); continue }
-      if (s.t === 'verify') {
-        want(emit(s.e), 'num', 'VERIFY')
-        body.word('0='); body.abortIf(); continue
-      }
+      if (s.t === 'let') { this.assign(s.name, this.emit(s.e)); continue }
+      if (s.t === 'verify') { this.want(this.emit(s.e), 'num', 'VERIFY'); c.word('0='); c.abortIf(); continue }
       if (s.t === 'split') {
-        want(emit(s.of), 'bytes', 'SPLIT'); want(emit(s.at), 'num', 'SPLIT')
-        body.word('SPLIT')
+        const of = this.want(this.emit(s.of), 'bytes', 'SPLIT'); this.want(this.emit(s.at), 'num', 'SPLIT')
+        c.word('SPLIT')
         /* Both names are created left first, as written; the right half is on top, so it is stored first. */
-        for (const n of [s.left, s.right]) if (!locals.has(n) && !has(consts, n)) alloc(n, 'bytes')
-        assign(s.right, 'bytes'); assign(s.left, 'bytes')
+        for (const n of [s.left, s.right]) if (!this.vars.has(n) && !has(this.consts, n)) this.declare(n, 'bytes', of.max)
+        this.assign(s.right, { t: 'bytes', max: of.max }); this.assign(s.left, { t: 'bytes', max: of.max })
         continue
       }
-      if (s.t === 'for') { loop(s); continue }
+      if (s.t === 'for') { this.loop(s); continue }
+      if (s.t === 'dim') {
+        throw new Error('BASIC: every DIM comes before the first statement that runs — the state is laid out at ' +
+          'the head of the script, before anything reads it')
+      }
+      if (s.t === 'version') throw new Error('BASIC: VERSION is said once, as the first statement')
       // IF
       /* A variable assigned inside an IF must exist before it, or there is a path on which it was never
          given a value. */
       const names = new Set()
       assignedBy(s.then, names); assignedBy(s.else, names)
       for (const n of names) {
-        if (!locals.has(n)) {
+        if (!this.vars.has(n)) {
           throw new Error(`BASIC: ${n} is assigned inside an IF but does not exist before it — ` +
             'give it a value first, or one path leaves it with none')
         }
       }
-      want(emit(s.cond), 'num', 'IF')
-      const lElse = body.label()
-      body.branch('0BRANCH', lElse)
-      run(s.then)
+      this.want(this.emit(s.cond), 'num', 'IF')
+      const lElse = c.label()
+      c.branch('0BRANCH', lElse)
+      this.run(s.then)
       if (s.else.length) {
-        const lEnd = body.label()
-        body.branch('BRANCH', lEnd)
-        body.place(lElse)
-        run(s.else)
-        body.place(lEnd)
-      } else body.place(lElse)
+        const lEnd = c.label()
+        c.branch('BRANCH', lEnd)
+        c.place(lElse)
+        this.run(s.else)
+        c.place(lEnd)
+      } else c.place(lElse)
     }
   }
 
@@ -681,112 +707,277 @@ function compile(src, env, covenant) {
    * FOR … NEXT, as a loop. From, TO and STEP are worked out once, before the counter is set — BASIC's
    * order — and the test sits at the top, so `FOR i = 1 TO 0` runs the body no times.
    *
-   *   <from> <to> [<step>]  [(LOCAL!) st] (LOCAL!) lim (LOCAL!) i
-   *   top:  i lim > 0=  (i lim < 0= when STEP is negative)      0BRANCH end
+   *   <from> <to> [<step>]  [st !] lim ! i !
+   *   top:  i @ lim @ > 0=  (i @ lim @ < 0= when STEP is negative)      0BRANCH end
    *         body
-   *         i 1+ (LOCAL!) i   or   i st + (LOCAL!) i              BRANCH top
+   *         i @ 1+ i !   or   i @ st @ + i !                              BRANCH top
    *   end:
    *
-   * A STEP whose sign is known only when the script runs tests that sign on every trip. Whether a loop
-   * ends is not the compiler's question: jetmora checks a loop before it runs it.
+   * A STEP whose sign is known only when the script runs tests that sign on every trip. A loop that does
+   * not end is stopped by the interpreter's instruction budget (JF revision 3's, InterpreterJF::TICK_MAX_OPS).
    */
-  function loop(s) {
-    if (open.has(s.name)) throw new Error(`BASIC: FOR ${s.name} is already open — a nested loop needs its own counter`)
-    if (has(consts, s.name)) throw new Error(`BASIC: ${s.name} is a compile-time constant and cannot count a loop`)
-    const old = locals.get(s.name)
+  loop(s) {
+    const c = this.code
+    if (this.open.has(s.name)) throw new Error(`BASIC: FOR ${s.name} is already open — a nested loop needs its own counter`)
+    if (has(this.consts, s.name)) throw new Error(`BASIC: ${s.name} is a compile-time constant and cannot count a loop`)
+    const old = this.vars.get(s.name)
     if (old && old.type === 'bytes') throw new Error(`BASIC: ${s.name} holds bytes, and a FOR counter is a number`)
-    want(emit(s.from), 'num', 'FOR'); want(emit(s.to), 'num', 'TO')
+    this.want(this.emit(s.from), 'num', 'FOR'); this.want(this.emit(s.to), 'num', 'TO')
     let dir = 1
     if (s.step) {
-      want(emit(s.step), 'num', 'STEP')
-      const k = constEval(s.step)
+      this.want(this.emit(s.step), 'num', 'STEP')
+      const k = this.constEval(s.step)
       dir = k === undefined ? 0 : k < 0n ? -1 : 1
     }
-    const i = old ?? alloc(s.name, 'num')
-    hidden++
-    const lim = alloc(`#lim${hidden}`, 'num')
-    const st = s.step ? alloc(`#st${hidden}`, 'num') : null
-    if (st) body.local('(LOCAL!)', st.k)
-    body.local('(LOCAL!)', lim.k)
-    body.local('(LOCAL!)', i.k)
-    if (!assigned.includes(s.name)) assigned.push(s.name)
+    const i = old ?? this.declare(s.name, 'num')
+    this.hidden++
+    const lim = this.declare(`#lim${this.hidden}`, 'num')
+    const st = s.step ? this.declare(`#st${this.hidden}`, 'num') : null
+    if (st) this.store(st)
+    this.store(lim)
+    this.store(i)
+    if (!this.assigned.includes(s.name)) this.assigned.push(s.name)
 
-    const top = body.label(), end = body.label()
-    const test = cmp => { body.local('(LOCAL@)', i.k); body.local('(LOCAL@)', lim.k); body.word(cmp); body.word('0=') }
-    body.place(top)
+    const top = c.label(), end = c.label()
+    const test = cmp => { this.fetch(i); this.fetch(lim); c.word(cmp); c.word('0=') }
+    c.place(top)
     if (dir === 0) {
-      const up = body.label(), go = body.label()
-      body.local('(LOCAL@)', st.k); body.word('0<'); body.branch('0BRANCH', up)
-      test('<'); body.branch('BRANCH', go)
-      body.place(up); test('>')
-      body.place(go)
+      const up = c.label(), go = c.label()
+      this.fetch(st); c.word('0<'); c.branch('0BRANCH', up)
+      test('<'); c.branch('BRANCH', go)
+      c.place(up); test('>')
+      c.place(go)
     } else test(dir > 0 ? '>' : '<')
-    body.branch('0BRANCH', end)
+    c.branch('0BRANCH', end)
 
-    open.add(s.name)
-    run(s.body)
-    open.delete(s.name)
+    const bytesVars = [...this.vars.values()].filter(v => v.type === 'bytes')
+    const M = bytesVars.reduce((m, v) => join(m, v.max), 0)
+    for (const n of (() => { const w = new Set(); writes(s.body, w); return w })()) {
+      const v = this.vars.get(n)
+      if (v && v.type === 'bytes') v.max = join(v.max, M)
+    }
+    this.open.add(s.name); this.loops++; this.loopMax.push(M)
+    this.run(s.body)
+    this.open.delete(s.name); this.loops--; this.loopMax.pop()
 
-    body.local('(LOCAL@)', i.k)
-    if (st) { body.local('(LOCAL@)', st.k); body.word('+') } else body.word('1+')
-    body.local('(LOCAL!)', i.k)
-    body.branch('BRANCH', top)
-    body.place(end)
+    this.fetch(i)
+    if (st) { this.fetch(st); c.word('+') } else c.word('1+')
+    this.store(i)
+    c.branch('BRANCH', top)
+    c.place(end)
   }
 
-  run(prog)
-
-  const leave = env.leave ?? []
-  for (const n of leave) {
-    const l = locals.get(n)
-    if (!l || n.startsWith('#')) throw new Error(`BASIC: ${n} is left on the stack but never given a value`)
-    fetch(l)
+  /** Bind what is on the stack, bottom first, to variables: a number takes one cell, bytes two. */
+  bind(vars, num2bin = new Set()) {
+    for (const v of [...vars].reverse()) {
+      if (num2bin.has(v.name)) this.code.word('BIN2NUM')      // a % field: its pushed bytes, read as a number
+      this.store(v)
+    }
   }
-  body.word('(UNFRAME)')
-  if (covenant) body.word('TRUE')
-
-  // ── the prologue, now that every literal is known ──
-  const pro = new Code()
-  pro.bytes(W('(FRAME)'), nIn)
-  for (const [h, k] of literals) {
-    pro.push(h.match(/../g).map(x => parseInt(x, 16)))
-    pro.local('(LOCAL!)', k + 1); pro.local('(LOCAL!)', k)
-  }
-  pro.bytes(0); pro.word('DROP'); pro.local('(LOCAL!)', fl)          // PUSH0 leaves ( floor 0 )
-  pro.num(0n); pro.local('(LOCAL!)', hp)
-  if (covenant) {
-    const p = locals.get('preimage')
-    pro.local('(LOCAL@)', hp); pro.word('PREIMAGE')
-    pro.word('2DUP'); pro.word('+'); pro.word('DUP'); pro.local('(LOCAL@)', fl); pro.word('>')
-    pro.abortIf(); pro.local('(LOCAL!)', hp)
-    pro.local('(LOCAL!)', p.k + 1); pro.local('(LOCAL!)', p.k)
-  }
-  const a = pro.assemble(), b = body.assemble()
-  const bytes = new Uint8Array(a.length + b.length)
-  bytes.set(a, 0); bytes.set(b, a.length)
-
-  /** local index → name, for the reader. Inputs, variables and counters; not the compiler's own. */
-  const names = {}
-  for (const l of locals.values()) if (!l.name.startsWith('#')) names[l.k] = l.name
-  return { bytes, nVersion: JF_NVERSION, revision: JF_REVISION, compiler: BASIC_JF_VERSION,
-           assigned, names, inputs: env.stack ?? [], leave }
 }
+
+/** variable address → name, for the reader: every variable but the compiler's own. */
+const namesOf = em => Object.fromEntries([...em.vars.values()].filter(v => !v.name.startsWith('#')).map(v => [v.addr, v.name]))
 
 /**
  * Compile a program. What it leaves on the stack is what `env.leave` names.
  * @param {string} src
- * @param {BasicEnv} [env]
+ * @param {{ stack?: string[], consts?: Record<string, number>, leave?: string[] }} [env]
+ *   stack  what is on the stack when it starts, bottom first: `n` a number, `b$` bytes
+ *   leave  variables whose values the program leaves on the stack, in order
  */
-export function compileBasic(src, env = {}) { return compile(src, env, false) }
+export function compileBasic(src, env = {}) {
+  const prog = parseProgram(src)
+  const v = prog.shift()
+  if (!v || v.t !== 'version') throw new Error(`BASIC: a jetForth program names its version first — VERSION JF ${JF_REVISION}`)
+  if (v.family !== 'JF' || v.revision !== JF_REVISION) throw new Error(`BASIC: VERSION ${v.family} ${v.revision} — this compiler emits JF revision ${JF_REVISION}`)
+  if (findVersion(prog)) throw new Error('BASIC: VERSION is said once, as the first statement')
+  if (prog.some(s => s.t === 'dim')) {
+    throw new Error('BASIC: DIM lays out a covenant\'s state at the head of its script — compile it with compileCovenant')
+  }
+  const em = new Emitter(env.consts ?? {})
+  const inputs = (env.stack ?? []).map(raw => {
+    const m = /^([A-Za-z][A-Za-z0-9_]*)(\$)?$/.exec(raw)
+    if (!m) throw new Error(`BASIC: ${raw} is not a name for what is on the stack`)
+    if (em.vars.has(m[1])) throw new Error(`BASIC: ${m[1]} is named twice on the stack`)
+    return em.declare(m[1], m[2] ? 'bytes' : 'num', null)
+  })
+  em.bind(inputs)
+  em.run(prog)
+  const leave = env.leave ?? []
+  for (const n of leave) {
+    const l = em.vars.get(n)
+    if (!l || n.startsWith('#')) throw new Error(`BASIC: ${n} is left on the stack but never given a value`)
+    em.fetch(l)
+  }
+  /* What it pushes goes to the push space as it runs; nothing it pushes is in a loop. Bytes on the stack
+     when it starts are not counted: their length is the caller's. */
+  const memory = em.bufNext, pushed = em.code.pushed ?? 0
+  if (memory > MEMORY) throw new Error(`BASIC: the program needs ${memory} bytes of memory, and the interpreter has ${MEMORY}`)
+  if (pushed > PUSH_MEM) throw new Error(`BASIC: the program pushes ${pushed} bytes, and the push space has ${PUSH_MEM}`)
+  return { bytes: Uint8Array.from(em.code.assemble()), nVersion: JF_NVERSION, revision: JF_REVISION,
+           compiler: BASIC_JF_VERSION, assigned: em.assigned, names: namesOf(em), inputs: env.stack ?? [], leave, memory, pushed }
+}
+
+// ── the covenant ─────────────────────────────────────────────────────────────────────────────────────
+/** BIP143's varint in front of a scriptCode of this length. */
+export const varintSize = n => (n < 253 ? 1 : n < 0x10000 ? 3 : 5)
+/** A preimage is 156 bytes around its scriptCode field (varint ‖ script): 104 before, 52 after. */
+const PREIMAGE_AROUND = 156
 
 /**
- * Compile a covenant: the program runs with `preimage` bound to the tick's own preimage, through the
- * PREIMAGE word, and accepts the tick by running to the end — it leaves exactly TRUE. A VERIFY that fails
- * refuses it.
+ * The frame, as BASIC: rules 1 and 2 before the program, the rebuild (rules 3 and 4) after it. It is
+ * compiled by the same emitter as the program, with the frame's own words — PREIMAGE, DEPTH, ED25519SIG —
+ * and names that start with `#`, which a program cannot write.
+ *   #sig #pub        the unlocking script's two pushes: the owner's 64-byte signature and 32-byte key.
+ *                    ED25519-CHECKSIG is false for any other sizes, and a push left over is still on the
+ *                    stack at the end, where a tick must leave exactly one item
+ *   the preimage     … ‖ scriptCode field [104, u−52) ‖ value 8 ‖ nSequence 4 ‖ hashOutputs 32 ‖ locktime 4 ‖ type 4
+ * `written` is the fields the program assigns. A `$` field the program writes is checked for its width:
+ * a push of another length would leave bytes in the successor that run as code.
+ */
+function frameText(layout, vl, written) {
+  const before = [
+    '#pre = PREIMAGE()',
+    '#head, #tail = SPLIT(#pre, SIZE(#pre) - 52)',
+    '#val, #tail = SPLIT(#tail, 8)',
+    '#seq, #tail = SPLIT(#tail, 4)',
+    '#hout, #tail = SPLIT(#tail, 32)',
+    '#skip, #field = SPLIT(#head, 104)',
+    "REM  rule 2: the next tick, never another — the value plus one, and nSequence that same number",
+    '#next = BIN2NUM(#val) + 1',
+    'VERIFY BIN2NUM(#seq) = #next',
+    "REM  nSequence counts from 1: a value of all ones reads as -1 and would come round to 0",
+    'VERIFY #next > 0',
+    "REM  rule 1: signed by the thread's owner",
+    'VERIFY SAMEBYTES(HASH160(#pub), owner)',
+    'VERIFY ED25519SIG(#sig, #pub, HASH256(#pre))',
+  ]
+  /* Rules 3 and 4: the successor is this script, its state rebuilt. Untouched, the scriptCode field is
+     already the successor's script with its length in front, as an output carries it. */
+  if (!layout.some(f => written.has(f.name))) {
+    return { before, after: ['VERIFY SAMEBYTES(HASH256(CAT(NUM2BIN(#next, 8), #field)), #hout)'] }
+  }
+  const H = layout.reduce((n, f) => n + 1 + f.width, 0)
+  const piece = f => `CAT(&H${hex([f.width])}, ${f.bytes ? f.name : `NUM2BIN(${f.name}, ${f.width})`})`
+  const after = [`#vi, #rest = SPLIT(#field, ${vl})`, `#old, #suf = SPLIT(#rest, ${H})`]
+  for (const f of layout) if (f.bytes && written.has(f.name)) after.push(`VERIFY SIZE(${f.name}) = ${f.width}`)
+  /* A % field is unsigned. Below 8 bytes NUM2BIN refuses a negative; at 8 a negative cell fits, so it is checked. */
+  for (const f of layout) if (!f.bytes && f.width === 8 && written.has(f.name)) after.push(`VERIFY ${f.name} >= 0`)
+  layout.forEach((f, i) => after.push(i === 0 ? `#st = ${piece(f)}` : `#st = CAT(#st, ${piece(f)})`))
+  after.push('VERIFY SAMEBYTES(HASH256(CAT(CAT(CAT(NUM2BIN(#next, 8), #vi), #st), #suf)), #hout)')
+  return { before, after }
+}
+
+/** The DIM fields, checked against what a jetForth push and cell can carry. */
+function covenantLayout(prog) {
+  const layout = []
+  let running = false
+  const body = []
+  for (const s of prog) {
+    if (s.t !== 'dim') { running = true; body.push(s); continue }
+    if (running) {
+      throw new Error('BASIC: every DIM comes before the first statement that runs — the state is laid out at ' +
+        'the head of the script, before anything reads it')
+    }
+    for (const f of s.fields) {
+      if (layout.some(g => g.name === f.name)) throw new Error(`BASIC: ${f.name} is DIMmed twice`)
+      if (f.bytes && f.width > JF_PUSH_MAX) throw new Error(`BASIC: DIM ${f.name}$${f.width} — a field is one direct push, at most ${JF_PUSH_MAX} bytes`)
+      if (!f.bytes && f.width > 8) throw new Error(`BASIC: DIM ${f.name}%${f.width} — a number is a 64-bit cell, so at most 8 bytes`)
+      layout.push(f)
+    }
+  }
+  const owner = layout.find(f => f.name === 'owner')
+  if (!owner || !owner.bytes || owner.width !== 20) {
+    throw new Error("BASIC: a thread is owned — DIM owner$20, the HASH160 of the owner's key (rule 1)")
+  }
+  return { layout, body }
+}
+
+/** One field's bytes, as the head of the script pushes them. */
+function fieldBytes(f, v) {
+  if (v === undefined) throw new Error(`BASIC: no value for the field ${f.name}`)
+  if (f.bytes) {
+    const d = [...v]
+    if (d.length !== f.width) throw new Error(`BASIC: ${f.name} is ${d.length} bytes, but DIM says ${f.width}`)
+    return d
+  }
+  const n = BigInt(v)
+  if (n < 0n || n >= 1n << BigInt(8 * f.width) || n > I64_MAX) {
+    throw new Error(`BASIC: ${f.name} = ${v} does not fit ${f.width} bytes — widen the DIM`)
+  }
+  return le(n, f.width)
+}
+
+/** Lay the script down for a guess at its own length; `compileCovenant` repeats until the guess holds. */
+function buildCovenant(layout, body, state, L, written, consts) {
+  const em = new Emitter(consts)
+  const fields = layout.map(f => em.declare(f.name, f.bytes ? 'bytes' : 'num', f.bytes ? f.width : null))
+  em.internal = true
+  const sig = em.declare('#sig', 'bytes', 64), pub = em.declare('#pub', 'bytes', 32)
+  em.preMax = PREIMAGE_AROUND + varintSize(L) + L
+  const { before, after } = frameText(layout, varintSize(L), written)
+
+  const head = new Code()
+  for (const f of layout) head.push(fieldBytes(f, state[f.name]))
+  /* The frame is laid out before the program, so its addresses are the same whatever the program is.
+     Emission order is head, frame, program, rebuild; allocation order is frame, rebuild, program. */
+  const frame = em.code
+  em.bind([sig, pub, ...fields], new Set(layout.filter(f => !f.bytes).map(f => f.name)))
+  em.run(parseProgram(before.join('\n'), true))
+  const rebuildCode = em.code = new Code()
+  em.run(parseProgram(after.join('\n'), true))
+  em.code.word('TRUE')
+  em.internal = false
+  const prog = em.code = new Code()
+  em.run(body)
+  const parts = { head: head.assemble(), frame: frame.assemble(), prog: prog.assemble(), rebuild: rebuildCode.assemble() }
+  /* Literals go to the push space as they run, after the tick's own pushes; nothing a covenant pushes is in
+     a loop, so their total is known now. */
+  const memory = em.bufNext, pushed = TICK_PUSHES + [head, frame, prog, rebuildCode].reduce((n, c) => n + (c.pushed ?? 0), 0)
+  return { parts, bytes: Uint8Array.from([...parts.head, ...parts.frame, ...parts.prog, ...parts.rebuild]), em, memory, pushed }
+}
+
+/**
+ * Compile a covenant. `env.state` gives each DIM field its value in this thread: a number for `%`, an
+ * array of bytes for `$`. The fields are the head of the script, so two threads of one program differ
+ * only there, and every tick rebuilds them.
  * @param {string} src
- * @param {{ stack?: string[], consts?: Record<string, number> }} [env]
+ * @param {{ state?: Record<string, number|bigint|number[]|Uint8Array>, consts?: Record<string, number> }} [env]
  */
 export function compileCovenant(src, env = {}) {
-  if (env.leave?.length) throw new Error('BASIC: a covenant leaves its verdict and nothing else')
-  return compile(src, env, true)
+  const prog = parseProgram(src)
+  const v = prog.shift()
+  if (!v || v.t !== 'version') throw new Error(`BASIC: a jetForth program names its version first — VERSION JF ${JF_REVISION}`)
+  if (v.family !== 'JF' || v.revision !== JF_REVISION) throw new Error(`BASIC: VERSION ${v.family} ${v.revision} — this compiler emits JF revision ${JF_REVISION}`)
+  if (findVersion(prog)) throw new Error('BASIC: VERSION is said once, as the first statement')
+  const { layout, body } = covenantLayout(prog)
+  const all = new Set(); writes(body, all)
+  const written = new Set(layout.filter(f => all.has(f.name)).map(f => f.name))
+  /* The script's own length is inside it, twice over: in the preimage's size and in the varint the
+     rebuild steps past. Build, measure, build again until the length holds, as a covenant is built by hand. */
+  let L = 0
+  for (let k = 0; k < 8; k++) {
+    const r = buildCovenant(layout, body, env.state ?? {}, L, written, env.consts ?? {})
+    if (r.bytes.length === L) {
+      if (r.memory > MEMORY) {
+        throw new Error(`BASIC: the covenant needs ${r.memory} bytes of memory, and the interpreter has ${MEMORY}`)
+      }
+      if (r.pushed > PUSH_MEM) throw new Error(`BASIC: the covenant pushes ${r.pushed} bytes, and the push space has ${PUSH_MEM}`)
+      return { bytes: r.bytes, nVersion: JF_NVERSION, revision: JF_REVISION, compiler: BASIC_JF_VERSION,
+               layout, written: [...written], assigned: r.em.assigned, names: namesOf(r.em), memory: r.memory, pushed: r.pushed }
+    }
+    L = r.bytes.length
+  }
+  throw new Error('BASIC: the script\'s length did not settle — it sits where a varint changes size')
+}
+
+/**
+ * The frame and the rebuild of a covenant with this layout and length, as bytes: for the reader, which
+ * finds them in a script by laying them down again. `written` is the fields the program assigns.
+ */
+export function covenantFrame(layout, L, written) {
+  const state = Object.fromEntries(layout.map(f => [f.name, f.bytes ? new Array(f.width).fill(0) : 0]))
+  const { parts } = buildCovenant(layout, [], state, L, new Set(written), {})
+  return { H: parts.head.length, frame: parts.frame, rebuild: parts.rebuild }
 }

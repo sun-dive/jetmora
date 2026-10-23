@@ -132,7 +132,11 @@ const prog = (name, src, env, inputs, want) => progs.push({ name, src: V + src, 
   prog('…while as NUMBERS the two are equal', 'f = NUM2BIN(0, 4)\nx = BIN2NUM(f) = 0', env, [0, 0], [-1n])
   prog('SPLIT then CAT gives back what went in', 'f = NUM2BIN(a, 6)\nl, r = SPLIT(f, 2)\nx = SAMEBYTES(CAT(l, r), f)', env, [123456, 0], [-1n])
   prog('a hex literal is bytes', 'x = BIN2NUM(&Hdeadbeef)', env, [0, 0], [0xefbeadden])
-  prog('one literal used twice is stored once', 'x = SAMEBYTES(&H0102, &H0102) + SIZE(CAT(&H0102, &H03))', env, [0, 0], [2n])
+  prog('literals compared and joined', 'x = SAMEBYTES(&H0102, &H0102) + SIZE(CAT(&H0102, &H03))', env, [0, 0], [2n])
+  prog('a byte string made before a loop and read inside it', 'h = HASH256(&H01)\nx = 0\nFOR i = 1 TO 3\n x = x + SIZE(h)\nNEXT i', env, [0, 0], [96n])
+  prog('★ a swap inside a loop: what a variable can hold is everything it may be given on any trip',
+    `p = &H01\nq = &H${'ab'.repeat(40)}\nt = p\nFOR i = 1 TO 2\n t = p\n p = q\n q = t\nNEXT i\nc = CAT(t, &H03)\nd = HASH256(&H04)\nx = SAMEBYTES(c, CAT(&H${'ab'.repeat(40)}, &H03))`, env, [0, 0], [-1n])
+  prog('SPLIT inside a loop: no bytes are made, so no place is rewritten', 'bs = &H0102030405\nx = 0\nFOR i = 1 TO 4\n l, bs = SPLIT(bs, 1)\n x = x + BIN2NUM(l)\nNEXT i', env, [0, 0], [10n])
   prog('a byte string from the unlocking script', 'x = SIZE(k) + BIN2NUM(k)', { stack: ['k$'], leave: ['x'] }, ['0201'], [258n + 2n])
   const v = Buffer.from('jetmora'), d = hex(v)
   const want = (alg, n) => hex(h(alg)(alg === 'sha256' && n === 'HASH256' ? h('sha256')(v) : n === 'HASH160' ? h('sha256')(v) : v))
@@ -143,6 +147,9 @@ const prog = (name, src, env, inputs, want) => progs.push({ name, src: V + src, 
   prog('SHA1', `x = SHA1(&H${d})`, env, [0, 0], [hex(h('sha1')(v))])
   prog('a byte string left on the stack', 'x = CAT(&H01, NUM2BIN(a, 2))', env, [0x0302, 0], ['010203'])
 }
+
+// 5b. a program that ends with an IF and leaves nothing
+prog('an IF with no ELSE at the very end', 'p = 0\nIF a > b THEN p = 1', { stack: ['a', 'b'] }, [3, 4], [])
 
 // 6. `^` is a multiply loop: JF revision 3 has no power word
 {
@@ -163,9 +170,7 @@ const prog = (name, src, env, inputs, want) => progs.push({ name, src: V + src, 
 prog('a numbered program', '10 x = a + b\n20 x = x * 2', { stack: ['a', 'b'], leave: ['x'] }, [3, 4], [14n])
 prog('a numbered FOR loop', '10 FOR i = 1 TO 3\n20 x = x + i\n30 NEXT i', { stack: ['x'], leave: ['x'] }, [0], [6n])
 
-// 8. the heap stops at the literals, and the machine stops a loop that does not
-prog('★ bytes that would reach the literals are refused', `L = &H${'ab'.repeat(64)}\nFOR i = 1 TO 100000\n y = CAT(L, L)\nNEXT i`, {}, [], 'refused')
-prog('★ bytes past the end of memory are refused', 'x = &H01\nFOR i = 1 TO 100\n x = CAT(x, x)\nNEXT i', {}, [], 'refused')
+// 8. the machine stops a loop that does not end
 prog('★ a loop past the operation budget is refused by the interpreter', 'FOR i = 1 TO 1000000000\n s = s + 1\nNEXT i', { stack: ['s'], leave: ['s'] }, [0], 'refused')
 
 // ── compile, and run each in both interpreters ───────────────────────────────────────────────────────
@@ -187,7 +192,7 @@ for (const [k, p] of progs.entries()) {
     got = []; let s = 0
     for (const _ of p.c.leave) {
       const isBytes = typeof p.want !== 'string' && typeof p.want[got.length] === 'string'
-      if (isBytes) { const [a, u] = [stack[s], stack[s + 1]]; got.push(hex(vm.mem.slice(Number(a), Number(a + u)))); s += 2 }
+      if (isBytes) { const [a, u] = [stack[s], stack[s + 1]]; got.push(hex(vm.read(a, u))); s += 2 }
       else { got.push(stack[s]); s += 1 }
     }
   } catch (e) { js = { error: hex(Buffer.from(e.message)) }; got = 'refused' }
@@ -205,8 +210,6 @@ ok(right === progs.length, `★★ ${right}/${progs.length} programs compute wha
 ok(agree === progs.length, `★★ the JavaScript and PHP interpreters leave the same stack, or raise the same refusal, on all ${agree}/${progs.length}`)
 {
   const why = start => Buffer.from(php[progs.findIndex(p => p.name.startsWith(start))].error ?? '', 'hex').toString()
-  ok(why('★ bytes that would reach') === 'ABORT', '…heap blocks reaching the literals: refused by the compiled floor check')
-  ok(why('★ bytes past the end').startsWith('memory out of range'), '…a block past the end of memory: refused by the interpreter\'s own bound')
   ok(why('★ a loop past') === 'op budget exhausted', '…and the endless loop is stopped by the op budget')
 }
 
@@ -233,7 +236,13 @@ const refusals = [
   ['= on bytes', 'x = &H01 = &H01', {}, 'numbers'],
   ['a variable changing kind', 'x = 1\nx = &H01', {}, 'one kind'],
   ['assigning a constant', 'K = 1', { consts: { K: 2 } }, 'constant'],
-  ['DIM, until jetmora\'s state is decided', 'DIM v%5\nv = 1', {}, 'state'],
+  ['DIM outside a covenant', 'DIM v%5\nv = 1', {}, 'compileCovenant'],
+  ['★ a byte literal inside a FOR: it would be copied into the push space on every trip', 'x = 0\nFOR i = 1 TO 3\n x = x + SIZE(&H01)\nNEXT i', {}, 'byte literal'],
+  ['★ CAT inside a FOR: its place would be rewritten on every trip', 'b = &H01\nFOR i = 1 TO 3\n b = CAT(b, b)\nNEXT i', {}, 'every trip'],
+  ['★ a hash inside a FOR, the same', 'b = &H01\nFOR i = 1 TO 3\n b = HASH256(b)\nNEXT i', {}, 'every trip'],
+  ['NUM2BIN with a width known only when it runs', 'b = NUM2BIN(5, w)', { stack: ['w'] }, 'width'],
+  ['★ NUM2BIN with a negative width', 'b = &H00\nIF 1 = 0 THEN\n b = NUM2BIN(5, 0 - 32)\nEND IF', {}, '0 to 65536'],
+  ['CAT of bytes whose length is not known', 'b = CAT(k, k)', { stack: ['k$'] }, 'not known'],
   ['CHECKSIG, until its BASIC form is decided', 'x = CHECKSIG(&H01, &H02)', {}, 'digest'],
 ]
 for (const [what, src, env, needle] of refusals) {
@@ -287,7 +296,7 @@ const reg = JSON.parse(execFileSync('php', ['-r',
   `require '${join(ROOT, 'server/dispatch.php')}'; echo json_encode(['jf' => $GLOBALS['JETMORA_SETS']['JF']['revisions'], 'v' => version_build('JF', ${JF_REVISION})]);`]).toString())
 ok(reg.v === JF_NVERSION, `nVersion 0x${JF_NVERSION.toString(16)} is version_build('JF', ${JF_REVISION})`)
 ok(reg.jf.includes(JF_REVISION), `…and dispatch.php serves JF revision ${JF_REVISION}`)
-ok(progs.every(p => p.c.nVersion === JF_NVERSION) && compileCovenant(V + 'x = 1').nVersion === JF_NVERSION,
+ok(progs.every(p => p.c.nVersion === JF_NVERSION) && compileCovenant(V + 'DIM owner$20\nx = 1', { state: { owner: new Array(20).fill(1) } }).nVersion === JF_NVERSION,
   'every compiled program carries it')
 
 // ── read back ────────────────────────────────────────────────────────────────────────────────────────
