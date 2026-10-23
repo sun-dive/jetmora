@@ -80,9 +80,13 @@ final class InterpreterJF
   private int $sigOps = 0;
   /** Where the push space starts. Program memory is below it, so the two can never overlap. A function at INVOKE
    *  depth d (the INVOKEs active: the lock is 0) has its own from PUSH_BASE × (d + 1), so a push address it returns
-   *  is out of range in its caller. A program-memory address it returns names the caller's own memory. */
+   *  is out of range in its caller. */
   public const PUSH_BASE = 16777216;
   private int $pbase = self::PUSH_BASE;
+  /** The lock's program memory is at 0. A function's is at its push space + MEM_OFFSET, so a memory address it
+   *  returns is out of range in its caller too (his call, 23 Oct). A function finds its memory with HERE. */
+  public const MEM_OFFSET = 8388608;
+  private int $mbase = 0;
 
   /** Signature/preimage context. ⚠ Optional: a bare script has no transaction. */
   private ?string $preimage = null;
@@ -143,11 +147,13 @@ final class InterpreterJF
   private function flag(bool $b): void { $this->pushI($b ? -1 : 0); }   // Forth TRUE is all bits set
 
   // ── memory ─────────────────────────────────────────────────────────────────────────────────────────
-  private function bounds(int $addr, int $len): void {
-    if ($addr < 0 || $len < 0 || $addr + $len > $this->memSize)
+  /** The offset of $addr in program memory, which lies at mbase. */
+  private function bounds(int $addr, int $len): int {
+    if ($addr < $this->mbase || $len < 0 || $addr - $this->mbase > $this->memSize - $len)
       throw new JfScriptError("memory out of range: addr=$addr len=$len size=" . $this->memSize);
     // made, zeroed, when first touched: a function that never touches memory costs nothing for it
     if ($this->mem === '') $this->mem = str_repeat("\x00", $this->memSize);
+    return $addr - $this->mbase;
   }
   /** $a + $off as an address. Past PHP_INT_MAX it is out of range, said as the JavaScript port says it. */
   private function at(int $a, int $off): int {
@@ -160,11 +166,11 @@ final class InterpreterJF
     return self::cell(gmp_import(strrev($le), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN));
   }
   private function store(int $addr, GMP $v): void {
-    $this->bounds($addr, 8);
+    $o = $this->bounds($addr, 8);
     $u  = self::u(self::cell($v));
     $be = gmp_sign($u) === 0 ? '' : gmp_export($u, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
     $le = strrev(str_pad($be, 8, "\x00", STR_PAD_LEFT));
-    for ($k = 0; $k < 8; $k++) $this->mem[$addr + $k] = $le[$k];
+    for ($k = 0; $k < 8; $k++) $this->mem[$o + $k] = $le[$k];
   }
   private function read(int $addr, int $len): string { return $this->view($addr, $len); }
   /** Bytes from program memory, or from wholly inside the push space. Writes never reach the push space. */
@@ -174,9 +180,9 @@ final class InterpreterJF
       $this->charge($len);
       return substr($this->pmem, $addr - $this->pbase, $len);
     }
-    $this->bounds($addr, $len);
+    $o = $this->bounds($addr, $len);
     $this->charge($len);
-    return substr($this->mem, $addr, $len);
+    return substr($this->mem, $o, $len);
   }
   /** Each span read, written or pushed costs one more instruction for every whole 64 bytes in it (his call, 23 Oct).
    *  A function's channel bytes are charged when INVOKE reads its input span and when its output is pushed on return. */
@@ -186,11 +192,11 @@ final class InterpreterJF
   }
   private function write(int $addr, string $b): void {
     $n = strlen($b);
-    $this->bounds($addr, $n);
+    $o = $this->bounds($addr, $n);
     $this->charge($n);
     // byte by byte is faster up to about 128 bytes; above that substr_replace costs about 1 us at any length
-    if ($n <= 128) { for ($k = 0; $k < $n; $k++) $this->mem[$addr + $k] = $b[$k]; }
-    else $this->mem = substr_replace($this->mem, $b, $addr, $n);
+    if ($n <= 128) { for ($k = 0; $k < $n; $k++) $this->mem[$o + $k] = $b[$k]; }
+    else $this->mem = substr_replace($this->mem, $b, $o, $n);
   }
   /** `( c-addr u -- )` popped as a pair, u on top. */
   private function popSpan(): string { $u = $this->popInt(); $a = $this->popInt(); return $this->read($a, $u); }
@@ -297,7 +303,7 @@ final class InterpreterJF
       $vm->ds = $vm->rs = $vm->frames = $vm->chan = [];
       $vm->opCount = 0; $vm->depth = 0; $vm->frameCells = 0; $vm->held = 0; $vm->sigOps = 0;
       $vm->mem = '';
-      $vm->pmem = ''; $vm->pbase = self::PUSH_BASE;
+      $vm->pmem = ''; $vm->pbase = self::PUSH_BASE; $vm->mbase = 0;
       $vm->exec($unlocking, 0, true);
       // the second run: the data stack and the pushed bytes carry over, and the op and signature counts run on
       $vm->rs = $vm->frames = []; $vm->depth = 0; $vm->frameCells = 0;
@@ -339,7 +345,7 @@ final class InterpreterJF
     $this->ds = $this->rs = $this->frames = $this->chan = [];
     $this->opCount = 0; $this->depth = 0; $this->frameCells = 0; $this->held = 0; $this->sigOps = 0;
     $this->mem = '';
-    $this->pmem = ''; $this->pbase = self::PUSH_BASE;
+    $this->pmem = ''; $this->pbase = self::PUSH_BASE; $this->mbase = 0;
     $i = 0;
     $this->parseDefs($script, $i);
     $this->exec($script, $i, /* covenant tier */ true);
@@ -394,6 +400,8 @@ final class InterpreterJF
         //    outstanding, it is a word the COMPILER executes.
         // ★ The output words RUN when the function declared a channel. `TYPE` `CR` `SPACE` `SPACES`
         //   are EMIT loops in every Forth, so refusing them while allowing EMIT would be arbitrary.
+        // ★ HERE ( -- addr ): where a function's program memory starts (CORE 6.1.1650, with no ALLOT)
+        if ($word === 'HERE' && $this->chan) { $this->pushI($this->mbase); continue; }
         if ($word !== false && isset(self::CHANNEL_WORDS[$word]) && $this->chan) {
           $this->channel($word);
           continue;                      // ⚠ exec() drives $i itself; step() is not on this path
@@ -946,10 +954,10 @@ final class InterpreterJF
    * call gives the function only what it declares, and stdForth has no word that reaches back:
    *   stacks  a fresh data stack holding exactly its n_in cells, a fresh return stack, fresh locals. The n_out
    *           cells must be all it leaves; they are appended to the caller's stack.
-   *   memory  fresh program memory, zeroed (made when first touched): a bare `@` reads nothing of the caller's.
    *   pushes  an empty push space of its own, from PUSH_BASE × (d + 1) at INVOKE depth d (the INVOKEs active: the
-   *           lock is 0). No pushed key reaches it by address: a caller hands it bytes only through its input
-   *           span. A push address it returns is out of range in its caller; a memory address names the caller's.
+   *           lock is 0). No pushed key reaches it by address: a caller hands it bytes only through its input span.
+   *   memory  fresh program memory, zeroed (made when first touched), at its push space + MEM_OFFSET; HERE gives
+   *           its start. An address it returns, push or memory, is out of range in its caller.
    *   input   the declared input span (in_max), held in its channel for KEY and ACCEPT.
    *   output  the declared channel (out_max), checked as each byte is written against out_max and against the
    *           room left in the caller's push space, where it lands on return as ( c-addr u ).
@@ -967,7 +975,7 @@ final class InterpreterJF
     if (++$this->depth > $this->maxDepth) { $this->depth--; throw new JfScriptError('call depth exceeded'); }
 
     $savedRs = $this->rs; $savedFr = $this->frames;           // the function gets fresh ones: no copy needed
-    $savedFc = $this->frameCells; $savedHeld = $this->held; $savedBase = $this->pbase;
+    $savedFc = $this->frameCells; $savedHeld = $this->held; $savedBase = $this->pbase; $savedMbase = $this->mbase;
     $chanDepth = count($this->chan);
     $taken = [];                                             // the caller's cells this call took, bottom first
     try {
@@ -993,6 +1001,7 @@ final class InterpreterJF
       $this->chan[] = ['in' => $inBytes, 'pos' => 0, 'inmax' => $inMax,
                        'out' => '', 'max' => $outMax, 'room' => $this->pushSize - strlen($savedP)];
       $this->pbase = self::PUSH_BASE * (count($this->chan) + 1);
+      $this->mbase = $this->pbase + self::MEM_OFFSET;
 
       $this->exec($d['body'], 0, /* covenant */ false);
       if (count($this->ds) !== $d['n_out'])
@@ -1001,7 +1010,7 @@ final class InterpreterJF
       if ($this->frames) throw new JfScriptError("INVOKE $ix: unbalanced locals frame");
       $results = $this->ds;
       $emitted = array_pop($this->chan)['out'];
-      $this->mem = $savedMem; $this->pmem = $savedP; $this->pbase = $savedBase;
+      $this->mem = $savedMem; $this->pmem = $savedP; $this->pbase = $savedBase; $this->mbase = $savedMbase;
       $this->frameCells = $savedFc; $this->held = $savedHeld;
     } catch (Throwable $e) {
       // ⚠ A failed call leaves NOTHING behind — not a partial stack, not a half-written channel,
@@ -1011,7 +1020,7 @@ final class InterpreterJF
       if (isset($callerDs)) $this->ds = $callerDs;
       foreach ($taken as $c) $this->ds[] = $c;
       $this->rs = $savedRs; $this->frames = $savedFr;
-      $this->frameCells = $savedFc; $this->held = $savedHeld; $this->pbase = $savedBase;
+      $this->frameCells = $savedFc; $this->held = $savedHeld; $this->pbase = $savedBase; $this->mbase = $savedMbase;
       throw $e;
     } finally { $this->depth--; }
 

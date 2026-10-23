@@ -225,12 +225,12 @@ tf('chan.spacesHuge', 'INVOKE#0', 'exceeds the declared out_max of 16', jf_defs(
 
 $I1 = jf_defs([[0, 1, '[CORE:87]', 8, 0]]);               // KEY ( -- char ), in_max 8
 t('chan.keyReceives',  '$41 INVOKE#0',          [65], $I1);
-$I2 = jf_defs([[0, 1, '100 8 [CORE:45]', 16, 0]]);        // ACCEPT ( c-addr n1 -- n2 )
+$I2 = jf_defs([[0, 1, '[CORE:80] 100 + 8 [CORE:45]', 16, 0]]);   // ACCEPT ( c-addr n1 -- n2 ), at HERE + 100
 t('chan.acceptCount',  '$686921 INVOKE#0',      [3], $I2);
-$I3 = jf_defs([[0, 1, '100 8 [CORE:45] DROP 100 3 BIN2NUM', 16, 0]]);
-t('chan.acceptStores', '$686921 INVOKE#0',      [0x216968], $I3);    // "hi!" landed at addr 100
+$I3 = jf_defs([[0, 1, '[CORE:80] 100 + 8 [CORE:45] DROP [CORE:80] 100 + 3 BIN2NUM', 16, 0]]);
+t('chan.acceptStores', '$686921 INVOKE#0',      [0x216968], $I3);    // "hi!" landed at HERE + 100
 // ⚠ ACCEPT stops at a newline and CONSUMES it without storing — the part that is easy to get wrong.
-$I4 = jf_defs([[0, 1, '100 8 [CORE:45]', 16, 0]]);
+$I4 = jf_defs([[0, 1, '[CORE:80] 100 + 8 [CORE:45]', 16, 0]]);
 t('chan.acceptStopsAtNewline', '$68690a6969 INVOKE#0', [2], $I4);
 $I5 = jf_defs([[0, 1, '[CORE:87]', 0, 0]]);
 tf('chan.keyUndeclared','INVOKE#0',             'declared no input channel', $I5);
@@ -283,9 +283,9 @@ t('abort.passesThrough', '20 INVOKE#0 DROP DROP 0= (ABORT")$' . $MSG . ' 7', [7]
 // ── ⛔⛔⛔ ISOLATION: NOTHING CROSSES THE BOUNDARY EXCEPT WHAT WAS DECLARED (his call, 7 Sept) ────────
 // "Nothing involving a key can be passed into or out of a stdForth function. Or out through ABORT."
 // ⚠ All three of these were MEASURED LEAKING before they were fixed. They are regression tests.
-$Z1 = jf_defs([[0, 1, '200 @']]);                    // a function reading an address it was never given
+$Z1 = jf_defs([[0, 1, '[CORE:80] 200 + @']]);        // a function reading its own memory, where the caller wrote
 t('iso.memoryIsFresh',  '123456 200 ! INVOKE#0', [0], $Z1);   // ⇒ 0, not 123456
-$Z2 = jf_defs([[0, 0, '999 200 !']]);                // a function scribbling on memory
+$Z2 = jf_defs([[0, 0, '999 [CORE:80] 200 + !']]);    // a function scribbling on its memory
 t('iso.noResidue',      'INVOKE#0 200 @',        [0], $Z2);   // ⇒ the caller's arena is untouched
 $Z3 = jf_defs([[0, 2, '100 PREIMAGE']]);             // a function reaching for transaction context
 tf('iso.preimageRefused','INVOKE#0',   'covenant-tier only', $Z3);

@@ -44,6 +44,8 @@ const vint = n => n < 0xfd ? [n] : n <= 0xffff ? [0xfd, ...le16(n)] : [0xfe, n &
 const defs = ds => [JF_RESERVED0, ds.length, ...ds.flatMap(([outMax, body, inMax = 0, nOut = 0]) => [0, nOut, ...vint(inMax), ...vint(outMax), ...vint(body.length), ...body])]
 const bank = (set, sel) => [Array.from({ length: 256 - JF_ESC0 }, (_, k) => JF_ESC0 + k).find(op => jf_bank_name(op) === set), sel]
 const TYPE = bank('CORE', 118), EMIT = bank('CORE', 72), SPACES = bank('CORE', 114), ACCEPT = bank('CORE', 45), EMITQ = bank('FACILITY', 10)
+const HERE_W = bank('CORE', 80)                               // HERE: where a function's program memory starts
+const sig0F = [...HERE_W, S(0), ...HERE_W, S(0), ...HERE_W, S(0), W('CHECKSIG'), W('DROP')]   // sig0 inside a function
 const sig0 = [S(0), S(0), S(0), S(0), S(0), S(0), W('CHECKSIG'), W('DROP')]   // an empty-span CHECKSIG: counted, no maths
 const many = (n, b) => Array.from({ length: n }, () => b).flat()
 const pushes = n => Array.from({ length: n }, () => push([7])).flat()
@@ -130,9 +132,9 @@ const CASES = [
   /* ★ A function's output is pushed into its caller's push space on return, so it may not outgrow the room there. Checked as each
      byte is written. 4,000 trips of 64 KB is 256 MB, which no PHP host at the default 128 MB can hold. */
   ['a function\'s output past the room it returns into: refused at once',
-    [], [...defs([[0xffffffff, doLoop(4000, [S(0), ...lit32(65536), ...TYPE])]]), W('INVOKE'), 0, W('2DROP'), W('TRUE')], false],
+    [], [...defs([[0xffffffff, doLoop(4000, [...HERE_W, ...lit32(65536), ...TYPE])]]), W('INVOKE'), 0, W('2DROP'), W('TRUE')], false],
   ['a function\'s output that fits: accepted',
-    [], [...defs([[0xffffffff, doLoop(1, [S(0), ...lit32(65000), ...TYPE])]]), W('INVOKE'), 0, W('2DROP'), W('TRUE')], true],
+    [], [...defs([[0xffffffff, doLoop(1, [...HERE_W, ...lit32(65000), ...TYPE])]]), W('INVOKE'), 0, W('2DROP'), W('TRUE')], true],
   ['2,147,483,647 SPACES in a function: refused before they are built',
     [], [...defs([[0xffffffff, [...lit32(2147483647), ...SPACES]]]), W('INVOKE'), 0, W('2DROP'), W('TRUE')], false],
   ['100 SPACES in a function: accepted', [], [...defs([[0xffffffff, [JF_LIT.LIT8, 100, ...SPACES]]]), W('INVOKE'), 0, W('2DROP'), W('TRUE')], true],
@@ -163,6 +165,14 @@ const CASES = [
   ['a function inside a function: × 3', [], [...defs([[0, push([1, 2, 3]), 0, 2], [0, [W('INVOKE'), 0], 0, 2]]), W('INVOKE'), 1, W('DROP'), ...lit32(50331648), W('=')], true],
   ['reading a returned push address in the caller: refused', push([9, 9, 9]), [...defs([[0, push([9, 9, 9]), 0, 2]]), W('INVOKE'), 0, W('DROP'), W('C@'), W('DROP'), W('2DROP'), W('TRUE')], false],
   ['...the caller\'s own push at that place reads: accepted', push([9, 9, 9]), [W('DROP'), W('C@'), JF_LIT.LIT8, 9, W('=')], true],
+  /* ★ ...and its own program memory, at its push space + 8,388,608 (his call, 23 Oct): a memory address it returns is
+     out of range in its caller too. A function finds its memory with HERE. */
+  ['HERE in a function: 16,777,216 × 2 + 8,388,608', [], [...defs([[0, HERE_W, 0, 1]]), W('INVOKE'), 0, ...lit32(41943040), W('=')], true],
+  ['a function using its memory from HERE: accepted', [], [...defs([[0, [S(7), ...HERE_W, W('!'), ...HERE_W, W('@'), S(7), W('=')], 0, 1]]), W('INVOKE'), 0], true],
+  ['a fixed address 0 in a function: refused', [], [...defs([[0, [S(0), W('@'), W('DROP')]]]), W('INVOKE'), 0, W('TRUE')], false],
+  ['reading a returned memory address in the caller: refused', [],
+    [...defs([[0, [JF_LIT.LIT8, 0xaa, ...HERE_W, W('C!'), ...HERE_W, S(1)], 0, 2]]), JF_LIT.LIT8, 0xbb, S(0), W('C!'), W('INVOKE'), 0, W('DROP'), W('C@'), W('DROP'), W('TRUE')], false],
+  ['...the caller\'s own byte at 0 reads: accepted', [], [JF_LIT.LIT16, 0xbb, 0, S(0), W('C!'), S(0), W('C@'), JF_LIT.LIT16, 0xbb, 0, W('=')], true],
   /* ★ EMIT? answers for the room the next byte really has: the function's out_max, and what is left in the push
      space its output returns into. 65,000 bytes pushed leave 536. */
   ['EMIT? stops at the room left: 536 bytes, accepted', push(new Array(65000).fill(0)),
@@ -175,8 +185,8 @@ const CASES = [
   ['MOVE of 64 bytes costs 2 more (read and write): accepted at 500,000', push(new Array(64).fill(1)), [W('DROP'), S(0), JF_LIT.LIT8, 64, W('MOVE'), ...loop(499988)], true],
   ['...one trip more: refused', push(new Array(64).fill(1)), [W('DROP'), S(0), JF_LIT.LIT8, 64, W('MOVE'), ...loop(499989)], false],
   // the signature count runs through INVOKE
-  ['60 signature checks in a function and 41 in its caller: 101, refused', [], [...defs([[0, doLoop(60, sig0)]]), W('INVOKE'), 0, ...doLoop(41, sig0), W('TRUE')], false],
-  ['60 in a function and 40 in its caller: 100, accepted', [], [...defs([[0, doLoop(60, sig0)]]), W('INVOKE'), 0, ...doLoop(40, sig0), W('TRUE')], true],
+  ['60 signature checks in a function and 41 in its caller: 101, refused', [], [...defs([[0, doLoop(60, sig0F)]]), W('INVOKE'), 0, ...doLoop(41, sig0), W('TRUE')], false],
+  ['60 in a function and 40 in its caller: 100, accepted', [], [...defs([[0, doLoop(60, sig0F)]]), W('INVOKE'), 0, ...doLoop(40, sig0), W('TRUE')], true],
 ]
 /* Each case runs a word until the instruction budget ends it, and must stay under the bound on both hosts. A word
    over 60,000 bytes costs about 940 instructions, so the budget ends those soon. Timed on their own. */
@@ -192,10 +202,10 @@ const SLOW = [
   ['NUM2BIN to 64 KB until the budget ends', [], [S(0), ...lit32(65536), ...until([W('OVER'), W('NUM2BIN')]), W('NIP')], false],
   ['BIN2NUM of 60,000 bytes until the budget ends', BIG, [...until([W('2DUP'), W('BIN2NUM'), W('DROP')]), W('TRUE')], false],
   ['ACCEPT of 60,000 bytes in a function until the budget ends', BIG,
-    [...defs([[0, [S(0), ...lit32(65536), ...ACCEPT, W('DROP')], 65536]]), ...until([W('2DUP'), W('INVOKE'), 0]), W('TRUE')], false],
+    [...defs([[0, [...HERE_W, ...lit32(65536), ...ACCEPT, W('DROP')], 65536]]), ...until([W('2DUP'), W('INVOKE'), 0]), W('TRUE')], false],
   ['an empty INVOKE until the budget ends', [], [...defs([[0, []]]), ...until([W('INVOKE'), 0]), W('TRUE')], false],
   ['an empty INVOKE with 995 items held, until the budget ends', [], [...defs([[0, []]]), S(1), ...doLoop(994, [W('DUP')]), ...until([W('INVOKE'), 0]), W('TRUE')], false],
-  ['an INVOKE whose function touches its memory, until the budget ends', [], [...defs([[0, [S(0), W('@'), W('DROP')]]]), ...until([W('INVOKE'), 0]), W('TRUE')], false],
+  ['an INVOKE whose function touches its memory, until the budget ends', [], [...defs([[0, [...HERE_W, W('@'), W('DROP')]]]), ...until([W('INVOKE'), 0]), W('TRUE')], false],
   ['EMIT? in a function, 160,000 times', [], [...defs([[1, doLoop(160000, [...EMITQ, W('DROP')])]]), W('INVOKE'), 0, W('2DROP'), W('TRUE')], true],
   ['EMIT 65,000 bytes into a function\'s output', [], [...defs([[65536, doLoop(65000, [JF_LIT.LIT8, 65, ...EMIT])]]), W('INVOKE'), 0, W('2DROP'), W('TRUE')], true],
   ['ROLL 994 deep, 160,000 times', [], [S(1), ...doLoop(994, [W('DUP')]), ...doLoop(160000, [JF_LIT.LIT16, ...le16(994), W('ROLL')]), ...doLoop(994, [W('DROP')])], true],

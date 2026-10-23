@@ -75,8 +75,11 @@ const BANK_SEL = new Map(Object.entries(JF_BANK_WORD).map(([set, words]) => {
 }))
 /** Where the push space starts. Program memory is below it, so the two can never overlap. A function at INVOKE
  *  depth d (the INVOKEs active: the lock is 0) has its own from PUSH_BASE × (d + 1), so a push address it returns
- *  is out of range in its caller. A program-memory address it returns names the caller's own memory. */
+ *  is out of range in its caller. */
 export const PUSH_BASE = 16777216
+/** The lock's program memory is at 0. A function's is at its push space + MEM_OFFSET, so a memory address it
+ *  returns is out of range in its caller too (his call, 23 Oct). A function finds its memory with HERE. */
+export const MEM_OFFSET = 8388608
 
 export class InterpreterJF {
   /** These limits are for run(), the interpreter as a tool. A tick is judged by verifyTick(), with TICK_LIMITS. */
@@ -86,7 +89,7 @@ export class InterpreterJF {
     this.ds = []; this.rs = []; this.defs = []; this.frames = []; this.chan = []
     this.mem = null; this.opCount = 0; this.depth = 0; this.sigOps = 0
     // every pushed byte, in order: read-only, and never at a program-memory address. Grown as needed.
-    this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE
+    this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE; this.mbase = 0
     // cells in the locals frames, and cells an active INVOKE has set aside: both count as items held
     this.frameCells = 0; this.held = 0
   }
@@ -102,16 +105,19 @@ export class InterpreterJF {
   flag(b) { this.pushI(b ? -1 : 0) }                         // Forth TRUE is all bits set
 
   // ── memory ─────────────────────────────────────────────────────────────────────────────────────────
+  /** The offset of addr in program memory, which lies at mbase. */
   bounds(addr, len) {
-    if (addr < 0n || len < 0n || addr + len > BigInt(this.memSize))
+    const mb = BigInt(this.mbase)
+    if (addr < mb || len < 0n || addr - mb > BigInt(this.memSize) - len)
       throw new JfScriptError(`memory out of range: addr=${addr} len=${len} size=${this.memSize}`)
     // made, zeroed, when first touched: a function that never touches memory costs nothing for it
     if (this.mem === null) this.mem = new Uint8Array(this.memSize)
+    return Number(addr - mb)
   }
   fetch(addr) { return cell(leToBig(this.view(addr, 8n))) }
   store(addr, v) {
-    this.bounds(addr, 8n)
-    let u = uns(cell(v)); const a = Number(addr)
+    const a = this.bounds(addr, 8n)
+    let u = uns(cell(v))
     for (let k = 0; k < 8; k++) { this.mem[a + k] = Number(u & 0xffn); u >>= 8n }
   }
   read(addr, len) { return this.view(addr, len) }
@@ -120,9 +126,10 @@ export class InterpreterJF {
   view(addr, len, copy = true) {
     const p = BigInt(this.plen), pb = BigInt(this.pbase)
     const [m, a] = addr >= pb && len >= 0n && len <= p && addr - pb <= p - len ? [this.pmem, Number(addr - pb)]
-                 : (this.bounds(addr, len), [this.mem, Number(addr)])
+                 : [null, this.bounds(addr, len)]
+    const mem = m ?? this.mem
     this.charge(Number(len))
-    return copy ? m.slice(a, a + Number(len)) : m.subarray(a, a + Number(len))
+    return copy ? mem.slice(a, a + Number(len)) : mem.subarray(a, a + Number(len))
   }
   /** Each span read, written or pushed costs one more instruction for every whole 64 bytes in it (his call, 23 Oct).
    *  A function's channel bytes are charged when INVOKE reads its input span and when its output is pushed on return. */
@@ -130,7 +137,7 @@ export class InterpreterJF {
     this.opCount += Math.floor(n / 64)
     if (this.opCount > this.maxOps) throw new JfScriptError('op budget exhausted')
   }
-  write(addr, b) { this.bounds(addr, BigInt(b.length)); this.charge(b.length); this.mem.set(b, Number(addr)) }
+  write(addr, b) { const o = this.bounds(addr, BigInt(b.length)); this.charge(b.length); this.mem.set(b, o) }
   /** `( c-addr u -- )` popped as a pair, u on top. */
   popSpan() { const u = this.popInt(); const a = this.popInt(); return this.read(a, u) }
 
@@ -176,7 +183,7 @@ export class InterpreterJF {
     this.ds = []; this.rs = []; this.frames = []; this.chan = []
     this.opCount = 0; this.depth = 0; this.frameCells = 0; this.held = 0; this.sigOps = 0
     this.mem = null
-    this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE
+    this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE; this.mbase = 0
     const i = this.parseDefs(script, 0)
     await this.exec(script, i, /* covenant tier */ true)
     if (this.frames.length) throw new JfScriptError('unbalanced locals frame')
@@ -211,6 +218,8 @@ export class InterpreterJF {
         // ⚠ ONE WORD, ONE ENCODING: a promoted word's two-byte form is reserved-illegal.
         if (word !== false && JF_PROMOTED[word] !== undefined)
           throw new JfScriptError(`${word} is jetForth-only: its two-byte form is reserved-illegal`)
+        // ★ HERE ( -- addr ): where a function's program memory starts (CORE 6.1.1650, with no ALLOT)
+        if (word === 'HERE' && this.chan.length) { this.pushI(this.mbase); continue }
         if (word !== false && CHANNEL_WORDS[word] !== undefined && this.chan.length) { this.channel(word); continue }
         if (word !== false && JF_CORE_KIND[word] !== undefined) {
           const why = {
@@ -388,8 +397,8 @@ export class InterpreterJF {
       case 'MOVE': { const u = this.popInt(); const to = this.popInt(); const from = this.popInt(); this.write(to, this.read(from, u)); return i }
       // ⚠ the range is checked BEFORE anything is allocated: built first, a script asking for gigabytes ends the process
       case 'FILL': { const ch = this.popInt(); const u = this.popInt(); const a = this.popInt()
-        if (u > 0n) { this.bounds(a, u); this.charge(Number(u)); this.mem.fill(Number(ch & 0xffn), Number(a), Number(a + u)) } return i }
-      case 'ERASE': { const u = this.popInt(); const a = this.popInt(); if (u > 0n) { this.bounds(a, u); this.charge(Number(u)); this.mem.fill(0, Number(a), Number(a + u)) } return i }
+        if (u > 0n) { const o = this.bounds(a, u); this.charge(Number(u)); this.mem.fill(Number(ch & 0xffn), o, o + Number(u)) } return i }
+      case 'ERASE': { const u = this.popInt(); const a = this.popInt(); if (u > 0n) { const o = this.bounds(a, u); this.charge(Number(u)); this.mem.fill(0, o, o + Number(u)) } return i }
       case 'CELLS': this.push(this.pop() * 8n); return i
       case 'CELL+': this.push(this.pop() + 8n); return i
       case 'CHARS': return i                                                // a char is one address unit
@@ -637,7 +646,7 @@ export class InterpreterJF {
     this.need(d.n_in + (inMax > 0 ? 2 : 0))                  // the input span sits ABOVE the cell arguments
     if (++this.depth > this.maxDepth) { this.depth--; throw new JfScriptError('call depth exceeded') }
     const savedRs = this.rs, savedFr = this.frames           // the function gets fresh ones: no copy needed
-    const savedFc = this.frameCells, savedHeld = this.held, savedBase = this.pbase
+    const savedFc = this.frameCells, savedHeld = this.held, savedBase = this.pbase, savedMbase = this.mbase
     const chanDepth = this.chan.length
     let savedMem, savedP, savedPl, callerDs, results, emitted
     let taken = []                                             // the caller's cells this call took, bottom first
@@ -660,6 +669,7 @@ export class InterpreterJF {
       // room: the caller's push space left, where the output is pushed on return
       this.chan.push({ in: inBytes, pos: 0, inmax: inMax, out: new Uint8Array(0), olen: 0, max: outMax, room: this.pushSize - savedPl })
       this.pbase = PUSH_BASE * (this.chan.length + 1)
+      this.mbase = this.pbase + MEM_OFFSET
 
       await this.exec(d.body, 0, /* covenant */ false)
       if (this.ds.length !== d.n_out)
@@ -667,7 +677,7 @@ export class InterpreterJF {
       if (this.frames.length) throw new JfScriptError(`INVOKE ${ix}: unbalanced locals frame`)
       results = this.ds
       const done = this.chan.pop(); emitted = done.out.subarray(0, done.olen)
-      this.mem = savedMem; this.pmem = savedP; this.plen = savedPl; this.pbase = savedBase
+      this.mem = savedMem; this.pmem = savedP; this.plen = savedPl; this.pbase = savedBase; this.mbase = savedMbase
       this.frameCells = savedFc; this.held = savedHeld
     } catch (e) {
       // ⚠ A failed call leaves NOTHING behind
@@ -676,7 +686,7 @@ export class InterpreterJF {
       if (callerDs !== undefined) this.ds = callerDs
       for (const c of taken) this.ds.push(c)
       this.rs = savedRs; this.frames = savedFr
-      this.frameCells = savedFc; this.held = savedHeld; this.pbase = savedBase
+      this.frameCells = savedFc; this.held = savedHeld; this.pbase = savedBase; this.mbase = savedMbase
       throw e
     } finally { this.depth-- }
     this.ds = callerDs
@@ -737,7 +747,7 @@ export async function verifyTick({ unlocking, lock, preimage, crypto = {} }) {
     vm.ds = []; vm.rs = []; vm.frames = []; vm.chan = []
     vm.opCount = 0; vm.depth = 0; vm.frameCells = 0; vm.held = 0; vm.sigOps = 0
     vm.mem = null
-    vm.pmem = new Uint8Array(0); vm.plen = 0; vm.pbase = PUSH_BASE
+    vm.pmem = new Uint8Array(0); vm.plen = 0; vm.pbase = PUSH_BASE; vm.mbase = 0
     await vm.exec(unlocking, 0, true)
     // the second run: the data stack and the pushed bytes carry over, and the op and signature counts run on
     vm.rs = []; vm.frames = []; vm.depth = 0; vm.frameCells = 0
