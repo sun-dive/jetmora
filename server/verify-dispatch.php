@@ -89,5 +89,45 @@ $fellBack = false;
 try { interpreter_for(version_build('ZZ', 1)); $fellBack = true; } catch (Throwable) {}
 ok(!$fellBack, 'an unknown family NEVER falls back to a registered one');
 
+echo "\n── a host that lacks what a tick needs gives no verdict (spec §3.3) ──\n";
+// Without ext/gmp: `php -n` reads no php.ini, so a shared gmp is not loaded. A PHP with gmp built in
+// cannot show this case here, and the check is skipped, never counted as passed.
+$child = <<<'PHP'
+require $argv[1] . '/dispatch.php';
+require_once $argv[1] . '/interpreter-jf.php';
+$what = function (callable $f): string {
+  try { $f(); return 'no error'; } catch (Throwable $e) { return get_class($e); }
+};
+echo json_encode([
+  'gmp'      => extension_loaded('gmp'),
+  'dispatch' => $what(fn() => interpreter_for(version_build('JF', 3))),
+  'new'      => $what(fn() => new InterpreterJF()),
+  'tick'     => $what(fn() => InterpreterJF::verifyTick('', "\x51", null)),
+]);
+PHP;
+$proc = proc_open([PHP_BINARY, '-n', '-r', $child, '--', __DIR__], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+$out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
+fclose($pipes[1]); fclose($pipes[2]); proc_close($proc);
+$r = json_decode($out, true);
+if (!is_array($r)) {
+  ok(false, 'the host without ext/gmp answered: ' . trim($out . ' ' . $err));
+} elseif ($r['gmp']) {
+  echo "  - skipped: this PHP has ext/gmp built in, so php -n cannot take it away\n";
+} else {
+  ok($r['dispatch'] === 'JfHostError', "without ext/gmp, JF rev 3 dispatches to JfHostError, not a crash → {$r['dispatch']}");
+  ok($r['new'] === 'JfHostError', "without ext/gmp, new InterpreterJF → {$r['new']}");
+  ok($r['tick'] === 'JfHostError', "without ext/gmp, verifyTick gives no verdict → {$r['tick']}");
+}
+
+// A host may ship interpreter-jf.php alone, while dispatch.php registers every set. A tick naming a set
+// whose file is not here gets a VersionError, never an error from inside require_once.
+// ⚠ Last, because without the check a failed require_once can be fatal.
+$absent = __DIR__ . '/no-such-dir/interpreter-xy.php';
+ok(!file_exists($absent), 'the file registered for XY is not on this host');
+register_set('XY', $absent, 'InterpreterXY', [1]);
+$caught = 'no error';
+try { interpreter_for(version_build('XY', 1)); } catch (Throwable $e) { $caught = get_class($e); }
+ok($caught === 'VersionError', "XY rev 1 names a set this host does not ship → $caught");
+
 printf("\n%s  %d passed, %d failed\n", $fail === 0 ? '✅' : '⚠', $pass, $fail);
 exit($fail === 0 ? 0 : 1);

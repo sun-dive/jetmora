@@ -103,6 +103,11 @@ function interpreter_for(int $nVersion): object
       '(has: ' . implode(', ', $set['revisions']) . ')');
   }
 
+  // A host ships only the sets it serves: a registered set whose file is not here gives no verdict, and says
+  // so as an error, never by stopping PHP inside require_once. Resolved as require_once resolves it.
+  if (stream_resolve_include_path($set['file']) === false) {
+    throw new VersionError("family `$f` is registered, but this host does not ship " . basename($set['file']));
+  }
   require_once $set['file'];
   if (!class_exists($set['class'])) throw new VersionError("{$set['file']} does not define {$set['class']}");
   return new $set['class']();

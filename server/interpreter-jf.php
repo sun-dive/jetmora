@@ -44,9 +44,9 @@ class JfScriptError extends RuntimeException
 }
 
 /**
- * THE HOST CANNOT JUDGE: a capability it lacks (Ed25519 without ext/sodium). It is not a refusal, and
- * verifyTick passes it on rather than turn it into one: a tick is never refused here and accepted there
- * because one host is missing a library.
+ * THE HOST CANNOT JUDGE: a capability it lacks (ext/gmp, which every cell needs, or Ed25519 without
+ * ext/sodium). It is not a refusal, and verifyTick passes it on rather than turn it into one: a tick is
+ * never refused here and accepted there because one host is missing a library.
  */
 final class JfHostError extends RuntimeException {}
 
@@ -106,6 +106,8 @@ final class InterpreterJF
     private int $pushSize = 65536,
     private int $maxSigOps = 100,
   ) {
+    // every cell is a GMP number: a host without ext/gmp cannot run a single instruction, so it cannot judge
+    if (!extension_loaded('gmp')) throw new JfHostError('JF needs ext/gmp on this host');
     self::$M64 ??= gmp_pow(2, 64);
     self::$H64 ??= gmp_pow(2, 63);
   }
