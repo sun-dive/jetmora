@@ -71,7 +71,8 @@ ok($store->tipHashOf($id) === $h256($t3['bytes']), 'the tip is derived from the 
 ok($store->recordTips() === 1 && $store->tipHashOf($id) === $h256($t3['bytes']), 'recordTips gives it a row from that body');
 $db->exec('DELETE FROM tips');
 $db->exec('UPDATE entries SET ts = 1');               // every entry old enough to prune
-ok($store->pruneOlderThan(60) === 3, 'pruning blanks the three bodies');
+ok($store->pruneOlderThan(60) === 2, 'pruning blanks the two bodies behind the tip');
+ok(array_column($store->entriesOf($id), 'body') === ['', '', $t3['bytes']], '★ and keeps the tip whole');
 ok($store->tipHashOf($id) === $h256($t3['bytes']), '★ but first records the tip, so pruning never leaves it unknown');
 $t4 = $tick($h256($t3['bytes']), 4);
 ok($send($t4)->ok, 'and the thread ticks on after pruning');

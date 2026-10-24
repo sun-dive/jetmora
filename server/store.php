@@ -129,8 +129,9 @@ final class ThreadStore
     }
     /**
      * ★ RETENTION (spec §5c, an operator's policy): discard the BODIES of entries received more than
-     *   $seconds ago whose genesis STATE is not one of $keepStates. The leaf hashes stay, so the tree and
-     *   every proof still stand; a pruned body reads as '' (threads.php answers 410 for it). Returns rows pruned.
+     *   $seconds ago whose genesis STATE is not one of $keepStates, never a thread's newest. The leaf hashes
+     *   stay, so the tree and every proof still stand; a pruned body reads as '' (threads.php answers 410 for
+     *   it). Returns rows pruned.
      */
     public function pruneOlderThan(int $seconds, array $keepStates = []): int
     {
@@ -140,7 +141,10 @@ final class ThreadStore
         // ⚠ The tip outlives the body: a thread with no tip row gets one from its newest body BEFORE anything is
         //   blanked, so pruning can never leave a tip unknown.
         $this->recordTips();
+        // ★ A thread's TIP is never pruned (his rule, 17 Oct). Its newest entry is kept whole, because its unspent
+        //   output is what the next tick spends; a hash of it cannot be spent. Only the bodies behind it go.
         $sql = 'UPDATE entries SET body = \'\' WHERE ts IS NOT NULL AND ts < ? AND length(body) > 0'
+             . ' AND seq NOT IN (SELECT seq FROM tips)'
              . ' AND genesis IN (SELECT id FROM genesis WHERE hex(state) NOT IN (' . implode(',', array_fill(0, count($keep), '?')) . '))';
         $st = $this->db->prepare($sql);
         $st->execute([$cut, ...$keep]);
