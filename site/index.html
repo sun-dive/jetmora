@@ -3,37 +3,37 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>jetmora — verifiable computation</title>
+<title>jetmora: threads of signed script, outside any blockchain</title>
 <meta name="robots" content="index,follow,max-image-preview:large">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="jetmora">
-<meta property="og:title" content="jetmora — verifiable computation">
+<meta property="og:title" content="jetmora: threads of signed script, outside any blockchain">
 <meta property="og:url" content="https://jetmora.org/">
-<meta property="og:image" content="https://jetmora.org/og-light-speed.jpg">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="description" content="A record you can no longer execute is only half preserved. Verifiable computation: run the program anywhere, hash the result, compare. No coin, no consensus, no proof to trust — just the work, checkable by anyone, for as long as anyone cares to check.">
+<meta name="twitter:card" content="summary">
+<meta name="description" content="jetmora is a bundle of threads of signed script ticks, existing outside any blockchain. Each tick is judged by the thread's own script, and anyone can run it again and get the same answer. No coin and no consensus: the work itself, checkable by anyone.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Ctext%20y='13'%20font-size='13'%3E%F0%9F%90%9F%3C/text%3E%3C/svg%3E">
 <style>
   :root{
     --bg:#fbfaf8; --fg:#1a1a19; --dim:#5c5c58; --rule:#e2e0da;
     --accent:#8a4b2a; --card:#f4f2ec; --code:#f0eee7;
+    --ok:#2f7a4b; --okbg:#e8f3ec; --bad:#b3261e; --badbg:#fbefee;
   }
   @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
     --bg:#131311; --fg:#e8e6e0; --dim:#9c9a93; --rule:#2c2b28;
     --accent:#d99460; --card:#1c1b19; --code:#1e1d1a;
+    --ok:#8fc98f; --okbg:#1d2b22; --bad:#e8907f; --badbg:#2d1c1a;
   }}
   :root[data-theme=dark]{
     --bg:#131311; --fg:#e8e6e0; --dim:#9c9a93; --rule:#2c2b28;
     --accent:#d99460; --card:#1c1b19; --code:#1e1d1a;
+    --ok:#8fc98f; --okbg:#1d2b22; --bad:#e8907f; --badbg:#2d1c1a;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);
     font:17px/1.65 ui-serif,Georgia,'Times New Roman',serif;
     -webkit-text-size-adjust:100%}
   .wrap{max-width:44rem;margin:0 auto;padding:3.5rem 1.5rem 6rem}
-  h1{font-size:2.4rem;line-height:1.1;margin:0 0 .3rem;letter-spacing:-.02em}
+  h1{font-size:2.4rem;line-height:1.1;margin:0 0 1.2rem;letter-spacing:-.02em}
   h1 small{display:block;font-size:1rem;font-weight:400;color:var(--dim);
     letter-spacing:.02em;margin-top:.7rem;font-family:ui-sans-serif,system-ui,sans-serif}
   h2{font-size:1.35rem;margin:3.2rem 0 .8rem;line-height:1.25;letter-spacing:-.01em}
@@ -51,6 +51,27 @@
   pre{background:var(--code);padding:1rem 1.1rem;border-radius:4px;overflow-x:auto;
     font-size:.85rem;line-height:1.5;margin:1.4rem 0}
   pre code{background:none;padding:0;font-size:1em}
+  pre.wrap{white-space:pre-wrap}
+  figure.diagram{margin:2rem 0;overflow-x:auto}
+  figure.diagram svg{display:block;width:100%;min-width:600px;height:auto;font-family:ui-serif,Georgia,'Times New Roman',serif}
+  figure.diagram figcaption{color:var(--dim);font-size:.93rem;margin-top:.6rem}
+  .dg .h{font-size:17px;font-weight:bold;fill:var(--fg)}
+  .dg .box{fill:var(--bg);stroke:var(--rule);stroke-width:1.2}
+  .dg .slot{fill:var(--card);stroke:var(--rule)}
+  .dg .tip{fill:var(--okbg);stroke:var(--ok);stroke-width:1.4}
+  .dg .n{font-size:14px;font-weight:bold;fill:var(--fg)}
+  .dg .t{font-size:12.5px;fill:var(--fg)}
+  .dg .tag{font-size:12.5px;font-weight:bold;fill:var(--ok)}
+  .dg .ghost{fill:var(--badbg);stroke:var(--bad);stroke-width:1.2;stroke-dasharray:5 4}
+  .dg .no{font-size:12.5px;font-weight:bold;fill:var(--bad)}
+  .dg .arrow{fill:none;stroke:var(--dim);stroke-width:1.4}
+  .dg .bad{fill:none;stroke:var(--bad);stroke-width:1.4;stroke-dasharray:5 4}
+  .dg .anc{fill:none;stroke:var(--ok);stroke-width:1.4;stroke-dasharray:3 3}
+  .dg .band{fill:var(--card);stroke:var(--rule)}
+  .dg .b1{font-size:13.5px;font-weight:bold;fill:var(--fg)}
+  .dg .b2{font-size:13px;fill:var(--fg)}
+  .dg .mid{font-size:15px;font-style:italic;fill:var(--fg)}
+  .dg .mka{fill:var(--dim)} .dg .mkr{fill:var(--bad)} .dg .mkg{fill:var(--ok)}
   .tbl{width:100%;border-collapse:collapse;margin:1.4rem 0;font-size:.95rem;display:block;overflow-x:auto}
   .tbl td{border-top:1px solid var(--rule);padding:.6rem .8rem .6rem 0;vertical-align:top}
   .tbl td:first-child{white-space:nowrap;color:var(--dim);
@@ -66,303 +87,376 @@
 <div class="wrap">
 
 <h1>jetmora
-  <small>Verifiable computation — run it anywhere, and check the work.</small>
+  <small>A bundle of threads of signed script ticks, existing outside any blockchain.</small>
 </h1>
 
-<p class="lede">A program runs. It produces a result. Somebody else, somewhere else, later — possibly
-much later — needs to know that result is what the program actually produces.</p>
+<p class="lede">A program runs. It produces a result. Somebody else, somewhere else, later, possibly much
+later, needs to know that result is what the program actually produces.</p>
 
 <p>Today they have two options. Trust whoever ran it. Or run it again, and hope they can find the same
 program, the same inputs, and an interpreter that behaves identically.</p>
 
-<p><strong>jetmora makes the second option cheap, exact, and permanent.</strong></p>
+<p><strong>jetmora makes the second option cheap and exact, and keeps it possible for as long as anyone keeps
+the thread.</strong> Each step of a program is a tick in a thread: signed by its owner, judged by the thread's
+own script, and kept with everything needed to run it again.</p>
 
-<p>That last word is doing more work than it looks. Keeping a <em>result</em> is easy. Keeping the
-ability to <em>check</em> it is the hard half, and it is the half that quietly gets lost.
-<strong>A record you can no longer execute is only half preserved.</strong></p>
+<p>That last part is doing more work than it looks. Keeping a <em>result</em> is easy. Keeping the ability
+to <em>check</em> it is the hard half, and it is the half that quietly gets lost. <strong>A record you can
+no longer execute is only half preserved.</strong></p>
 
 <div class="key">
-<p><strong>Verification by re-execution, not by proof.</strong> This matters, because
-&ldquo;verifiable computation&rdquo; usually means zero-knowledge proofs — verify the answer without
-re-running the work. That is a fine thing and it is not this.</p>
-<p>A zero-knowledge proof tells you the computation was performed correctly. <strong>It does not tell
-you what the computation was.</strong> For a clinical analysis, a safety calculation or a compliance
-check, seeing the work <em>is</em> the requirement.</p>
+<p><strong>Verification by re-execution, not by proof.</strong> This matters, because &ldquo;verifiable
+computation&rdquo; usually means zero-knowledge proofs: verify the answer without re-running the work. That
+is a fine thing and it is not this.</p>
+<p>A zero-knowledge proof tells you the computation was performed correctly. <strong>It does not show you the
+work:</strong> the inputs and the steps stay hidden. For a clinical analysis, a safety calculation or a
+compliance check, seeing the work <em>is</em> the requirement.</p>
 </div>
-
-<h2>Three hashes describe any computation</h2>
-
-<pre><code>H(source)  ·  H(input state)  →  H(output state)</code></pre>
-
-<p>Ninety-six bytes. Comparison is a single equality check no matter how much work was done. A verifier
-never has to send you a result — it publishes a hash, and agreement is one line.</p>
-
-<p>Disagreement is just as cheap, and considerably more interesting: it names the exact computation to
-go and look at.</p>
-
-<h3>The identity is the source, not the compiled bytes</h3>
-
-<p>Programs are written in a small BASIC and compiled to Bitcoin Script. The hash is taken over the
-parsed program, not the emitted bytes — so formatting is invisible and meaning is not, and
-<strong>the thing a human reads is the thing that is identified.</strong></p>
-
-<p>Which has a useful consequence. The same program compiled two different ways, executed by two
-different interpreters, should produce the same output hash. If it does not, something is wrong — and
-that is a far stronger test than running one artefact twice, because identical bytes share their
-bugs.</p>
 
 <hr>
 
-<h2>How it works</h2>
+<h2>Threads, ticks and tips</h2>
 
 <table class="tbl">
-<tr><td>the log</td><td>An append-only Merkle tree of entries, published by one operator. It records
-what it is given. <strong>It does not adjudicate.</strong></td></tr>
-<tr><td>the entry</td><td>A state transition: previous state in, new state out, signed. An entry
-contains everything needed to replay it.</td></tr>
-<tr><td>the covenant</td><td>The program. Written in BASIC, compiled to Script, and readable back out
-again by a decompiler.</td></tr>
-<tr><td>the anchor</td><td>The tree head, committed periodically into a proof-of-work chain. One small
-transaction. This is what makes <em>one</em> history objective.</td></tr>
+<tr><td>thread</td><td>One program's signed history: a beginning, then every tick since.</td></tr>
+<tr><td>script</td><td>The small program inside a thread that decides which ticks are allowed.</td></tr>
+<tr><td>tick</td><td>One step. Signed by the thread's owner, it spends the tip and makes the next one, and the
+thread's script decides whether it is allowed.</td></tr>
+<tr><td>tip</td><td>The output of the thread's last tick. <strong>Only the tip can be ticked forward, by spending
+its output.</strong></td></tr>
+<tr><td>host</td><td>A server that keeps threads and checks each tick. Anyone can run one.</td></tr>
+<tr><td>rope</td><td>Threads bundled together, as a host carries them. They never touch.</td></tr>
+<tr><td>anchor</td><td>A hash written to a blockchain when a timestamp matters.</td></tr>
 </table>
 
-<p>There is no coin, no consensus, and no global ordering. Logs are independent: anyone may run one, and
-the same computation may be recorded in several. <strong>Duplication is not a conflict — it is
-corroboration.</strong></p>
+<p>Only the tip can be ticked forward, by spending its output. Once spent, there is no output to spend, and a
+second attempt is rejected, as Bitcoin rejects a spend of an output already spent. It is not a decision anyone
+makes: it is the state of the thread, because <strong>a spendable output only exists at the tip.</strong> At its
+host, a thread cannot fork.</p>
 
-<h3>What that buys</h3>
+<p><strong>A thread has one writer.</strong> Nobody else can tick it forward, so there is nothing to race.</p>
+
+<figure class="diagram">
+<svg class="dg" viewBox="0 0 704 816" role="img" aria-labelledby="dg-cap" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="dga" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mka" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="dgr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mkr" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="dgg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mkg" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <text class="h" x="26" y="30">Inside a blockchain: a covenant chain on BSV</text>
+  <g transform="translate(26,48)">
+    <rect class="box" width="196" height="122" rx="6"/>
+    <text class="n" x="12" y="22">tx 1</text>
+    <rect class="slot" x="10" y="32" width="176" height="30" rx="4"/><text class="t" x="18" y="51">in: spends the output before it</text>
+    <rect class="slot" x="10" y="72" width="176" height="40" rx="4"/><text class="t" x="18" y="88">out: the covenant lock</text><text class="t" x="18" y="104">and its state</text>
+  </g>
+  <g transform="translate(254,48)">
+    <rect class="box" width="196" height="122" rx="6"/>
+    <text class="n" x="12" y="22">tx 2</text>
+    <rect class="slot" x="10" y="32" width="176" height="30" rx="4"/><text class="t" x="18" y="51">in: spends the output before it</text>
+    <rect class="slot" x="10" y="72" width="176" height="40" rx="4"/><text class="t" x="18" y="88">out: the covenant lock</text><text class="t" x="18" y="104">and its state</text>
+  </g>
+  <g transform="translate(482,48)">
+    <rect class="box" width="196" height="122" rx="6"/>
+    <text class="n" x="12" y="22">tx 3</text><text class="tag" x="186" y="22" text-anchor="end">the tip: unspent</text>
+    <rect class="slot" x="10" y="32" width="176" height="30" rx="4"/><text class="t" x="18" y="51">in: spends the output before it</text>
+    <rect class="tip" x="10" y="72" width="176" height="40" rx="4"/><text class="t" x="18" y="88">out: the covenant lock</text><text class="t" x="18" y="104">and its state</text>
+  </g>
+  <path class="arrow" marker-end="url(#dga)" d="M212,140 H238 V95 H262"/>
+  <path class="arrow" marker-end="url(#dga)" d="M440,140 H466 V95 H490"/>
+  <path class="bad" marker-end="url(#dgr)" d="M212,152 H230 V225 H252"/>
+  <g transform="translate(254,198)">
+    <rect class="ghost" width="288" height="52" rx="6"/>
+    <text class="t" x="12" y="21">Another tx spends tx 1's output again</text>
+    <text class="no" x="12" y="40">&#x2717; rejected: that output is already spent</text>
+  </g>
+  <rect class="band" x="26" y="272" width="652" height="84" rx="6"/>
+  <text class="b1" x="40" y="297">A spendable output exists only at the tip. Every node keeps the record, and blocks order the spends</text>
+  <text class="b2" x="40" y="319">On its way: wallet &#x2192; API &#x2192; relay &#x2192; miner's node &#x2192; mempool &#x2192; block, a fee on every spend</text>
+  <text class="b2" x="40" y="341">And back: ask an API, within its rate limits, whether it was mined, and for its Merkle proof</text>
+  <text class="mid" x="352" y="396" text-anchor="middle">The same structure: a global state machine above, a local one below.</text>
+  <text class="h" x="26" y="440">Outside a blockchain: a jetmora thread</text>
+  <g transform="translate(26,458)">
+    <rect class="box" width="196" height="160" rx="6"/>
+    <text class="n" x="12" y="22">tick 1</text>
+    <rect class="slot" x="10" y="32" width="176" height="30" rx="4"/><text class="t" x="18" y="51">in: spends the output before it</text>
+    <rect class="slot" x="10" y="72" width="176" height="40" rx="4"/><text class="t" x="18" y="88">out 1: the jetForth lock</text><text class="t" x="18" y="104">and its state</text>
+    <rect class="slot" x="10" y="120" width="176" height="30" rx="4"/><text class="t" x="18" y="139">out 2: the data it carries</text>
+  </g>
+  <g transform="translate(254,458)">
+    <rect class="box" width="196" height="160" rx="6"/>
+    <text class="n" x="12" y="22">tick 2</text>
+    <rect class="slot" x="10" y="32" width="176" height="30" rx="4"/><text class="t" x="18" y="51">in: spends the output before it</text>
+    <rect class="slot" x="10" y="72" width="176" height="40" rx="4"/><text class="t" x="18" y="88">out 1: the jetForth lock</text><text class="t" x="18" y="104">and its state</text>
+    <rect class="slot" x="10" y="120" width="176" height="30" rx="4"/><text class="t" x="18" y="139">out 2: the data it carries</text>
+  </g>
+  <g transform="translate(482,458)">
+    <rect class="box" width="196" height="160" rx="6"/>
+    <text class="n" x="12" y="22">tick 3</text><text class="tag" x="186" y="22" text-anchor="end">the tip: unspent</text>
+    <rect class="slot" x="10" y="32" width="176" height="30" rx="4"/><text class="t" x="18" y="51">in: spends the output before it</text>
+    <rect class="tip" x="10" y="72" width="176" height="40" rx="4"/><text class="t" x="18" y="88">out 1: the jetForth lock</text><text class="t" x="18" y="104">and its state</text>
+    <rect class="slot" x="10" y="120" width="176" height="30" rx="4"/><text class="t" x="18" y="139">out 2: the data it carries</text>
+  </g>
+  <path class="arrow" marker-end="url(#dga)" d="M212,550 H238 V505 H262"/>
+  <path class="arrow" marker-end="url(#dga)" d="M440,550 H466 V505 H490"/>
+  <path class="bad" marker-end="url(#dgr)" d="M212,562 H230 V673 H252"/>
+  <g transform="translate(254,646)">
+    <rect class="ghost" width="288" height="52" rx="6"/>
+    <text class="t" x="12" y="21">Another tick spends tick 1's output again</text>
+    <text class="no" x="12" y="40">&#x2717; rejected: that output is already spent</text>
+  </g>
+  <path class="anc" marker-end="url(#dgg)" d="M617,618 V642"/>
+  <g transform="translate(556,646)">
+    <rect class="tip" width="122" height="52" rx="6"/>
+    <text class="t" x="10" y="21">anchor the tip</text>
+    <text class="t" x="10" y="40">on a blockchain</text>
+  </g>
+  <rect class="band" x="26" y="716" width="652" height="84" rx="6"/>
+  <text class="b1" x="40" y="741">A spendable output exists only at the tip. The thread itself is the record of it</text>
+  <text class="b2" x="40" y="763">On its way: device &#x2192; host. No API, no relay, no mempool, no fee</text>
+  <text class="b2" x="40" y="785">And back: the host's answer in the same request, once it has run the script. Anyone can run it again</text>
+</svg>
+<figcaption id="dg-cap">A covenant chain on BSV and a jetmora thread are the same structure. One is a global state
+machine, kept by every node; the other is a local one, kept by the parties who care.</figcaption>
+</figure>
+
+<p><strong>The rules travel with the thread.</strong> They are in the tip's script, which checks each tick and,
+as jetForth BASIC writes it, passes itself on to the next tip. Nothing outside the thread decides what it may
+do: not the host, not the page that wrote the tick.</p>
+
+<h3>A computation, in one line</h3>
+
+<pre class="wrap"><code>H(program) · H(input state) · engine revision
+    &rarr;  H(output state)</code></pre>
+
+<p>H means a hash: a short fingerprint of the data. The engine revision is the exact version of the
+interpreter that ran it. Comparison is a single equality check, no matter how much work was done. A verifier
+never has to send you a result: it publishes a hash, and agreement is one line. Disagreement is just as cheap,
+and considerably more interesting: it names the exact computation to go and look at.</p>
+
+<hr>
+
+<h2>How a tick is judged</h2>
+
+<p>The same way a BSV node checks a payment. A tick carries data only, never instructions of its own. The
+thread's script then runs on that data, and the tick is accepted only if the script ends with a single answer
+that is not zero. Anything else refuses it. <strong>A host runs the script, and does not record a tick it
+refuses.</strong></p>
+
+<p>The limits belong to the engine revision, and they are the same on every host, because a limit that
+differed between hosts would be a verdict that differed between them:</p>
 
 <table class="tbl">
-<tr><td>latency</td><td>A state transition is an append, not an agreement. There is no round trip to
-wait for, so a physics simulation can tick at frame rate.</td></tr>
-<tr><td>parallelism</td><td>No global sequence to serialise into. Adding a log adds capacity with zero
-coordination.</td></tr>
-<tr><td>cost</td><td>No protocol fee, because there is no shared block space to ration. Operators
-charge for the service; the protocol has no opinion about money.</td></tr>
+<tr><td>instructions</td><td>500,000 a tick; moving data costs one more for every 64 bytes</td></tr>
+<tr><td>memory</td><td>64 KB for the script, and 64 KB more for each function call while it runs; a further
+64 KB for the tick's data, which the script can read but not change</td></tr>
+<tr><td>stack</td><td>1,000 values held at once</td></tr>
+<tr><td>signatures</td><td>100 checks a tick, a multi-signature check counting one for each key</td></tr>
+<tr><td>size</td><td>a script of at most 500,000 bytes, and calls at most 64 deep</td></tr>
 </table>
 
-<p class="note">A million transactions per second is throughput. Physics needs latency, and no amount
-of throughput buys back a round trip you did not take.</p>
-
-<h3>Cheating is provable, not prevented</h3>
-
-<p>This is the honest trade, and it is stated first rather than buried.</p>
-
-<p>A log can misbehave. It can drop an entry, or show different trees to different people, or sign two
-conflicting histories. What it cannot do is <strong>hide any of it</strong>: a Merkle log that
-equivocates has published the evidence of its own lying, permanently, and anyone can show it.</p>
-
-<p>An entry whose state transition the program would refuse is <em>recorded</em> — but it does not
-advance anything. It sits in the log as a signed claim that someone asserted otherwise. Evidence, not
-history.</p>
-
-<h3>And it only ever hurts them</h3>
-
-<p>On a shared chain, a script that exhausts memory is everyone's problem: every node must validate it,
-so one bad program is an attack on all of them. That is why several instructions were removed from
-Bitcoin in 2010, and they have been contentious ever since.</p>
-
-<p>Here, logs are independent and verification is voluntary. A log does not execute the programs it
-carries — it records signed entries — so an expensive or malicious computation reaches only whoever
-chooses to run it, and its cost can be calculated before anyone does.</p>
+<p>On a shared blockchain, a script that exhausts memory is every node's problem. That is why several
+instructions were switched off in Bitcoin in 2010, and they have been contentious ever since. Here every tick
+is bounded by its engine, and a bad tick is refused without touching any other thread.</p>
 
 <div class="key">
 <p><strong>A bad actor only gets to shoot themselves in the foot while everyone else carries on.</strong></p>
 </div>
 
-<p>Which is also why the limits are the operator's and not the protocol's. A ceiling written into a
-protocol becomes a number nobody can promise to hold — and that is the whole problem this design exists
-to escape.</p>
+<hr>
+
+<h2>Written in jetForth BASIC, run as jetForth</h2>
+
+<p>Programs are written in <strong>jetForth BASIC</strong> and compiled once. A decompiler, the reader, turns
+the result back into BASIC, so the rules a thread runs can be read by a person, not only by a machine.
+<a href="./basic.html">Try it in your browser.</a></p>
+
+<p>What runs is <strong>jetForth</strong>: a small language based on Forth, a compact programming language
+from 1970. Unlike Bitcoin's script it can loop, and it works in 64-bit numbers. Each tick names the engine
+that judges it, and a jetForth BASIC program says which on its first line, <code>VERSION JF 3</code>, so a
+verifier years from now runs the revision the tick named rather than its own.</p>
+
+<p>Once a revision is fixed it never changes: a change is a new revision number. Revision 3 is not fixed yet.
+The engine runs in PHP and in JavaScript.</p>
+
+<p class="note">A tick will be able to name other engines too. One is Bitcoin's script as it stood in 2009,
+with the original instruction numbers; that engine runs scripts today but does not yet judge ticks. Bitcoin
+switched concatenate, multiply, substring and shift off in the middle of 2010, so an early program that used
+them cannot run there. BSV switched them back on, but gave three of the old numbers to different
+instructions, so some early programs run there and give a different answer. Named this way, a 2009 program
+runs as it was written. Nobody has yet looked for an early program that used them.</p>
 
 <hr>
 
-<h2>Why it exists</h2>
+<h2>Who checks</h2>
 
-<p>Programs that hold value and enforce their own rules — covenants — are a good way to build things.
-They do not ask permission, they do not care who you are, and you cannot talk them out of their rules.</p>
+<p>The writer runs the script before signing a tick. The host runs it before recording one. And anyone can
+run it again.</p>
 
-<p>They have one structural weakness, and it is not in the program.</p>
+<p>Threads only need to agree when two parties don't trust each other. Then each has its own reason to mirror
+the other's thread and check that it didn't cheat, and cheating leaves proof: <strong>a party that signs two
+different versions of the same moment has signed the evidence against itself.</strong> The checking is done by
+the people with something at stake, not by a global queue. Mirroring catches cheating rather than queueing to
+prevent it. The licence lets anyone run a host, a witness or a mirror.</p>
 
-<p>A covenant on a public chain must pay a fee to move, and it commits to a <strong>maximum fee</strong>
-when it is created — a number written permanently into the script, because the script is the coin and
-the coin cannot be edited. Raise the network's minimum above that number and the covenant can no longer
-pay to move. Not slower. Not dearer. <strong>Stuck, with whatever it holds inside it.</strong></p>
+<p>A thread belongs to the key that signs it, and its owner holds it and can back it up however they choose. A
+user's thread a host carries and checks, but cannot tick: that takes the user's key. <strong>Of a user's thread,
+a host is a witness, not a custodian.</strong></p>
 
-<p>Fitting that number honestly to the published rate is the correct thing to do. It is also what
-leaves no room at all: measured against live covenants, one of ours dies if the floor rises by
-<strong>one percent</strong>.</p>
+<p>Some threads are the host's own. Comments, likes and views live on threads of their own, signed by the host,
+so audience numbers can be proved rather than just quoted, and they never mix with the thread they are about.
+Each comment and like is signed by the person who made it as well: <strong>the host decides what appears, but
+cannot decide who said it.</strong> A thread holds the actions; the totals are counts kept beside it, and can
+always be recounted from it.</p>
 
-<div class="key">
-<p>The flaw is not the number. It is that <strong>one side of the arrangement is bound forever and the
-other is not bound at all</strong> — and the unbound side sets the value.</p>
-</div>
-
-<p>jetmora's answer is not to argue about the fee. It is that <strong>a covenant here never references
-one</strong>. Operators charge for their service, in whatever currency they like, and that price can
-move freely forever without being able to kill anything — because nothing immutable depends on it.</p>
-
-<p>And because state is portable between logs, an operator who overcharges watches covenants leave.
-Exit is what disciplines the price, and no single chain can offer that at any fee level.</p>
+<p>What a dishonest host could do is show one history to some people and another to others. That leaves evidence it cannot take back: the host signs a
+summary of everything it holds, and two signed summaries that disagree are proof anyone can show.</p>
 
 <hr>
 
-<h2>Two rails</h2>
+<h2>Anchors</h2>
+
+<p>A thread needs no blockchain. When a timestamp matters, a hash is anchored on one: the host's summary,
+which covers every thread it holds, or a single thread's tip. Thirty-two bytes, on whichever blockchain you
+choose, and the thread stays where it is. An anchor proves the thread existed by then; only running it again
+shows its ticks were valid. And once a tip is anchored, nothing before it can be quietly rewritten, which is
+why one writer per thread is enough.</p>
+
+<p>What is left for a blockchain is the one thing it is uniquely good at: <strong>a public clock that nobody can
+wind back.</strong> Use the blockchain as a clock, not as a ledger.</p>
 
 <div class="key">
-<p><strong>BSV is the payment rail. Jetmora is the computational rails.</strong></p>
+<p><strong>You can always pull up an anchor; you are not chained to anything.</strong> A chain binds. An
+anchor holds only while you choose.</p>
 </div>
 
-<p>A proof-of-work chain is good at the discrete and the valuable: ownership, stakes, settlement,
-timestamps. It is bad at variable outcomes, because every branch costs a transaction and must be
-anticipated in advance.</p>
+<p>There is no coin, no consensus, and no global ordering. A blockchain sends every transaction to every node,
+so its cost grows with the network. <strong>A thread only goes to whoever is watching.</strong> Every thread keeps
+its own order, and no host waits on another, so capacity grows by adding hosts, with no coordination at all.</p>
 
-<p>So: commit on the payment rail, compute on the computational rails, settle back on the payment rail.
-One fee, many steps. And a settlement contract can verify a jetmora result <em>in script</em>, by
-walking a Merkle path to an anchored root — no relayer, no oracle, no bridge multisig.</p>
+<table class="tbl">
+<tr><td>latency</td><td>A tick is a step, not an agreement: it waits on its own host and nothing else.</td></tr>
+<tr><td>parallelism</td><td>No global sequence to serialise into: hosts never wait on each other.</td></tr>
+<tr><td>cost</td><td>No protocol fee, because nothing shared is being rationed.</td></tr>
+</table>
 
-<p class="note">With one limit stated plainly: a chain can verify that a log <em>said</em> something. It
-cannot verify that the something is <em>correct</em>. That is what re-execution is for.</p>
+<p class="note">Blockchains often advertise throughput: how many transactions a second. Physics needs latency,
+and no amount of throughput buys back a round trip you did not take.</p>
+
+<hr>
+
+<h2>Why no fee</h2>
+
+<p>Programs that hold value and enforce their own rules, covenants, are a good way to build things. They do
+not ask permission, they do not care who you are, and you cannot talk them out of their rules.</p>
+
+<p>On a public blockchain they have one structural weakness, and it is not in the program. A covenant must pay
+a fee to move, and one that writes a fee bound into itself can be stranded when the network's minimum rises
+above it: stuck, with whatever it holds. One of our own covenants on BSV has about <strong>one percent</strong>
+of headroom: let the fee floor rise further and it can no longer move.</p>
+
+<div class="key">
+<p>The flaw is not the number. It is that <strong>one side of the arrangement is bound forever and the other
+is not bound at all</strong>, and the unbound side sets the value.</p>
+</div>
+
+<p>And a fee on every step is its own harm: nickel and diming users with a micropayment on every pointless
+transaction, a turnstile on every action, for ever. Every payment is a moment where someone decides whether the
+action was worth it, and that is where use dies. The web won because reading a page costs nothing at the moment
+you read it.</p>
+
+<p><strong>A jetmora script never references a fee, and nobody is charged for every action.</strong> A host may
+charge for its service, and nothing that cannot change depends on that price. And because a thread belongs to its owner,
+it is designed to move: a host that overcharges would watch its threads leave. Exit is what disciplines the
+price.</p>
 
 <hr>
 
 <h2>What it is for</h2>
 
-<p>Underneath the applications there are only two primitives: <strong>a witnessed claim, and a witnessed
+<p>Underneath the applications there are only two building blocks: <strong>a witnessed claim, and a witnessed
 computation on it.</strong> Everything below is those two, pointed somewhere different.</p>
 
 <table class="tbl">
-<tr><td>science</td><td>Reproducibility is not &ldquo;here is my repository.&rdquo; It is
-<em>here is the execution</em> — same program, same inputs, same intermediate states, or a provable
-divergence.</td></tr>
-<tr><td>medicine</td><td>A trial's analysis plan, committed and timestamped <em>before</em> the data
-arrives. Then the data arrives and it runs. Provably not adjusted afterwards.</td></tr>
-<tr><td>standards</td><td>A safety standard is a computation. Published as a program, a manufacturer
-proves compliance by running it, and a regulator verifies without trusting anyone's
-spreadsheet.</td></tr>
-<tr><td>engineering</td><td>A load rating becomes a program, with the formula version pinned to a
+<tr><td>science</td><td>Reproducibility is not &ldquo;here is my repository.&rdquo; It is <em>here is the
+execution</em>: same program, same inputs, same intermediate states, or a provable divergence.</td></tr>
+<tr><td>medicine</td><td>A trial's analysis plan, committed and timestamped <em>before</em> the data arrives.
+Then the data arrives and it runs. Provably not adjusted afterwards.</td></tr>
+<tr><td>standards</td><td>A safety standard is a computation. Published as a program, a manufacturer proves
+compliance by running it, and a regulator verifies without trusting anyone's spreadsheet.</td></tr>
+<tr><td>engineering</td><td>A load rating becomes a program, with the formula's revision pinned to a
 date.</td></tr>
-<tr><td>oracles</td><td>It cannot make an oracle honest. It makes one <em>accountable</em>: statements
-are signed, append-only, and cannot be quietly revised. A track record becomes something you can
-compute.</td></tr>
-<tr><td>agents</td><td>Do not give an autonomous agent a wallet. Give it a battery: a program that
-bounds what it can do, with no key to steal, and every action recorded, signed and auditable by
-construction.</td></tr>
+<tr><td>oracles</td><td>An oracle is a service that reports outside facts, such as prices, to a program. jetmora
+cannot make one honest. It makes one <em>accountable</em>: statements are signed, in order, and cannot be
+quietly revised. A track record becomes something you can compute.</td></tr>
 </table>
-
-<h3>And a racetrack</h3>
-
-<p>The first thing built on it is a slot-car game, which sounds like the least serious item on that
-list and is in fact the reason any of the others can be trusted.</p>
-
-<p>Physics is a hard test: non-linear, iterative, sensitive to rounding. The correctness criterion is
-unambiguous — the car leaves the track or it does not. And crucially, <strong>a human can feel when the
-model is lying</strong>, instantly, before any test catches it.</p>
-
-<p class="note">You cannot debug a physics model you cannot feel, and you cannot feel a dosing
-calculation. Every other domain has to trust its tests. This one has someone who knows.</p>
 
 <hr>
 
 <h2>Not new, and that is the point</h2>
 
 <p>Three of the eight references in Bitcoin's white paper are Haber and Stornetta's digital timestamping
-papers. Merkle-linked records, witnessed, tamper-evident — <strong>and no coin anywhere.</strong> Their
-commercial implementation published a weekly hash in a newspaper's classified advertisements, which is
-this design's anchor done in newsprint.</p>
+papers. Linked records, witnessed, tamper-evident, <strong>and no coin anywhere.</strong> Their company
+published a hash every week in an advertisement in the New York Times, which is an anchor done in
+newsprint.</p>
 
 <p>The coin was never the point of the record. It was the payment for the consensus. Remove the need for
 open permissionless agreement and the coin has no job left to do.</p>
 
-<p>Coinless systems did not stop working — they stopped being called blockchains. Certificate
-Transparency secures the certificate ecosystem of the entire web and is barely mentioned in this
-industry. Git is a Merkle tree everyone uses without discussing.</p>
+<p><strong>And jetmora has no coin.</strong> There is nothing to buy or hold, and no exchange to open an account
+with. Its value can't come from a coin, so it only comes from what it is used for: the use case is the value.
+It's a protocol, much like TCP: it sits underneath, out of sight, and the people using it never think about
+it.</p>
 
-<p><strong>The record-keeping here is a thirty-five-year-old tradition. Running programs inside the log
-is the part with no precedent.</strong></p>
+<p>Coinless systems did not stop working; they stopped being called blockchains. Certificate Transparency
+secures the certificate ecosystem of the entire web, and blockchain projects barely mention it. Git, which most
+programmers use every day, is built the same way.</p>
 
-<h3>Which is also why the old instruction numbers are kept</h3>
-
-<p>Bitcoin's scripting language had more instructions in 2009 than it does now. Concatenate, multiply,
-substring, shift — all live until the middle of 2010, when a dozen of them were switched off after
-crashes, and never switched back on.</p>
-
-<p>So there are programs in the early blockchain written in a language nothing can read any more.</p>
-
-<table class="tbl">
-<tr><td>one chain</td><td>disabled those instructions and cannot execute such a script at all</td></tr>
-<tr><td>another</td><td>re-enabled them, but reassigned three of the numbers to newer instructions. A
-2009 program still runs — and <strong>quietly computes something different</strong></td></tr>
-<tr><td>jetmora</td><td>keeps the original assignments and puts its own instructions in space that was
-never used. The 2009 program runs <em>as written</em></td></tr>
-</table>
-
-<p>That is not fidelity for its own sake. It is the half-preserved record, arriving in concrete form:
-the programs are still there, still readable, and no longer runnable. <strong>If a program is the thing
-being witnessed, then being able to run it in fifty years is the whole point.</strong></p>
-
-<p class="note">We have not gone looking yet. The claim follows from the numbering rather than from
-evidence, and it is checkable by anyone: find an early output using one of those instructions, and run
-it three ways. If nothing was ever mined that used them, that is worth knowing too.</p>
+<p><strong>The record-keeping here is a thirty-five-year-old tradition. What jetmora adds to it is a program
+inside each record, which anyone can run again, still with no coin.</strong></p>
 
 <hr>
 
 <h2>Status</h2>
 
-<p>Early, and deliberately public while it is still moving.</p>
+<p>Early, and public while it is still moving.</p>
 
-<p>The specification is a file of test vectors rather than a document: prose about what an instruction
-does cannot be executed, and two honest implementations will still diverge on overflow and edge cases,
-silently. A vector fails instead. An implementation that reproduces the vectors is conformant.</p>
-
-<p>The first run of that suite found three divergences between historical and current Bitcoin Script,
-one of which was an error in the vectors themselves — written from familiarity rather than from the
-source. It was caught immediately, which is the entire argument for building it this way.</p>
-
-<h3>The test that matters</h3>
-
-<p>A real covenant — the physics of a slot car, <strong>212 lines of program, 3,669 bytes, 2,179
-instructions</strong> — was compiled once and executed on three implementations that share no code:</p>
+<p>The engine in both languages, the compiler and its reader, and their tests are published. The two
+interpreters are graded against each other on every test case, refusals included, because <strong>agreement on
+a failure is still agreement</strong>: it is what tells you a disagreement is in your test rather than in the
+implementations.</p>
 
 <table class="tbl">
-<tr><td>one</td><td>an independent Bitcoin Script interpreter, written by other people, years ago</td></tr>
-<tr><td>two</td><td>ours — the same program with 44 instructions renumbered, its own serializer, written
-the same day</td></tr>
-<tr><td>three</td><td><strong>a plain JavaScript reference</strong>, which is not a Script interpreter at
-all</td></tr>
+<tr><td>the engine</td><td>JF revision 3, in PHP and JavaScript. Not fixed yet: when it is, it will be
+anchored, and from then on it never changes</td></tr>
+<tr><td>the thread service</td><td>An early host at <code>/threads/</code>. It holds threads, and rejects an
+attempt to tick an output already spent. Running each tick's script before recording it comes next</td></tr>
+<tr><td>writers</td><td>Writers that run the script before signing are not published yet</td></tr>
+<tr><td>moving threads</td><td>Moving a thread from one host to another is not built yet</td></tr>
+<tr><td>anchors</td><td>This repository's own code is timestamped on BSV and on BTC (see NOTICE)</td></tr>
+<tr><td>specification</td><td>Draft 0.1.1, from August. It is being revised, several of its rules have changed
+since, and it still uses older words such as log and entry. This page describes the design as it
+stands</td></tr>
 </table>
 
-<p><strong>All fifteen cases agree.</strong> The JavaScript reference agrees on all ten that produced a
-result. The other five are lifted-throttle cases where the covenant refuses to advance — <em>and both
-interpreters refuse identically.</em></p>
-
-<div class="key">
-<p>That last part is worth more than it looks. <strong>Agreement on a failure is still agreement</strong>
-— and it is what tells you the disagreement is in your test rather than in the implementations. It
-happened twice while building this, and both times it pointed at the right thing.</p>
-<p>A test with only one implementation can never do that. It has nothing to disagree with.</p>
-</div>
-
-<p class="note">Three paths, no shared code: different instruction numbers, different serializers,
-different interpreters, written years apart by different hands. That is what makes the agreement
-evidence rather than a tautology — and it is the whole claim, executed against real work instead of a
-demonstration.</p>
-
 <table class="tbl">
-<tr><td>paper</td><td><a href="./light-speed-transfers.html">Light Speed Transfers</a> — anchor
-transfers: value locked on chain, ownership moved by signing forward, exit always available. v0.1 is
-design; the three problems it has not solved are named in it</td></tr>
 <tr><td>compiler</td><td><a href="./basic.html">jetForth BASIC</a>: write a program in BASIC and get
 jetForth, the script a thread runs; paste jetForth and read it back as BASIC. It runs in your browser</td></tr>
-<tr><td>specification</td><td><a href="./spec/log.md">spec/log.md</a> — normative, with its open items
-listed</td></tr>
-<tr><td>vectors</td><td><a href="./vectors/core.json">vectors/core.json</a> — public domain (CC0),
-because the specification should not make implementations derivative of it</td></tr>
-<tr><td>source</td><td><a href="https://github.com/sun-dive/jetmora">github.com/sun-dive/jetmora</a> —
-Business Source License 1.1 for the code, converting to Apache&nbsp;2.0 in 2030; the specification stays Apache&nbsp;2.0</td></tr>
+<tr><td>paper</td><td><a href="./light-speed-transfers.html">Light Speed Transfers</a>: anchor transfers,
+value locked on a blockchain and ownership moved by signing it over. v0.1, an early design paper: parts of it
+have since changed</td></tr>
+<tr><td>specification</td><td><a href="./spec/log.md">draft 0.1.1</a>: being revised</td></tr>
+<tr><td>vectors</td><td><a href="./vectors/core.json">vectors/core.json</a>: test cases with their expected
+answers, for Bitcoin's script as it stood in 2009 and since; public domain (CC0)</td></tr>
+<tr><td>source</td><td><a href="https://github.com/sun-dive/jetmora">github.com/sun-dive/jetmora</a>:
+Business Source License 1.1 for the code, converting to Apache&nbsp;2.0 in 2030; the compiler, the opcode
+table, the specification and the papers are Apache&nbsp;2.0</td></tr>
 </table>
 
 <footer>
-<p>© 2026 sun-dive. Code: Business Source License 1.1 · specification: Apache License 2.0 · vectors: CC0. Opcode semantics derive from Bitcoin 0.1.3, MIT-licensed.</p>
+<p>© 2026 sun-dive. Code: Business Source License 1.1 · compiler, opcode table, specification and papers:
+Apache License 2.0 · vectors: CC0. Bitcoin's instruction numbers and meanings derive from Bitcoin 0.1.3,
+MIT-licensed; jetForth's standard words follow Forth 2012.</p>
 </footer>
 
 </div>
