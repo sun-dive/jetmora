@@ -1,22 +1,27 @@
 <?php
 // © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
-// THE APPEND RULE — spec §4.1. ⚠⚠ THE WHOLE POINT IS HOW LITTLE THIS DOES.
+// THE APPEND RULE: spec §4.1, §3.3. ⚠⚠ THE WHOLE POINT IS HOW LITTLE THIS DOES.
 //
 //   1. the entry is well-formed and CANONICALLY serialized
 //   2. it is signed by a key the covenant's genesis names
 //   3. it names the thread's tip: a second entry naming a tip already ticked is invalid (§4.4), not a
 //      rival to choose between
+//   4. it spends an output of that tip that exists, and that output's locking script, run against the tick,
+//      accepts it (§3.3). A tick the script refuses is not recorded (his ruling, 23 Oct).
 //
-// ⚠ AND NOTHING ELSE. No script execution. No adjudication. A thread service is a witness; it records
-//   what it was given. Every temptation to make it cleverer is a step toward
-//   consensus, and consensus is the thing this design does not have.
+// ⚠ AND NOTHING ELSE. Steps 1 and 2 are what this host admits; from step 3 on, no rule is the service's own
+//   and nothing is adjudicated: every refusal is the script's verdict or what a node refuses with a spend.
+//   A thread service is a witness; it records what the script accepts. That is consensus of a kind: between
+//   the parties to a thread, who need not trust each other, because each can run the same script and reach
+//   the same verdict. It is not a global consensus among strangers who care nothing for the tick. A rule
+//   here that is not in the script would end it: the parties could no longer check the service's answer.
 //
 // ⚠⚠ TWO SIGNATURES EXIST AND THEY ARE NOT THE SAME THING — a distinction the spec should state:
 //   · the covenant's INTERNAL CHECKSIG (OP_PUSH_TX) proves the STATE TRANSITION is what the program
-//     permits. ⇒ A VERIFIER's concern. The service never runs it.
-//   · the APPEND AUTHORISATION signature proves WHO SUBMITTED this. ⇒ The service's only concern.
-//   Conflating them would put an interpreter in the service, which §4.1 forbids for good reason.
+//     permits. ⇒ It runs inside the script, at step 4.
+//   · the APPEND AUTHORISATION signature proves WHO SUBMITTED this. ⇒ Step 2.
+//   Neither stands in for the other: a good append signature does not make a transition permitted.
 //
 // ⚠ PAYMENT IS NOT HERE AND MUST NOT BE (spec §3.4-0b). The operator's billing hooks in through
 //   $authorise; the protocol defines no price, no currency and no settlement.
@@ -33,6 +38,8 @@ final class AppendResult
         public readonly ?int $seq = null,
         public readonly ?string $error = null,
         public readonly int $status = 200,
+        /** When the script refused the tick: its reason, as the interpreter gave it. Bytes, not always UTF-8. */
+        public readonly ?string $reason = null,
     ) {}
 }
 
@@ -91,11 +98,66 @@ final class Appender
         // ── 3. the tip (spec §4.4, his ruling 23 Sept) ─────────────────────────────────────────
         //    An entry TICKS the tip it names (input 0). A tip ticked twice is impossible by design, as a
         //    spent outpoint is gone on Bitcoin: the second entry is not a competing valid entry to be
-        //    adjudicated, it is invalid. One writer, one tip, one home: no ordering rule, no consensus.
-        //    The check runs inside the store's write lock, so two writers cannot both pass.
-        $prev = CovenantEntry::decode($entry)['inputs'][0]['prevEntry'];
+        //    adjudicated, it is invalid. One writer, one tip, one home: no ordering rule, no global consensus.
+        //    The check runs before the script, so a stale tick is refused without running it, and again
+        //    inside the store's write lock, so two writers cannot both pass.
+        $tick = CovenantEntry::decode($entry);
+        $prev = $tick['inputs'][0]['prevEntry'];
+        try { $this->store->checkTip($genesisId, $prev); }
+        catch (TipTickedException $e) { return new AppendResult(false, null, $e->getMessage(), 409); }
+        // ⏭ A tick spending several outputs needs each input judged. This host judges input 0 only, so it
+        //   gives no verdict rather than judge one input of several (spec §3.3).
+        if (count($tick['inputs']) > 1)
+            return new AppendResult(false, null, 'not built yet: this host judges input 0 only', 501);
+
+        // ── 4. the script decides (spec §3.3, his ruling 23 Oct) ─────────────────────────────────────
+        $refused = $this->judge($genesisId, $tick);
+        if ($refused !== null) return $refused;
+
         try { return new AppendResult(true, $this->store->append($entry, $genesisId, $prev)); }
         catch (TipTickedException $e) { return new AppendResult(false, null, $e->getMessage(), 409); }
+    }
+
+    /**
+     * Judge input 0 of a tick that names the thread's tip, as a node judges a spend: the output it spends must
+     * exist, and that output's locking script, run against the tick, decides. Returns null when the script
+     * accepts it; otherwise the refusal (422), or why this host gives no verdict (501). Nothing is stored either way.
+     */
+    private function judge(string $genesisId, array $tick): ?AppendResult
+    {
+        // ⚠ The judge's files load here and nowhere else: a host missing one can break appends, never reads.
+        require_once __DIR__ . '/wallet/jetmora/thread.php';
+        $in = $tick['inputs'][0];
+        $tipSeq = $this->store->tipOf($genesisId);
+        if ($tipSeq === null && $in['prevEntry'] === $genesisId) {
+            // The first tick spends the genesis. It has one output: the genesis script, with a value of zero.
+            $outputs = [['locking' => $this->registry->get($genesisId)['script'], 'value' => str_repeat("\x00", 8)]];
+        } else {
+            // A later tick spends an output of the tip, read from the tip's body (kept whole: store.php).
+            $body = $tipSeq === null ? null : $this->store->entry($tipSeq);
+            if ($body === null || $body === '')
+                return new AppendResult(false, null, 'no verdict: the output this tick spends is not held here', 501);
+            if (CovenantEntry::hash($body) !== $in['prevEntry']) {
+                // The tip moved after the check in append(): another tick spent this output first.
+                try { $this->store->checkTip($genesisId, $in['prevEntry']); }
+                catch (TipTickedException $e) { return new AppendResult(false, null, $e->getMessage(), 409); }
+                return new AppendResult(false, null, 'no verdict: the output this tick spends is not held here', 501);
+            }
+            try { $outputs = CovenantEntry::decode($body)['outputs']; }
+            catch (CovenantEntryError) { return new AppendResult(false, null, 'no verdict: the tip held here does not decode', 501); }
+        }
+        // A node refuses a spend of an output that was never made.
+        $spent = $outputs[$in['index']] ?? null;
+        if ($spent === null)
+            return new AppendResult(false, null, "the tip has no output {$in['index']} to spend", 422);
+
+        // ⚠ No verdict is not a refusal: a host without the interpreter the tick names, or a library it needs,
+        //   says so and records nothing, so no tick is refused here and accepted on another host.
+        try { $v = CovenantThread::judge($tick, 0, $spent['locking'], $spent['value']); }
+        catch (VersionError | JfHostError $e) { return new AppendResult(false, null, 'no verdict: ' . $e->getMessage(), 501); }
+        if ($v['accepted']) return null;
+        return new AppendResult(false, null, 'the script refused this tick', 422,
+                                $v['error'] ?? 'the script did not end with exactly one non-zero item');
     }
 
     /**

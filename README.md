@@ -167,7 +167,11 @@ signed heads, and inclusion and consistency proofs over HTTP.
 | `merkle.php` | RFC 6962 |
 | `store.php` | the tree is **stored, never rebuilt** — appends touch log(n) nodes, proofs are read |
 | `genesis.php` | answers the one question the append rule asks: which key may advance covenant G |
-| `append.php` | ⚠ the whole rule: canonical, and signed by an authorised key. **Nothing else** |
+| `append.php` | ⚠ the whole rule: canonical, signed by an authorised key, names the tip, and the script of the output it spends accepts it. **Nothing else** |
+| `wallet/jetmora/thread.php` | `CovenantThread::judge`: builds the preimage from the tick and runs the interpreter its nVersion names |
+| `dispatch.php` | the nVersion → interpreter registry (§6b) |
+| `preimage.php` | the BIP143 preimage over an entry |
+| `interpreter-jf.php`, `ops-jf.php` | the JF interpreter that judges a tick (spec §3.3), and its opcode table |
 | `head.php` | 90-byte signed head. ⚠ Re-signing a size is impossible, not merely forbidden |
 | `threads.php` | the HTTP endpoints of the thread service |
 | `probe.php` | ⚠ host capability probe. Token-gated, delete after use |
@@ -175,8 +179,12 @@ signed heads, and inclusion and consistency proofs over HTTP.
 ★ **Verified end to end by an independent implementation:** a JS client checked 200 inclusion proofs and
 8 consistency proofs served by the PHP service, and rejected a tampered proof and a false entry claim.
 
-⚠ **What it deliberately does not do:** execute Script or adjudicate. A second entry naming a tip that is already ticked is refused as
-invalid (§4.4), never weighed against the first. A thread service is a witness. Every temptation to make it cleverer is a step toward consensus.
+★ **It judges a tick as a node judges a spend:** the output the tick spends must exist, and that output's script, run
+against the tick, decides. A tick the script refuses is not recorded (422); a tick this host cannot judge is not recorded either (501).
+
+⚠ **What it deliberately does not do:** adjudicate. A second entry naming a tip that is already ticked is refused as
+invalid (§4.4), never weighed against the first. A thread service is a witness. The parties to a thread reach consensus by running its script, without trusting each
+other or the host; it is not a global consensus among strangers who care nothing for the tick.
 
 ## Files
 

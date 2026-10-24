@@ -102,11 +102,11 @@ refuses(fn() => CovenantThread::tick(str_repeat("\x00", 31), 0, $tipLocking, $ti
 echo "\n── ⚠ TWO signatures, and a wallet makes BOTH ──\n";
 $covSig = Secp256k1::sign($d, hash('sha256', hash('sha256', $t['preimage'], true), true));
 ok(Secp256k1::verifyDigest($covSig, $pub, hash('sha256', hash('sha256', $t['preimage'], true), true)),
-   'the COVENANT signature is over the PREIMAGE — a verifier’s concern, and the chain must not check it');
+   'the COVENANT signature is over the PREIMAGE: the script checks it, wherever the tick is judged');
 $appendSig = Secp256k1::sign($d, CovenantThread::appendSighash($t['bytes']));
 ok(Secp256k1::verifyDigest($appendSig, $pub, CovenantThread::appendSighash($t['bytes'])),
-   'the APPEND signature is over the ENTRY BYTES — the chain’s only concern (§4.1)');
-ok($covSig !== $appendSig, '⛔ they are DIFFERENT signatures over DIFFERENT things — conflating them puts an interpreter in the chain');
+   'the APPEND signature is over the ENTRY BYTES: who submitted it (§4.1)');
+ok($covSig !== $appendSig, '⛔ they are DIFFERENT signatures over DIFFERENT things: neither stands in for the other');
 
 printf("\n%s  %d passed, %d failed   [covenant thread: create · tick]\n",
   $fail === 0 ? '✅' : '⚠', $pass, $fail);

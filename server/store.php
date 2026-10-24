@@ -119,6 +119,14 @@ final class ThreadStore
         if ($body === false || $body === null) return $genesis;              // no entry yet: the first tick names the genesis
         return $body === '' ? null : hash('sha256', hash('sha256', $body, true), true);
     }
+    /** @throws TipTickedException unless $prev is the thread's tip, which is what a new entry of the thread must name. */
+    public function checkTip(string $genesis, ?string $prev): void
+    {
+        if ($prev === null) throw new TipTickedException('an entry of a thread must name the tip it ticks');
+        $tip = $this->tipHashOf($genesis);
+        if ($tip === null) throw new TipTickedException('the thread\'s tip is not known here, so nothing may tick it');
+        if ($tip !== $prev) throw new TipTickedException('tip already ticked: the entry does not name the thread\'s tip');
+    }
 
     /** The entries of one thread, oldest first, after a sequence number. @return array<array{seq:int, body:string}> */
     public function entriesOf(string $genesis, int $after = -1, int $limit = 256): array
@@ -278,12 +286,7 @@ final class ThreadStore
             // ⚠ INSIDE the write lock: a tip is an unticked outpoint, tickable only once (§4.4). Checked before the
             //   lock, two writers could both pass and both land. Every entry of a thread names its tip; one that
             //   does not, or a thread whose tip is unknown, is refused.
-            if ($genesis !== null) {
-                if ($prev === null) throw new TipTickedException('an entry of a thread must name the tip it ticks');
-                $tip = $this->tipHashOf($genesis);
-                if ($tip === null) throw new TipTickedException('the thread\'s tip is not known here, so nothing may tick it');
-                if ($tip !== $prev) throw new TipTickedException('tip already ticked: the entry does not name the thread\'s tip');
-            }
+            if ($genesis !== null) $this->checkTip($genesis, $prev);
             $seq = $this->size();
             $leaf = mt_leaf_hash($body);
             $this->db->prepare('INSERT INTO entries (seq, hash, body, genesis, ts) VALUES (?,?,?,?,?)')

@@ -429,8 +429,9 @@ implementations.</p>
 <table class="tbl">
 <tr><td>the engine</td><td>JF revision 3, in PHP and JavaScript. Not fixed yet: when it is, it will be
 anchored, and from then on it never changes</td></tr>
-<tr><td>the thread service</td><td>An early host at <code>/threads/</code>. It holds threads, and rejects an
-attempt to tick an output already spent. Running each tick's script before recording it comes next</td></tr>
+<tr><td>the thread service</td><td>An early host at <code>/threads/</code>. It holds threads, rejects an
+attempt to tick an output already spent, and runs each tick's script before recording it: a tick that fails
+is refused</td></tr>
 <tr><td>writers</td><td>Writers that run the script before signing are not published yet</td></tr>
 <tr><td>moving threads</td><td>Moving a thread from one host to another is not built yet</td></tr>
 <tr><td>anchors</td><td>This repository's own code is timestamped on BSV and on BTC (see NOTICE)</td></tr>

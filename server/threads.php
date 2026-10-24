@@ -2,8 +2,8 @@
 // © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // THE THREAD SERVICE ENDPOINT — spec §5.3, §4.1. One file, deliberately thin: the store does the work and this
-// only translates HTTP to it. ⚠ A thread service serves PROOFS. It does not adjudicate, does not execute Script,
-// and has no opinion about what the entries mean.
+// only translates HTTP to it. ⚠ A thread service serves PROOFS. It does not adjudicate, and has no opinion of its
+// own about what the entries mean: a tick's script decides whether it is recorded (append.php).
 //
 // ⚠ CORS is open on reads and that is correct: a thread service's contents are public by
 //   construction, and a browser-side verifier is exactly the client this is for. Writes are gated by
@@ -33,7 +33,8 @@ function out(array $body, int $status = 200): never {
     http_response_code($status);
     header('Content-Type: application/json');
     header('Access-Control-Allow-Origin: *');
-    echo json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), "\n";
+    // ⚠ A script's reason is its own bytes and need not be UTF-8: substituted, never a failed encode and an empty body
+    echo json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE), "\n";
     exit;
 }
 // ⚠⚠ AN ENDPOINT MUST NEVER ANSWER WITH AN EMPTY BODY. On 30 Aug an uncaught PDOException in the store
@@ -316,17 +317,22 @@ case 'port':
          'note' => $anchored ? 'ported from an anchored root — final'
                              : 'ported from a signed but unanchored head — portable, contestable (spec §4b.3)'], 201);
 
-// ── the append rule: ONE signature check and nothing else (spec §4.1) ────────────────────────
+// ── the append rule: the checks in append.php, then the tick's script decides (spec §4.1, §3.3) ──
 case 'append':
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') out(['error' => 'POST required'], 405);
     // ⏭ the operator's own policy — a price, an account, a rate limit — hooks in here (spec §4.5).
     //    ⚠ The protocol defines no price, no currency and no settlement (§3.4-0b).
     $appender = new Appender($store, $registry, $policy['append'] ?? null);
+    // A refusal is JSON on both transports. When the script refused (422), its reason travels as text and
+    // as hex: the text is for people, the hex is the interpreter's message byte for byte (an ABORT's own
+    // bytes follow 'ABORT: '), as errorBytes is in tools/interpreter-jf.mjs.
+    $refuse = fn(AppendResult $r) => out(['error' => $r->error]
+        + ($r->reason === null ? [] : ['reason' => $r->reason, 'reason_hex' => bin2hex($r->reason)]), $r->status);
     if ($packedIn) {
         // genesis in the query; body = LP(entry) ‖ LP(pubkey) ‖ LP(signature)
         [$entry, $pk, $sig] = $fields(file_get_contents('php://input') ?: '', 3);
         $r = $appender->append($unhex((string)($_GET['genesis'] ?? ''), 32), $entry, $pk, $sig);
-        if (!$r->ok) out(['error' => $r->error], $r->status);
+        if (!$r->ok) $refuse($r);
         if ($packedOut) outBytes(pack('N', $r->seq), 201, ['X-Seq' => $r->seq, 'X-Tree-Size' => $store->size()]);
         out(['seq' => $r->seq, 'tree_size' => $store->size(), 'root' => $hex($store->root())], 201);
     }
@@ -336,7 +342,7 @@ case 'append':
         if (!isset($in[$k]) || !is_string($in[$k])) out(['error' => "missing $k"], 400);
     $r = $appender->append($unhex($in['genesis'], 32), $unhex($in['entry']),
                            $unhex($in['pubkey']), $unhex($in['signature']));
-    if (!$r->ok) out(['error' => $r->error], $r->status);
+    if (!$r->ok) $refuse($r);
     out(['seq' => $r->seq, 'tree_size' => $store->size(), 'root' => $hex($store->root())], 201);
 
 default:

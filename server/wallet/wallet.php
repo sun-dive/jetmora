@@ -185,8 +185,8 @@ try {
       fn(string $pre) => "\x01\x01"           // one byte push, which the lock drops: JF's PREIMAGE is native
     );
 
-    // ★★★ THE COVENANT DECIDES. §4.1: an operator checks only well-formedness and authorisation, so
-    //   nothing upstream will catch a bad tick. The wallet is the last place it can be caught.
+    // ★★★ THE COVENANT DECIDES. The writer runs it before signing, as the thread service runs it before
+    //   recording (spec §3.3): a host running an older service may not, so the verdict is never left to it.
     [$okc, $why] = covenant_verdict($tick['entry'], $script, pack('P', (int)$t['value']));
     if (!$okc) throw new RuntimeException("the covenant refused this tick — {$why}");
 
@@ -361,7 +361,7 @@ form.inline > div{flex:1;min-width:260px}
 </div>
 
 <p class="note">
-★ Every tick runs the covenant before signing. §4.1 says an operator checks only that an entry is
-well-formed and authorised — <b>it does not check the covenant</b> — so nothing upstream would catch a
-bad tick. This page is the last place it can be caught, which is why the verdict is shown.
+★ Every tick runs the covenant before signing, and the verdict is shown. jetmora's thread service runs
+it again before recording a tick, but <b>a host running an older service may not</b>, so the verdict is
+never left to the host.
 </p>

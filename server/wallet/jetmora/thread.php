@@ -8,16 +8,14 @@
 //   it a chain. Every entry had `unlocking = 0`: no signature, no preimage, nothing enforced. ⇒ See
 //   `server/covenant-entry.php`, which now makes that shape unrepresentable.
 //
-// ⚠⚠ TWO SIGNATURES EXIST AND THEY ARE NOT THE SAME THING (spec §4.0a). A wallet produces BOTH, and
-//   confusing them is what puts an interpreter in the chain:
+// ⚠⚠ TWO SIGNATURES EXIST AND THEY ARE NOT THE SAME THING (spec §4.0a). A wallet produces BOTH:
 //
-//   | the covenant's internal `CHECKSIG` | via `OP_PUSH_TX`, over the entry's PREIMAGE ⇒ proves the STATE TRANSITION is what the program permits. **A verifier's concern. The chain MUST NOT evaluate it** |
-//   | the append authorisation          | over the ENTRY BYTES ⇒ proves WHO SUBMITTED this. **The chain's only concern** |
+//   | the covenant's internal `CHECKSIG` | via `OP_PUSH_TX`, over the entry's PREIMAGE ⇒ proves the STATE TRANSITION is what the program permits. **Run in the tick's script, by every verifier and by the thread service (judge below)** |
+//   | the append authorisation          | over the ENTRY BYTES ⇒ proves WHO SUBMITTED this. **Checked by the thread service before the script runs** |
 //
-// ⚠⚠⚠ AND THE CONSEQUENCE FOR A WALLET, WHICH IS EASY TO MISS: §4.1 says an operator checks only that
-//   the entry is well-formed and signed by an authorised key. **It does NOT check the covenant.** So a
-//   chain will happily accept an entry whose covenant refuses it — and a verifier will later reject it.
-//   ⇒ **Nothing upstream will catch a bad tick. The wallet is the last place it can be caught.**
+// ⚠⚠⚠ AND THE CONSEQUENCE FOR A WALLET: the thread service runs each tick's script (judge below, from
+//   server/append.php) and refuses a tick the script refuses, so a bad tick is not recorded.
+//   ⇒ **Judge the tick before sending it.** The wallet is the first place a bad tick can be caught.
 declare(strict_types=1);
 require_once __DIR__ . '/../../covenant-entry.php';
 require_once __DIR__ . '/../../preimage.php';
@@ -167,6 +165,7 @@ final class CovenantThread
    * the preimage is built here from the entry and the tip, never taken from the caller; that interpreter's
    * verifyTick judges the rest.
    * @throws VersionError when this host has no interpreter that judges ticks for the version named.
+   * @throws JfHostError when it lacks a library that interpreter needs (no verdict, never a refusal).
    * @return array{accepted: bool, stack?: GMP[], error?: string}
    */
   public static function judge(array $entry, int $inputIndex, string $prevLocking, string $prevValue): array
@@ -180,7 +179,7 @@ final class CovenantThread
   /**
    * ⚠ The APPEND AUTHORISATION — the second signature, over the ENTRY BYTES.
    * ⛔ NOT the covenant's `CHECKSIG`, which is over the PREIMAGE and lives inside the unlocking script.
-   * ★ This is the only one the chain checks (§4.1), and the only one it is allowed to check.
+   * ★ The thread service checks this one first (§4.1); the tick's script, run by judge(), checks the other.
    */
   public static function appendSighash(string $entryBytes): string
   {

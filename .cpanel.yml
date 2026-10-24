@@ -46,7 +46,7 @@ deployment:
     - /bin/mkdir -p "$HOME/jetmora-data" && /bin/chmod 700 "$HOME/jetmora-data"
     - /bin/mkdir -p "$DEPLOYPATH/threads"
     - /bin/cp server/threads.php "$DEPLOYPATH/threads/index.php"   # the only endpoint; the rest are includes
-    # every file threads.php reaches through require: a missing one is a fatal error before any JSON can answer
+    # every file threads.php requires up front: a missing one is a fatal error before any JSON can answer
     - /bin/cp server/store.php "$DEPLOYPATH/threads/store.php"
     - /bin/cp server/merkle.php "$DEPLOYPATH/threads/merkle.php"
     - /bin/cp server/genesis.php "$DEPLOYPATH/threads/genesis.php"
@@ -55,6 +55,14 @@ deployment:
     - /bin/cp server/secp256k1.php "$DEPLOYPATH/threads/secp256k1.php"
     - /bin/cp server/rfc6979.php "$DEPLOYPATH/threads/rfc6979.php"
     - /bin/cp server/covenant-entry.php "$DEPLOYPATH/threads/covenant-entry.php"
+    # the judge, which append.php loads only when a tick is appended: a missing one breaks appends, never reads.
+    # thread.php requires ../../ (threads/): covenant-entry, preimage, dispatch; the JF interpreter requires
+    # ops-jf and secp256k1 (rfc6979). JF is the only set served here: an SV or BT tick gets no verdict.
+    - /bin/cp server/dispatch.php "$DEPLOYPATH/threads/dispatch.php"
+    - /bin/cp server/preimage.php "$DEPLOYPATH/threads/preimage.php"
+    - /bin/cp server/interpreter-jf.php "$DEPLOYPATH/threads/interpreter-jf.php"
+    - /bin/cp server/ops-jf.php "$DEPLOYPATH/threads/ops-jf.php"
+    - /bin/mkdir -p "$DEPLOYPATH/threads/wallet/jetmora" && /bin/cp server/wallet/jetmora/thread.php "$DEPLOYPATH/threads/wallet/jetmora/thread.php"
     # ⛔ /log/ was the first home of the thread service, and the name was wrong: it is not a log. Removed, no redirect.
     - /bin/rm -rf "$DEPLOYPATH/log"
     # ⚠ emit-vectors.php and probe.php are development tools and are deliberately NOT deployed.
