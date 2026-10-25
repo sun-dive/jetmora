@@ -71,7 +71,7 @@ foreach ($in['cases'] as $c) {
     continue;
   }
   $r += ['accepted' => $v['accepted'],
-         'result' => isset($v['stack']) ? ['stack' => array_map(fn($g) => gmp_strval($g), $v['stack'])] : ['error' => bin2hex($v['error'])]];
+         'result' => isset($v['stack']) ? ['stack' => array_map('strval', $v['stack'])] : ['error' => bin2hex($v['error'])]];
   $out[] = $r;
 }
 echo json_encode($out);

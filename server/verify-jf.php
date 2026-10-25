@@ -17,8 +17,6 @@
 declare(strict_types=1);
 require_once __DIR__ . '/interpreter-jf.php';
 
-if (!extension_loaded('gmp')) { fwrite(STDERR, "⛔ ext-gmp is required.\n"); exit(2); }
-
 // ⚠ the assembler now lives in jf-asm.php — the wallet needs it too
 require_once __DIR__ . '/jf-asm.php';
 
@@ -391,7 +389,7 @@ foreach ($T as $case) {
   $vm = new InterpreterJF();
   try {
     $stack = $vm->run($script);
-    $got = array_map(fn($g) => gmp_strval($g), $stack);
+    $got = array_map('strval', $stack);
     if ($wantErr !== null || $wantDiag !== null) {
       $fail++; $failures[] = [$id, 'expected an abort', 'got stack ' . implode(' ', $got)];
     } elseif ($got === array_map('strval', $want)) {

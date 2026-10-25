@@ -11,9 +11,12 @@
 // reach `SV` or `BT`. The only thing shared across sets is the conformance vector file.
 //
 // ── THE ARITHMETIC RULE, AND IT IS NOT NEGOTIABLE ────────────────────────────────────────────────────
-// ⚠⚠⚠ NEVER touch PHP's native int for a cell. `PHP_INT_MAX + 1` silently becomes a float: precision
-// gone, NO error raised. Fatal for a machine whose product is the same answer every time. And a cell
-// must WRAP at 64 bits, which a float cannot do. Everything numeric goes through GMP, masked on store.
+// A cell is a PHP int: 64 bits, two's complement. The constructor refuses a host whose int is narrower, so
+// no extension is needed for a cell. ⚠⚠⚠ But `PHP_INT_MAX + 1` silently becomes a float: precision gone,
+// NO error raised. Fatal for a machine whose product is the same answer every time, and a cell must WRAP at
+// 64 bits, which a float cannot do. ⇒ No cell is made by a bare `+`, `-` or `*` that can overflow: add(),
+// sub(), mul() and the double-width helpers below wrap mod 2^64. Under strict_types a float can never sit on
+// a stack: push(int) refuses one.
 //
 // ── CELLS AND STRINGS ────────────────────────────────────────────────────────────────────────────────
 // §10.4: the version names the set and THE SET FIXES THE WIDTH. `JF` is 64-bit cells.
@@ -44,9 +47,10 @@ class JfScriptError extends RuntimeException
 }
 
 /**
- * THE HOST CANNOT JUDGE: a capability it lacks (ext/gmp, which every cell needs, or Ed25519 without
- * ext/sodium). It is not a refusal, and verifyTick passes it on rather than turn it into one: a tick is
- * never refused here and accepted there because one host is missing a library.
+ * THE HOST CANNOT JUDGE: a capability it lacks (a 64-bit int, which every cell is; ext/gmp, which secp256k1.php
+ * computes CHECKSIG with; or ext/sodium for Ed25519). It is not a refusal, and verifyTick
+ * passes it on rather than turn it into one: a tick is never refused here and accepted there because one
+ * host is missing a library.
  */
 final class JfHostError extends RuntimeException {}
 
@@ -63,10 +67,10 @@ final class JfBankUnsupported extends JfScriptError
 
 final class InterpreterJF
 {
-  /** @var GMP[] data stack   */ private array $ds = [];
-  /** @var GMP[] return stack */ private array $rs = [];
+  /** @var int[] data stack   */ private array $ds = [];
+  /** @var int[] return stack */ private array $rs = [];
   /** @var array<int,array{n_in:int,n_out:int,body:string}> */ private array $defs = [];
-  /** @var GMP[][] locals frames */ private array $frames = [];
+  /** @var int[][] locals frames */ private array $frames = [];
   private string $mem = '';
   /** @var array<int,array{in:string,pos:int,inmax:int,out:string,max:int,room:int}> one frame per active INVOKE */
   private array $chan = [];
@@ -91,9 +95,6 @@ final class InterpreterJF
   /** Signature/preimage context. ⚠ Optional: a bare script has no transaction. */
   private ?string $preimage = null;
 
-  private static ?GMP $M64 = null;   // 2^64
-  private static ?GMP $H64 = null;   // 2^63
-
   /**
    * These limits are for run(), the interpreter as a tool. A tick is judged by verifyTick(), with JF
    * revision 3's own limits (the TICK_ constants), the same for every host.
@@ -106,47 +107,99 @@ final class InterpreterJF
     private int $pushSize = 65536,
     private int $maxSigOps = 100,
   ) {
-    // every cell is a GMP number: a host without ext/gmp cannot run a single instruction, so it cannot judge
-    if (!extension_loaded('gmp')) throw new JfHostError('JF needs ext/gmp on this host');
-    self::$M64 ??= gmp_pow(2, 64);
-    self::$H64 ??= gmp_pow(2, 63);
+    // every cell is a 64-bit int: a host with a narrower one cannot run a single instruction, so it cannot judge
+    if (PHP_INT_SIZE < 8) throw new JfHostError('JF needs 64-bit integers on this host');
   }
 
   public function setPreimage(?string $p): void { $this->preimage = $p; }
 
   // ── cells ──────────────────────────────────────────────────────────────────────────────────────────
-  /** Wrap into a signed 64-bit cell. ⚠ Two's complement WRAPPING, which is what a fixed cell means. */
-  private static function cell(GMP $v): GMP {
-    $u = gmp_mod($v, self::$M64);                       // gmp_mod is non-negative: what we want here
-    return gmp_cmp($u, self::$H64) >= 0 ? gmp_sub($u, self::$M64) : $u;
+  // Each helper gives what a cell holds: the true result mod 2^64, read as two's complement. An "unsigned"
+  // argument is the same 64 bits read from 0 to 2^64 - 1.
+  /** a + b. On overflow a and b have the same sign: flipping the top bit of one keeps the low 64 bits of the
+   *  sum, and that sum cannot overflow. */
+  private static function add(int $a, int $b): int {
+    $r = $a + $b;
+    return is_int($r) ? $r : (($a ^ PHP_INT_MIN) + $b) ^ PHP_INT_MIN;
   }
-  /** Unsigned view of a cell, for U< U> and shifts. */
-  private static function u(GMP $v): GMP {
-    return gmp_sign($v) < 0 ? gmp_add($v, self::$M64) : $v;
+  /** a - b. On overflow a and b differ in sign, and the same flip applies. */
+  private static function sub(int $a, int $b): int {
+    $r = $a - $b;
+    return is_int($r) ? $r : (($a ^ PHP_INT_MIN) - $b) ^ PHP_INT_MIN;
+  }
+  /** -a. The most negative cell is its own negation: 2^63 wraps back to it. */
+  private static function neg(int $a): int { return $a === PHP_INT_MIN ? $a : -$a; }
+  /** a × b: the low 64 bits of the product. */
+  private static function mul(int $a, int $b): int {
+    $r = $a * $b;
+    return is_int($r) ? $r : self::umul($a, $b)[1];
+  }
+  /** a < b, both unsigned. */
+  private static function ult(int $a, int $b): bool { return ($a ^ PHP_INT_MIN) < ($b ^ PHP_INT_MIN); }
+  /** a >> n, logical: the top n bits are zeros. */
+  private static function lshr(int $a, int $n): int {
+    return $n === 0 ? $a : ($n >= 64 ? 0 : ($a >> $n) & (PHP_INT_MAX >> ($n - 1)));
+  }
+  /** A cell written as unsigned decimal, for a message about a value past PHP_INT_MAX. */
+  private static function udec(int $a): string { return sprintf('%u', $a); }
+  /**
+   * The 128-bit product of a and b, both unsigned, as [hi, lo]. In 16-bit limbs, so no partial product reaches
+   * 2^32 and no column 2^35: 32-bit halves would not do, as 0xffffffff × 0xffffffff is past PHP_INT_MAX.
+   */
+  private static function umul(int $a, int $b): array {
+    $x = [$a & 0xffff, ($a >> 16) & 0xffff, ($a >> 32) & 0xffff, ($a >> 48) & 0xffff];
+    $y = [$b & 0xffff, ($b >> 16) & 0xffff, ($b >> 32) & 0xffff, ($b >> 48) & 0xffff];
+    $col = [0, 0, 0, 0, 0, 0, 0, 0];
+    for ($i = 0; $i < 4; $i++) for ($j = 0; $j < 4; $j++) $col[$i + $j] += $x[$i] * $y[$j];
+    $hi = $lo = $carry = 0;
+    for ($k = 0; $k < 8; $k++) {
+      $t = $col[$k] + $carry; $carry = $t >> 16;
+      if ($k < 4) $lo |= ($t & 0xffff) << (16 * $k); else $hi |= ($t & 0xffff) << (16 * ($k - 4));
+    }
+    return [$hi, $lo];
+  }
+  /** The signed 128-bit product, as [hi, lo]: the unsigned one, less b × 2^64 when a is negative and less
+   *  a × 2^64 when b is. */
+  private static function smul(int $a, int $b): array {
+    [$hi, $lo] = self::umul($a, $b);
+    if ($a < 0) $hi = self::sub($hi, $b);
+    if ($b < 0) $hi = self::sub($hi, $a);
+    return [$hi, $lo];
+  }
+  /**
+   * hi:lo ÷ d, all unsigned and d not zero, as [quotient hi, quotient lo, remainder]. The quotient is 128 bits
+   * wide; a caller keeps its low 64, as a cell keeps them. One bit at a time, from the top: when the partial
+   * remainder has its top bit set, doubling it passes 2^64, which is more than d, so d is taken away.
+   */
+  private static function udiv128(int $hi, int $lo, int $d): array {
+    if ($hi === 0 && $lo >= 0 && $d > 0) return [0, intdiv($lo, $d), $lo % $d];
+    $qhi = $qlo = $r = 0;
+    for ($k = $hi === 0 ? 63 : 127; $k >= 0; $k--) {
+      $top = $r < 0;
+      $r = ($r << 1) | ($k >= 64 ? ($hi >> ($k - 64)) & 1 : ($lo >> $k) & 1);
+      if ($top || !self::ult($r, $d)) {
+        $r = self::sub($r, $d);
+        if ($k >= 64) $qhi |= 1 << ($k - 64); else $qlo |= 1 << $k;
+      }
+    }
+    return [$qhi, $qlo, $r];
   }
 
   // ── stacks ─────────────────────────────────────────────────────────────────────────────────────────
   /** need($n + 1) for an index that may be PHP_INT_MAX, which `+ 1` would turn into a float. */
   private function needMore(int $n): void {
     if ($n >= count($this->ds))
-      throw new JfScriptError('stack underflow: need ' . gmp_strval(gmp_add(gmp_init($n), 1)) . ', have ' . count($this->ds));
+      throw new JfScriptError('stack underflow: need ' . self::udec(self::add($n, 1)) . ', have ' . count($this->ds));
   }
   private function need(int $n): void {
     if (count($this->ds) < $n) throw new JfScriptError("stack underflow: need $n, have " . count($this->ds));
   }
-  private function pop(): GMP {
+  private function pop(): int {
     if (!$this->ds) throw new JfScriptError('stack underflow');
     return array_pop($this->ds);
   }
-  private function push(GMP $v): void { $this->ds[] = self::cell($v); }
-  private function pushI(int $v): void { $this->ds[] = self::cell(gmp_init($v)); }
-  private function popInt(): int {
-    $v = $this->pop();
-    if (gmp_cmp($v, PHP_INT_MAX) > 0 || gmp_cmp($v, PHP_INT_MIN) < 0)
-      throw new JfScriptError('cell out of host int range');
-    return gmp_intval($v);
-  }
-  private function flag(bool $b): void { $this->pushI($b ? -1 : 0); }   // Forth TRUE is all bits set
+  private function push(int $v): void { $this->ds[] = $v; }
+  private function flag(bool $b): void { $this->ds[] = $b ? -1 : 0; }   // Forth TRUE is all bits set
 
   // ── memory ─────────────────────────────────────────────────────────────────────────────────────────
   /** The offset of $addr in program memory, which lies at mbase. */
@@ -160,18 +213,16 @@ final class InterpreterJF
   /** $a + $off as an address. Past PHP_INT_MAX it is out of range, said as the JavaScript port says it. */
   private function at(int $a, int $off): int {
     if ($a > PHP_INT_MAX - $off)
-      throw new JfScriptError('memory out of range: addr=' . gmp_strval(gmp_add(gmp_init($a), $off)) . ' len=8 size=' . $this->memSize);
+      throw new JfScriptError('memory out of range: addr=' . self::udec(self::add($a, $off)) . ' len=8 size=' . $this->memSize);
     return $a + $off;
   }
-  private function fetch(int $addr): GMP {
-    $le = $this->view($addr, 8);
-    return self::cell(gmp_import(strrev($le), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN));
+  /** A cell is 8 bytes in memory, little-endian two's complement: unpack('P') reads them as PHP's signed int. */
+  private function fetch(int $addr): int {
+    return unpack('P', $this->view($addr, 8))[1];
   }
-  private function store(int $addr, GMP $v): void {
+  private function store(int $addr, int $v): void {
     $o = $this->bounds($addr, 8);
-    $u  = self::u(self::cell($v));
-    $be = gmp_sign($u) === 0 ? '' : gmp_export($u, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
-    $le = strrev(str_pad($be, 8, "\x00", STR_PAD_LEFT));
+    $le = pack('P', $v);
     for ($k = 0; $k < 8; $k++) $this->mem[$o + $k] = $le[$k];
   }
   private function read(int $addr, int $len): string { return $this->view($addr, $len); }
@@ -201,7 +252,7 @@ final class InterpreterJF
     else $this->mem = substr_replace($this->mem, $b, $o, $n);
   }
   /** `( c-addr u -- )` popped as a pair, u on top. */
-  private function popSpan(): string { $u = $this->popInt(); $a = $this->popInt(); return $this->read($a, $u); }
+  private function popSpan(): string { $u = $this->pop(); $a = $this->pop(); return $this->read($a, $u); }
 
   // ── operands, read from the instruction stream ─────────────────────────────────────────────────────
   private static function i16(string $s, int $i): int {
@@ -291,7 +342,7 @@ final class InterpreterJF
    *   2  it runs, then the lock runs as a SECOND, separate run on the data stack and pushed bytes it left, so
    *      nothing in the first can jump into the second or end it;
    *   3  the tick is accepted when the lock leaves exactly one item and it is non-zero. Any error refuses it.
-   * @return array{accepted: bool, stack?: GMP[], error?: string}
+   * @return array{accepted: bool, stack?: int[], error?: string}
    */
   public static function verifyTick(string $unlocking, string $lock, ?string $preimage): array
   {
@@ -320,7 +371,7 @@ final class InterpreterJF
     } catch (Throwable $e) {
       return ['accepted' => false, 'error' => 'the interpreter faulted: ' . get_class($e)];   // no host paths
     }
-    return ['accepted' => count($vm->ds) === 1 && gmp_sign($vm->ds[0]) !== 0, 'stack' => $vm->ds];
+    return ['accepted' => count($vm->ds) === 1 && $vm->ds[0] !== 0, 'stack' => $vm->ds];
   }
 
   /** Byte pushes only: direct pushes (0 to 72 bytes) and STR8 / STR16 / STR32, each whole. */
@@ -341,7 +392,7 @@ final class InterpreterJF
   }
 
   // ── run ────────────────────────────────────────────────────────────────────────────────────────────
-  /** @return GMP[] the final data stack, bottom first. @throws JfScriptError */
+  /** @return int[] the final data stack, bottom first. @throws JfScriptError */
   public function run(string $script): array
   {
     $this->ds = $this->rs = $this->frames = $this->chan = [];
@@ -379,7 +430,7 @@ final class InterpreterJF
       }
       // ── small integers ──────────────────────────────────────────────────────────────────────────
       if ($op >= JF_SMALL0 && $op <= JF_SMALL_NEG1) {
-        $this->pushI($op === JF_SMALL_NEG1 ? -1 : $op - JF_SMALL0);
+        $this->push($op === JF_SMALL_NEG1 ? -1 : $op - JF_SMALL0);
         continue;
       }
       // ── bank escape ─────────────────────────────────────────────────────────────────────────────
@@ -403,7 +454,7 @@ final class InterpreterJF
         // ★ The output words RUN when the function declared a channel. `TYPE` `CR` `SPACE` `SPACES`
         //   are EMIT loops in every Forth, so refusing them while allowing EMIT would be arbitrary.
         // ★ HERE ( -- addr ): where a function's program memory starts (CORE 6.1.1650, with no ALLOT)
-        if ($word === 'HERE' && $this->chan) { $this->pushI($this->mbase); continue; }
+        if ($word === 'HERE' && $this->chan) { $this->push($this->mbase); continue; }
         if ($word !== false && isset(self::CHANNEL_WORDS[$word]) && $this->chan) {
           $this->channel($word);
           continue;                      // ⚠ exec() drives $i itself; step() is not on this path
@@ -455,7 +506,7 @@ final class InterpreterJF
     $this->charge($n);
     $at = $this->pbase + strlen($this->pmem);
     $this->pmem .= $b;
-    $this->pushI($at); $this->pushI($n);
+    $this->push($at); $this->push($n);
   }
   private function sigOp(int $n): void {
     $this->sigOps += $n;
@@ -474,9 +525,7 @@ final class InterpreterJF
         $w = [$L['LIT8'] => 1, $L['LIT16'] => 2, $L['LIT32'] => 4, $L['LIT64'] => 8][$op];
         if ($i + $w > strlen($code)) throw new JfScriptError('truncated literal');
         $le = substr($code, $i, $w);
-        $v  = gmp_import(strrev($le), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
-        if (ord($le[$w - 1]) & 0x80) $v = gmp_sub($v, gmp_pow(2, 8 * $w));   // sign-extend
-        $this->push($v);
+        $this->push(unpack('P', str_pad($le, 8, ord($le[$w - 1]) & 0x80 ? "\xff" : "\x00"))[1]);   // sign-extend
         return $i + $w;
       }
       case $L['LITBIG']: {
@@ -505,14 +554,14 @@ final class InterpreterJF
       case $W['ROT']:   $this->need(3); $n = count($this->ds); $x = $this->ds[$n-3];
                         $this->ds[$n-3] = $this->ds[$n-2]; $this->ds[$n-2] = $this->ds[$n-1]; $this->ds[$n-1] = $x; return $i;
       case $W['?DUP']:  $this->need(1); $t = $this->ds[count($this->ds) - 1];
-                        if (gmp_sign($t) !== 0) $this->ds[] = $t; return $i;
+                        if ($t !== 0) $this->ds[] = $t; return $i;
       case $W['NIP']:   $this->need(2); $n = count($this->ds); $this->ds[$n-2] = $this->ds[$n-1]; array_pop($this->ds); return $i;
       case $W['TUCK']:  $this->need(2); $n = count($this->ds); $b = $this->ds[$n-1];
                         $this->ds[$n-1] = $this->ds[$n-2]; $this->ds[$n-2] = $b; $this->ds[] = $b; return $i;
-      case $W['DEPTH']: $this->pushI(count($this->ds)); return $i;
-      case $W['PICK']:  $n = $this->popInt(); if ($n < 0) throw new JfScriptError('PICK: negative index'); $this->needMore($n);
+      case $W['DEPTH']: $this->push(count($this->ds)); return $i;
+      case $W['PICK']:  $n = $this->pop(); if ($n < 0) throw new JfScriptError('PICK: negative index'); $this->needMore($n);
                         $this->ds[] = $this->ds[count($this->ds) - 1 - $n]; return $i;
-      case $W['ROLL']:  $n = $this->popInt(); if ($n < 0) throw new JfScriptError('ROLL: negative index'); $this->needMore($n);
+      case $W['ROLL']:  $n = $this->pop(); if ($n < 0) throw new JfScriptError('ROLL: negative index'); $this->needMore($n);
                         $x = array_splice($this->ds, count($this->ds) - 1 - $n, 1); $this->ds[] = $x[0]; return $i;
       case $W['2DUP']:  $this->need(2); $n = count($this->ds);
                         $this->ds[] = $this->ds[$n-2]; $this->ds[] = $this->ds[$n-1]; return $i;
@@ -537,106 +586,110 @@ final class InterpreterJF
                         $this->ds[] = $this->rs[$n-2]; $this->ds[] = $this->rs[$n-1]; return $i;
 
       // ── arithmetic ────────────────────────────────────────────────────────────────────────────────
-      case $W['+']:  $b = $this->pop(); $this->push(gmp_add($this->pop(), $b)); return $i;
-      case $W['-']:  $b = $this->pop(); $this->push(gmp_sub($this->pop(), $b)); return $i;
-      case $W['*']:  $b = $this->pop(); $this->push(gmp_mul($this->pop(), $b)); return $i;
+      case $W['+']:  $b = $this->pop(); $this->push(self::add($this->pop(), $b)); return $i;
+      case $W['-']:  $b = $this->pop(); $this->push(self::sub($this->pop(), $b)); return $i;
+      case $W['*']:  $b = $this->pop(); $this->push(self::mul($this->pop(), $b)); return $i;
       case $W['/']:  $b = $this->pop(); $a = $this->pop(); $this->push(self::divT($a, $b)); return $i;
       case $W['MOD']: $b = $this->pop(); $a = $this->pop(); $this->push(self::modT($a, $b)); return $i;
       case $W['/MOD']: $b = $this->pop(); $a = $this->pop();
                        $this->push(self::modT($a, $b)); $this->push(self::divT($a, $b)); return $i;
-      // ★ */ and */MOD keep the intermediate at DOUBLE width — that is the whole point of them, and
-      //   GMP gives it for free. Rounding down to a cell first would be a different word.
+      // ★ */ and */MOD keep the intermediate at DOUBLE width: that is the whole point of them.
+      //   Rounding down to a cell first would be a different word.
       case $W['*/']:  $c = $this->pop(); $b = $this->pop(); $a = $this->pop();
-                      $this->push(self::divT(gmp_mul($a, $b), $c)); return $i;
+                      $this->push(self::mulDivT($a, $b, $c)[1]); return $i;
       case $W['*/MOD']: $c = $this->pop(); $b = $this->pop(); $a = $this->pop();
-                      $p = gmp_mul($a, $b);
-                      $this->push(self::modT($p, $c)); $this->push(self::divT($p, $c)); return $i;
-      case $W['1+']: $this->push(gmp_add($this->pop(), 1)); return $i;
-      case $W['1-']: $this->push(gmp_sub($this->pop(), 1)); return $i;
-      case $W['2*']: $this->push(gmp_mul($this->pop(), 2)); return $i;
-      case $W['2/']: $this->push(gmp_div_q($this->pop(), 2, GMP_ROUND_MINUSINF)); return $i;  // arithmetic shift
-      case $W['ABS']: $this->push(gmp_abs($this->pop())); return $i;
-      case $W['NEGATE']: $this->push(gmp_neg($this->pop())); return $i;
-      case $W['MIN']: $b = $this->pop(); $a = $this->pop(); $this->push(gmp_cmp($a,$b) <= 0 ? $a : $b); return $i;
-      case $W['MAX']: $b = $this->pop(); $a = $this->pop(); $this->push(gmp_cmp($a,$b) >= 0 ? $a : $b); return $i;
+                      [$r, $q] = self::mulDivT($a, $b, $c);
+                      $this->push($r); $this->push($q); return $i;
+      case $W['1+']: $this->push(self::add($this->pop(), 1)); return $i;
+      case $W['1-']: $this->push(self::sub($this->pop(), 1)); return $i;
+      case $W['2*']: $this->push($this->pop() << 1); return $i;      // PHP's << keeps the low 64 bits
+      case $W['2/']: $this->push($this->pop() >> 1); return $i;      // arithmetic shift: floor(a / 2)
+      case $W['ABS']: $a = $this->pop(); $this->push($a < 0 ? self::neg($a) : $a); return $i;
+      case $W['NEGATE']: $this->push(self::neg($this->pop())); return $i;
+      case $W['MIN']: $b = $this->pop(); $a = $this->pop(); $this->push($a <= $b ? $a : $b); return $i;
+      case $W['MAX']: $b = $this->pop(); $a = $this->pop(); $this->push($a >= $b ? $a : $b); return $i;
       // ⚠ FM/MOD is FLOORED, SM/REM is SYMMETRIC. They are two words BECAUSE they differ; collapsing
       //   them onto one division is the classic Forth implementation bug.
       case $W['FM/MOD']: $b = $this->pop(); $a = $this->pop();
-                         if (gmp_sign($b) === 0) throw new JfScriptError('FM/MOD by zero');
-                         $q = gmp_div_q($a, $b, GMP_ROUND_MINUSINF);
-                         $this->push(gmp_sub($a, gmp_mul($q, $b))); $this->push($q); return $i;
+                         if ($b === 0) throw new JfScriptError('FM/MOD by zero');
+                         $q = self::divT($a, $b); $r = self::modT($a, $b);
+                         // floored from truncated: when the remainder's sign differs from the divisor's, the
+                         // quotient is one less and the remainder one divisor more
+                         if ($r !== 0 && ($r < 0) !== ($b < 0)) { $q--; $r += $b; }
+                         $this->push($r); $this->push($q); return $i;
       case $W['SM/REM']: $b = $this->pop(); $a = $this->pop();
                          $this->push(self::modT($a, $b)); $this->push(self::divT($a, $b)); return $i;
-      case $W['UM*']:  $b = self::u($this->pop()); $a = self::u($this->pop());
-                       $p = gmp_mul($a, $b);
-                       $this->push(gmp_mod($p, self::$M64));
-                       $this->push(gmp_div_q($p, self::$M64)); return $i;
-      case $W['UM/MOD']: $b = self::u($this->pop()); $hi = self::u($this->pop()); $lo = self::u($this->pop());
-                       if (gmp_sign($b) === 0) throw new JfScriptError('UM/MOD by zero');
-                       $d = gmp_add(gmp_mul($hi, self::$M64), $lo);
-                       $this->push(gmp_mod($d, $b)); $this->push(gmp_div_q($d, $b)); return $i;
-      case $W['M*']:   $b = $this->pop(); $a = $this->pop(); $p = gmp_mul($a, $b);
-                       $this->push(gmp_mod(self::u2($p), self::$M64));
-                       $this->push(gmp_div_q($p, self::$M64, GMP_ROUND_MINUSINF)); return $i;
+      case $W['UM*']:  $b = $this->pop(); $a = $this->pop();
+                       [$hi, $lo] = self::umul($a, $b);
+                       $this->push($lo); $this->push($hi); return $i;
+      case $W['UM/MOD']: $b = $this->pop(); $hi = $this->pop(); $lo = $this->pop();
+                       if ($b === 0) throw new JfScriptError('UM/MOD by zero');
+                       [, $q, $r] = self::udiv128($hi, $lo, $b);
+                       $this->push($r); $this->push($q); return $i;
+      case $W['M*']:   $b = $this->pop(); $a = $this->pop();
+                       [$hi, $lo] = self::smul($a, $b);
+                       $this->push($lo); $this->push($hi); return $i;
       case $W['S>D']:  $this->need(1); $a = $this->ds[count($this->ds) - 1];
-                       $this->pushI(gmp_sign($a) < 0 ? -1 : 0); return $i;
+                       $this->push($a < 0 ? -1 : 0); return $i;
 
       // ── logic ─────────────────────────────────────────────────────────────────────────────────────
-      case $W['AND']:    $b = $this->pop(); $this->push(gmp_and(self::u($this->pop()), self::u($b))); return $i;
-      case $W['OR']:     $b = $this->pop(); $this->push(gmp_or (self::u($this->pop()), self::u($b))); return $i;
-      case $W['XOR']:    $b = $this->pop(); $this->push(gmp_xor(self::u($this->pop()), self::u($b))); return $i;
-      case $W['INVERT']: $this->push(gmp_sub(gmp_neg($this->pop()), 1)); return $i;   // ~x == -x-1
-      case $W['LSHIFT']: $n = $this->popInt(); $a = self::u($this->pop());
+      case $W['AND']:    $b = $this->pop(); $this->push($this->pop() & $b); return $i;
+      case $W['OR']:     $b = $this->pop(); $this->push($this->pop() | $b); return $i;
+      case $W['XOR']:    $b = $this->pop(); $this->push($this->pop() ^ $b); return $i;
+      case $W['INVERT']: $this->push(~$this->pop()); return $i;
+      case $W['LSHIFT']: $n = $this->pop(); $a = $this->pop();
                          if ($n < 0) throw new JfScriptError('LSHIFT: negative count');
-                         $this->push($n >= 64 ? gmp_init(0) : gmp_mul($a, gmp_pow(2, $n))); return $i;
-      case $W['RSHIFT']: $n = $this->popInt(); $a = self::u($this->pop());   // ⚠ LOGICAL, not arithmetic
+                         $this->push($n >= 64 ? 0 : $a << $n); return $i;
+      case $W['RSHIFT']: $n = $this->pop(); $a = $this->pop();   // ⚠ LOGICAL, not arithmetic
                          if ($n < 0) throw new JfScriptError('RSHIFT: negative count');
-                         $this->push($n >= 64 ? gmp_init(0) : gmp_div_q($a, gmp_pow(2, $n))); return $i;
+                         $this->push(self::lshr($a, $n)); return $i;
 
       // ── comparison ────────────────────────────────────────────────────────────────────────────────
-      case $W['=']:   $b = $this->pop(); $this->flag(gmp_cmp($this->pop(), $b) === 0); return $i;
-      case $W['<>']:  $b = $this->pop(); $this->flag(gmp_cmp($this->pop(), $b) !== 0); return $i;
-      case $W['<']:   $b = $this->pop(); $this->flag(gmp_cmp($this->pop(), $b) <  0); return $i;
-      case $W['>']:   $b = $this->pop(); $this->flag(gmp_cmp($this->pop(), $b) >  0); return $i;
-      case $W['U<']:  $b = self::u($this->pop()); $this->flag(gmp_cmp(self::u($this->pop()), $b) < 0); return $i;
-      case $W['U>']:  $b = self::u($this->pop()); $this->flag(gmp_cmp(self::u($this->pop()), $b) > 0); return $i;
-      case $W['0=']:  $this->flag(gmp_sign($this->pop()) === 0); return $i;
-      case $W['0<>']: $this->flag(gmp_sign($this->pop()) !== 0); return $i;
-      case $W['0<']:  $this->flag(gmp_sign($this->pop()) <  0); return $i;
-      case $W['0>']:  $this->flag(gmp_sign($this->pop()) >  0); return $i;
-      case $W['WITHIN']: $hi = self::u($this->pop()); $lo = self::u($this->pop()); $t = self::u($this->pop());
+      case $W['=']:   $b = $this->pop(); $this->flag($this->pop() === $b); return $i;
+      case $W['<>']:  $b = $this->pop(); $this->flag($this->pop() !== $b); return $i;
+      case $W['<']:   $b = $this->pop(); $this->flag($this->pop() <  $b); return $i;
+      case $W['>']:   $b = $this->pop(); $this->flag($this->pop() >  $b); return $i;
+      case $W['U<']:  $b = $this->pop(); $this->flag(self::ult($this->pop(), $b)); return $i;
+      case $W['U>']:  $b = $this->pop(); $this->flag(self::ult($b, $this->pop())); return $i;
+      case $W['0=']:  $this->flag($this->pop() === 0); return $i;
+      case $W['0<>']: $this->flag($this->pop() !== 0); return $i;
+      case $W['0<']:  $this->flag($this->pop() <  0); return $i;
+      case $W['0>']:  $this->flag($this->pop() >  0); return $i;
+      case $W['WITHIN']: $hi = $this->pop(); $lo = $this->pop(); $t = $this->pop();
                          // Forth's WITHIN is circular: ( test lo hi -- flag ), lo inclusive, hi exclusive
-                         $this->flag(gmp_cmp(gmp_mod(gmp_sub($t, $lo), self::$M64),
-                                             gmp_mod(gmp_sub($hi, $lo), self::$M64)) < 0); return $i;
+                         $this->flag(self::ult(self::sub($t, $lo), self::sub($hi, $lo))); return $i;
 
       // ── constants ─────────────────────────────────────────────────────────────────────────────────
-      case $W['TRUE']:  $this->pushI(-1); return $i;
-      case $W['FALSE']: $this->pushI(0);  return $i;
-      case $W['BL']:    $this->pushI(32); return $i;
+      case $W['TRUE']:  $this->push(-1); return $i;
+      case $W['FALSE']: $this->push(0);  return $i;
+      case $W['BL']:    $this->push(32); return $i;
 
       // ── memory ────────────────────────────────────────────────────────────────────────────────────
-      case $W['@']:  $this->push($this->fetch($this->popInt())); return $i;
-      case $W['!']:  $a = $this->popInt(); $this->store($a, $this->pop()); return $i;
-      case $W['C@']: $this->pushI(ord($this->read($this->popInt(), 1))); return $i;
-      case $W['C!']: $a = $this->popInt(); $v = $this->popInt();
+      case $W['@']:  $this->push($this->fetch($this->pop())); return $i;
+      case $W['!']:  $a = $this->pop(); $this->store($a, $this->pop()); return $i;
+      case $W['C@']: $this->push(ord($this->read($this->pop(), 1))); return $i;
+      case $W['C!']: $a = $this->pop(); $v = $this->pop();
                      $this->write($a, chr($v & 0xff)); return $i;
-      case $W['+!']: $a = $this->popInt(); $this->store($a, gmp_add($this->fetch($a), $this->pop())); return $i;
-      case $W['2@']: $a = $this->popInt();
+      case $W['+!']: $a = $this->pop(); $this->store($a, self::add($this->fetch($a), $this->pop())); return $i;
+      case $W['2@']: $a = $this->pop();
                      $this->push($this->fetch($this->at($a, 8))); $this->push($this->fetch($a)); return $i;
-      case $W['2!']: $a = $this->popInt(); $lo = $this->pop(); $hi = $this->pop();
+      case $W['2!']: $a = $this->pop(); $lo = $this->pop(); $hi = $this->pop();
                      $this->store($a, $lo); $this->store($this->at($a, 8), $hi); return $i;
-      case $W['MOVE']: $u = $this->popInt(); $to = $this->popInt(); $from = $this->popInt();
+      case $W['MOVE']: $u = $this->pop(); $to = $this->pop(); $from = $this->pop();
                        $this->write($to, $this->read($from, $u)); return $i;
       // ⚠ The range is checked BEFORE the bytes are built: built first, a script asking for gigabytes ended the process.
-      case $W['FILL']: $ch = $this->popInt(); $u = $this->popInt(); $a = $this->popInt();
+      case $W['FILL']: $ch = $this->pop(); $u = $this->pop(); $a = $this->pop();
                        if ($u > 0) { $this->bounds($a, $u); $this->write($a, str_repeat(chr($ch & 0xff), $u)); } return $i;
-      case $W['ERASE']: $u = $this->popInt(); $a = $this->popInt();
+      case $W['ERASE']: $u = $this->pop(); $a = $this->pop();
                         if ($u > 0) { $this->bounds($a, $u); $this->write($a, str_repeat("\x00", $u)); } return $i;
-      case $W['CELLS']: $this->push(gmp_mul($this->pop(), 8)); return $i;
-      case $W['CELL+']: $this->push(gmp_add($this->pop(), 8)); return $i;
+      case $W['CELLS']: $this->push($this->pop() << 3); return $i;   // × 8, keeping the low 64 bits
+      case $W['CELL+']: $this->push(self::add($this->pop(), 8)); return $i;
       case $W['CHARS']: return $i;                                  // a char is one address unit
-      case $W['CHAR+']: $this->push(gmp_add($this->pop(), 1)); return $i;
-      case $W['ALIGNED']: $a = $this->pop(); $this->push(gmp_mul(gmp_div_q(gmp_add($a, 7), 8, GMP_ROUND_ZERO), 8)); return $i;
+      case $W['CHAR+']: $this->push(self::add($this->pop(), 1)); return $i;
+      // (a + 7) truncated to a multiple of 8, so a negative a rounds toward zero. Past PHP_INT_MAX - 7 the sum is
+      // 2^63 to 2^63 + 6, whose multiple of 8 is 2^63, which wraps to the most negative cell.
+      case $W['ALIGNED']: $a = $this->pop();
+                          $this->push($a > PHP_INT_MAX - 7 ? PHP_INT_MIN : intdiv($a + 7, 8) * 8); return $i;
 
       // ── loop runtime ──────────────────────────────────────────────────────────────────────────────
       // ⚠ DO pushes (limit, index) on the RETURN stack, as standard Forth does, so I / J / UNLOOP are
@@ -652,30 +705,30 @@ final class InterpreterJF
                     array_pop($this->rs); array_pop($this->rs);
                     return $this->jump($code, $i + 2, $off); }
       case $W['EXIT']: return strlen($code);
-      case $W['EXECUTE']: { $xt = $this->popInt();
+      case $W['EXECUTE']: { $xt = $this->pop();
                     $this->call($code, $xt, $covenant); return $i; }
 
       // ── branch primitives (jetmora) ───────────────────────────────────────────────────────────────
       case $W['BRANCH']:  { $off = self::i16($code, $i); return $this->jump($code, $i + 2, $off); }
       case $W['0BRANCH']: { $off = self::i16($code, $i); $i += 2;
-                    return gmp_sign($this->pop()) === 0 ? $this->jump($code, $i, $off) : $i; }
+                    return $this->pop() === 0 ? $this->jump($code, $i, $off) : $i; }
       case $W['(DO)']:  { $ix = $this->pop(); $lim = $this->pop();
                     $this->rs[] = $lim; $this->rs[] = $ix; return $i; }
       case $W['(?DO)']: { $off = self::i16($code, $i); $i += 2;
                     $ix = $this->pop(); $lim = $this->pop();
-                    if (gmp_cmp($ix, $lim) === 0) return $this->jump($code, $i, $off);
+                    if ($ix === $lim) return $this->jump($code, $i, $off);
                     $this->rs[] = $lim; $this->rs[] = $ix; return $i; }
       case $W['(LOOP)']: case $W['(+LOOP)']: {
                     $off = self::i16($code, $i); $i += 2;
                     if (count($this->rs) < 2) throw new JfScriptError('LOOP outside a loop');
-                    $step = $op === $W['(+LOOP)'] ? $this->pop() : gmp_init(1);
+                    $step = $op === $W['(+LOOP)'] ? $this->pop() : 1;
                     $ix   = array_pop($this->rs); $lim = $this->rs[count($this->rs) - 1];
-                    $nx   = self::cell(gmp_add($ix, $step));
+                    $nx   = self::add($ix, $step);
                     // ★ Forth's rule: terminate when the index CROSSES the limit, which is a different
                     //   test from equality and is why a +LOOP with a negative step terminates at all.
-                    $done = gmp_sign($step) >= 0
-                          ? (gmp_cmp($ix, $lim) < 0 && gmp_cmp($nx, $lim) >= 0) || gmp_cmp($ix,$lim) >= 0
-                          : (gmp_cmp($ix, $lim) > 0 && gmp_cmp($nx, $lim) <= 0) || gmp_cmp($ix,$lim) <= 0;
+                    $done = $step >= 0
+                          ? ($ix < $lim && $nx >= $lim) || $ix >= $lim
+                          : ($ix > $lim && $nx <= $lim) || $ix <= $lim;
                     if ($done) { array_pop($this->rs); return $i; }
                     $this->rs[] = $nx;
                     return $this->jump($code, $i, $off); }
@@ -701,32 +754,32 @@ final class InterpreterJF
 
       // ── byte strings ──────────────────────────────────────────────────────────────────────────────
       case $W['SIZE']:  $this->need(2); $this->ds[] = $this->ds[count($this->ds) - 1]; return $i;
-      case $W['SPLIT']: { $n = $this->popInt(); $u = $this->popInt(); $a = $this->popInt();
+      case $W['SPLIT']: { $n = $this->pop(); $u = $this->pop(); $a = $this->pop();
                     if ($n < 0 || $n > $u) throw new JfScriptError('SPLIT out of range');
                     // ★ No copy: a split of (addr,len) is two spans of the SAME bytes.
-                    $this->pushI($a); $this->pushI($n); $this->push(gmp_add(gmp_init($a), $n)); $this->pushI($u - $n); return $i; }
-      case $W['CAT']:   { $d = $this->popInt(); $s2 = $this->popSpan(); $s1 = $this->popSpan();
+                    $this->push($a); $this->push($n); $this->push(self::add($a, $n)); $this->push($u - $n); return $i; }
+      case $W['CAT']:   { $d = $this->pop(); $s2 = $this->popSpan(); $s1 = $this->popSpan();
                     $this->write($d, $s1 . $s2);
-                    $this->pushI($d); $this->pushI(strlen($s1) + strlen($s2)); return $i; }
-      case $W['SUBSTR']:{ $d = $this->popInt(); $cnt = $this->popInt(); $beg = $this->popInt();
+                    $this->push($d); $this->push(strlen($s1) + strlen($s2)); return $i; }
+      case $W['SUBSTR']:{ $d = $this->pop(); $cnt = $this->pop(); $beg = $this->pop();
                     $s = $this->popSpan();
                     if ($beg < 0 || $cnt < 0 || $beg + $cnt > strlen($s))
                       throw new JfScriptError('SUBSTR out of range');
                     $this->write($d, substr($s, $beg, $cnt));
-                    $this->pushI($d); $this->pushI($cnt); return $i; }
-      case $W['LEFT']:  { $d = $this->popInt(); $n = $this->popInt(); $s = $this->popSpan();
+                    $this->push($d); $this->push($cnt); return $i; }
+      case $W['LEFT']:  { $d = $this->pop(); $n = $this->pop(); $s = $this->popSpan();
                     if ($n < 0 || $n > strlen($s)) throw new JfScriptError('LEFT out of range');
-                    $this->write($d, substr($s, 0, $n)); $this->pushI($d); $this->pushI($n); return $i; }
-      case $W['RIGHT']: { $d = $this->popInt(); $n = $this->popInt(); $s = $this->popSpan();
+                    $this->write($d, substr($s, 0, $n)); $this->push($d); $this->push($n); return $i; }
+      case $W['RIGHT']: { $d = $this->pop(); $n = $this->pop(); $s = $this->popSpan();
                     if ($n < 0 || $n > strlen($s)) throw new JfScriptError('RIGHT out of range');
-                    $this->write($d, substr($s, strlen($s) - $n)); $this->pushI($d); $this->pushI($n); return $i; }
-      case $W['NUM2BIN']: { $d = $this->popInt(); $sz = $this->popInt(); $v = $this->pop();
+                    $this->write($d, substr($s, strlen($s) - $n)); $this->push($d); $this->push($n); return $i; }
+      case $W['NUM2BIN']: { $d = $this->pop(); $sz = $this->pop(); $v = $this->pop();
                     if ($sz < 0 || $sz > 0x10000) throw new JfScriptError('NUM2BIN size out of range');
-                    $u  = self::u($v);
-                    $be = gmp_sign($u) === 0 ? '' : gmp_export($u, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
-                    if (strlen($be) > $sz) throw new JfScriptError('NUM2BIN does not fit');
-                    $this->write($d, strrev($be) . str_repeat("\x00", $sz - strlen($be)));
-                    $this->pushI($d); $this->pushI($sz); return $i; }
+                    // the cell, unsigned, little-endian, in as few bytes as it needs: none for 0
+                    $le = rtrim(pack('P', $v), "\x00");
+                    if (strlen($le) > $sz) throw new JfScriptError('NUM2BIN does not fit');
+                    $this->write($d, $le . str_repeat("\x00", $sz - strlen($le)));
+                    $this->push($d); $this->push($sz); return $i; }
       // ★★★ ( a1 u1 a2 u2 -- flag ) — THE COVENANT'S CENTRAL OPERATION.
       //   Comparing a computed hash against one from the preimage is what every covenant does, and
       //   nothing else could do it: `=` compares cells, and BIN2NUM on 32 bytes truncates to 64 bits.
@@ -737,8 +790,7 @@ final class InterpreterJF
 
       // a cell keeps the low 64 bits, which are the first 8 bytes
       case $W['BIN2NUM']: { $s = $this->popSpan();
-                    $this->push($s === '' ? gmp_init(0)
-                      : gmp_import(strrev(substr($s, 0, 8)), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN)); return $i; }
+                    $this->push(unpack('P', str_pad(substr($s, 0, 8), 8, "\x00"))[1]); return $i; }
 
       // ── crypto ────────────────────────────────────────────────────────────────────────────────────
       // `( c-addr u dest -- )` — the CALLER supplies the destination. No hidden allocator, because an
@@ -780,11 +832,11 @@ final class InterpreterJF
       // ⛔ NO dummy element. BTC's off-by-one is a bug `BT` carries for fidelity; `JF` is not trying to
       //    be Bitcoin, and reproducing a known bug in a new set would be an amputation in reverse.
       case $W['CHECKMULTISIG']: case $W['CHECKMULTISIGVERIFY']: {
-        $m = $this->popInt();
+        $m = $this->pop();
         if ($m < 0 || $m > 32) throw new JfScriptError('CHECKMULTISIG: bad signature count');
         $sigs = [];
         for ($k = 0; $k < $m; $k++) array_unshift($sigs, $this->popSpan());
-        $n = $this->popInt();
+        $n = $this->pop();
         if ($n < 0 || $n > 32 || $m > $n) throw new JfScriptError('CHECKMULTISIG: bad key count');
         $this->sigOp($n);
         $keys = [];
@@ -804,10 +856,10 @@ final class InterpreterJF
         return $i; }
 
       // ── transaction ───────────────────────────────────────────────────────────────────────────────
-      case $W['PREIMAGE']: { $this->covenantOnly('PREIMAGE', $covenant); $d = $this->popInt();
+      case $W['PREIMAGE']: { $this->covenantOnly('PREIMAGE', $covenant); $d = $this->pop();
         if ($this->preimage === null) throw new JfScriptError('PREIMAGE: no transaction context');
         $this->write($d, $this->preimage);
-        $this->pushI($d); $this->pushI(strlen($this->preimage)); return $i; }
+        $this->push($d); $this->push(strlen($this->preimage)); return $i; }
       // ⏭ The field accessors are slices of the preimage and are not built yet — see verify-jf.php.
       case $W['TXVERSION']: case $W['PREVOUTS-HASH']: case $W['SEQUENCES-HASH']: case $W['OUTPOINT']:
       case $W['SCRIPTCODE']: case $W['TXVALUE']: case $W['NSEQUENCE']: case $W['OUTPUTS-HASH']:
@@ -838,7 +890,7 @@ final class InterpreterJF
         $n = self::u8($code, $i); $i++;
         if ($i + $n > strlen($code)) throw new JfScriptError('truncated ABORT" message');
         $msg = substr($code, $i, $n); $i += $n;
-        if (gmp_sign($this->pop()) !== 0) throw JfScriptError::aborted($msg);
+        if ($this->pop() !== 0) throw JfScriptError::aborted($msg);
         return $i; }
     }
 
@@ -859,7 +911,7 @@ final class InterpreterJF
       if ($this->chan[$t]['max'] === 0)
         throw new JfScriptError("$word: this function declared no output channel (out_max is 0)");
       $b = match ($word) {
-        'EMIT'   => chr($this->popInt() & 0xff),
+        'EMIT'   => chr($this->pop() & 0xff),
         'CR'     => "\n",
         'SPACE'  => ' ',
         'SPACES' => $this->spaces($this->chan[$t]),
@@ -887,12 +939,12 @@ final class InterpreterJF
     $in = $this->chan[$t]['in'];
     if ($word === 'KEY') {                           // ( -- char )
       if ($this->chan[$t]['pos'] >= strlen($in)) throw new JfScriptError('KEY: input exhausted');
-      $this->pushI(ord($in[$this->chan[$t]['pos']++]));
+      $this->push(ord($in[$this->chan[$t]['pos']++]));
       return;
     }
     // ACCEPT ( c-addr +n1 -- +n2 ) — a LINE, as the standard says: up to n1 bytes, stopping at \n,
     // ⚠ and the newline is CONSUMED but NOT stored, which is the part that is easy to get wrong.
-    $n1 = $this->popInt(); $addr = $this->popInt();
+    $n1 = $this->pop(); $addr = $this->pop();
     if ($n1 < 0) throw new JfScriptError('ACCEPT: negative length');
     $pos = $this->chan[$t]['pos'];
     $take = min($n1, strlen($in) - $pos);
@@ -900,13 +952,13 @@ final class InterpreterJF
     if ($nl !== false && $nl < $pos + $take) { $got = substr($in, $pos, $nl - $pos); $this->chan[$t]['pos'] = $nl + 1; }
     else { $got = (string)substr($in, $pos, $take); $this->chan[$t]['pos'] = $pos + $take; }
     if ($got !== '') $this->write($addr, $got);
-    $this->pushI(strlen($got));
+    $this->push(strlen($got));
   }
 
   /** SPACES' bytes, refused BEFORE they are built when they would not fit the declared channel. */
   private function spaces(array $c): string
   {
-    $n = max(0, $this->popInt());
+    $n = max(0, $this->pop());
     if (strlen($c['out']) + $n > $c['max'])
       throw new JfScriptError(sprintf('output exceeds the declared out_max of %d', $c['max']));
     if (strlen($c['out']) + $n > $c['room']) throw new JfScriptError('push space exhausted');
@@ -946,7 +998,7 @@ final class InterpreterJF
   }
 
   private function hashTo(string $code, int $i, callable $h): int {
-    $d = $this->popInt(); $s = $this->popSpan();
+    $d = $this->pop(); $s = $this->popSpan();
     $this->write($d, $h($s));
     return $i;
   }
@@ -983,7 +1035,7 @@ final class InterpreterJF
     try {
       $inBytes = '';
       if ($inMax > 0) {
-        $u = $this->popInt(); $a = $this->popInt(); $taken = [gmp_init($a), gmp_init($u)];
+        $u = $this->pop(); $a = $this->pop(); $taken = [$a, $u];
         $inBytes = $this->read($a, $u);
         if (strlen($inBytes) > $inMax)
           throw new JfScriptError(sprintf('INVOKE %d: input is %d bytes, declared in_max %d',
@@ -1038,18 +1090,30 @@ final class InterpreterJF
   // ⚠⚠ SYMMETRIC (truncate toward zero): -7/2 = -3, and the remainder takes the sign of the DIVIDEND.
   // ★ Forth 2012 §3.2.2.1 PERMITS either floored or symmetric as a documented choice — this is not a
   //   deviation from the standard, it is one of the two answers the standard hands you.
-  // ⛔ gmp_mod is the WRONG function here: it returns a NON-NEGATIVE remainder (gmp_mod(-7,2) = 1).
-  private static function divT(GMP $a, GMP $b): GMP {
-    if (gmp_sign($b) === 0) throw new JfScriptError('division by zero');
-    return gmp_div_q($a, $b);
+  // PHP's intdiv and % both truncate, which is this rule. ⚠ intdiv refuses PHP_INT_MIN ÷ -1, whose answer,
+  // 2^63, wraps to PHP_INT_MIN; % gives 0 for it, which is right.
+  private static function divT(int $a, int $b): int {
+    if ($b === 0) throw new JfScriptError('division by zero');
+    return $b === -1 ? self::neg($a) : intdiv($a, $b);
   }
-  private static function modT(GMP $a, GMP $b): GMP {
-    if (gmp_sign($b) === 0) throw new JfScriptError('division by zero');
-    return gmp_div_r($a, $b);
+  private static function modT(int $a, int $b): int {
+    if ($b === 0) throw new JfScriptError('division by zero');
+    return $a % $b;
   }
-  /** two's-complement view of a possibly-negative double-width product */
-  private static function u2(GMP $p): GMP {
-    return gmp_sign($p) < 0 ? gmp_add($p, gmp_pow(2, 128)) : $p;
+  /**
+   * a × b ÷ c with the product kept at double width, the same rule, as [remainder, quotient]: the remainder
+   * takes the product's sign, and the quotient keeps its low 64 bits, as a cell does. A product that fits a
+   * cell divides natively; a wider one divides as magnitudes, with the signs put back after.
+   */
+  private static function mulDivT(int $a, int $b, int $c): array {
+    if ($c === 0) throw new JfScriptError('division by zero');
+    $p = $a * $b;
+    if (is_int($p)) return [self::modT($p, $c), self::divT($p, $c)];
+    [$hi, $lo] = self::smul($a, $b);
+    $neg = $hi < 0;
+    if ($neg) { $hi = $lo === 0 ? self::neg($hi) : ~$hi; $lo = self::neg($lo); }   // |p|, as 128 bits
+    [, $q, $r] = self::udiv128($hi, $lo, $c < 0 ? self::neg($c) : $c);           // |c|: 2^63 when c is PHP_INT_MIN
+    return [$neg ? -$r : $r, $neg !== ($c < 0) ? self::neg($q) : $q];
   }
 
   // ── secp256k1 ──────────────────────────────────────────────────────────────────────────────────────
@@ -1066,6 +1130,8 @@ final class InterpreterJF
   public static function ecdsaVerify(string $sig, string $pub, string $digest32): bool
   {
     if (strlen($digest32) !== 32 || !self::isStrictDer($sig)) return false;
+    // secp256k1.php computes with ext/gmp: without it this host gives no verdict, never a refusal
+    if (!extension_loaded('gmp')) throw new JfHostError('CHECKSIG needs ext/gmp on this host');
     return Secp256k1::verifyDigest($sig, $pub, $digest32);
   }
 
@@ -1106,10 +1172,6 @@ final class InterpreterJF
 function jf_stack_hash(array $cells): string
 {
   $b = '';
-  foreach ($cells as $c) {
-    $u  = gmp_sign($c) < 0 ? gmp_add($c, gmp_pow(2, 64)) : $c;
-    $be = gmp_sign($u) === 0 ? '' : gmp_export($u, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
-    $b .= strrev(str_pad($be, 8, "\x00", STR_PAD_LEFT));
-  }
+  foreach ($cells as $c) $b .= pack('P', $c);
   return hash('sha256', $b);
 }

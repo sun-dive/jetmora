@@ -166,7 +166,7 @@ final class CovenantThread
    * verifyTick judges the rest.
    * @throws VersionError when this host has no interpreter that judges ticks for the version named.
    * @throws JfHostError when it lacks a library that interpreter needs (no verdict, never a refusal).
-   * @return array{accepted: bool, stack?: GMP[], error?: string}
+   * @return array{accepted: bool, stack?: int[], error?: string}
    */
   public static function judge(array $entry, int $inputIndex, string $prevLocking, string $prevValue): array
   {

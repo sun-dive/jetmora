@@ -90,19 +90,35 @@ try { interpreter_for(version_build('ZZ', 1)); $fellBack = true; } catch (Throwa
 ok(!$fellBack, 'an unknown family NEVER falls back to a registered one');
 
 echo "\n── a host that lacks what a tick needs gives no verdict (spec §3.3) ──\n";
-// Without ext/gmp: `php -n` reads no php.ini, so a shared gmp is not loaded. A PHP with gmp built in
-// cannot show this case here, and the check is skipped, never counted as passed.
+// Without ext/gmp or ext/sodium: `php -n` reads no php.ini, so neither is loaded when it is a shared extension.
+// A JF cell is a 64-bit int, so JF rev 3 judges a tick without gmp. A CHECKSIG whose signature reaches the curve
+// (secp256k1.php computes with gmp), and an ED25519-CHECKSIG whose key and signature reach sodium, give no verdict
+// without the library. A PHP with the library built in cannot show its case here, and the check is skipped, never counted
+// as passed.
 $child = <<<'PHP'
 require $argv[1] . '/dispatch.php';
 require_once $argv[1] . '/interpreter-jf.php';
 $what = function (callable $f): string {
-  try { $f(); return 'no error'; } catch (Throwable $e) { return get_class($e); }
+  try { $v = $f(); return is_array($v) ? json_encode($v) : get_class($v); } catch (Throwable $e) { return get_class($e); }
 };
+$push = fn(string $b): string => chr(strlen($b)) . $b;
+$der = "\x30\x06\x02\x01\x01\x02\x01\x01";              // r = 1, s = 1: strict DER, so the check goes on to the curve
+// verify-jf.php's pinned vector, minted with openssl as an oracle: a signature, its key and its digest
+[$sig, $pub, $dig] = array_map('hex2bin', [
+  '3045022015fc01dd54c6c52a881f276933dfbecfdee11e704e925324f3e6bf27b07be537022100c36bffdda4b0e71e0d244a5a89b7e34f8db2b7ca23bf1446fe9ec6d7e8727ea6',
+  '0219b0f59a3a6f44ec2956626e8e6bec3ae57ec4c09e0724099713329460260268',
+  'd4cc9c8953d2699f1c7b456ade7099c8376b392eb5c0ae8bf1a90887ce3832de']);
 echo json_encode([
   'gmp'      => extension_loaded('gmp'),
+  'sodium'   => extension_loaded('sodium'),
   'dispatch' => $what(fn() => interpreter_for(version_build('JF', 3))),
-  'new'      => $what(fn() => new InterpreterJF()),
   'tick'     => $what(fn() => InterpreterJF::verifyTick('', "\x51", null)),
+  'nocurve'  => $what(fn() => InterpreterJF::verifyTick('', str_repeat("\x49", 6) . chr(JF_WORD['CHECKSIG']), null)),
+  'checksig' => $what(fn() => InterpreterJF::verifyTick('', $push($der) . $push(str_repeat("\x02", 33))
+                                                       . $push(str_repeat("\x01", 32)) . chr(JF_WORD['CHECKSIG']), null)),
+  'signed'   => $what(fn() => InterpreterJF::verifyTick($push($sig), $push($pub) . $push($dig) . chr(JF_WORD['CHECKSIG']), null)),
+  'ed25519'  => $what(fn() => InterpreterJF::verifyTick('', $push(str_repeat("\x00", 64)) . $push(str_repeat("\x00", 32))
+                                                       . $push("\x01") . chr(JF_WORD['ED25519-CHECKSIG']), null)),
 ]);
 PHP;
 $proc = proc_open([PHP_BINARY, '-n', '-r', $child, '--', __DIR__], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
@@ -114,10 +130,19 @@ if (!is_array($r)) {
 } elseif ($r['gmp']) {
   echo "  - skipped: this PHP has ext/gmp built in, so php -n cannot take it away\n";
 } else {
-  ok($r['dispatch'] === 'JfHostError', "without ext/gmp, JF rev 3 dispatches to JfHostError, not a crash → {$r['dispatch']}");
-  ok($r['new'] === 'JfHostError', "without ext/gmp, new InterpreterJF → {$r['new']}");
-  ok($r['tick'] === 'JfHostError', "without ext/gmp, verifyTick gives no verdict → {$r['tick']}");
+  ok($r['dispatch'] === 'InterpreterJF', "without ext/gmp, JF rev 3 dispatches to InterpreterJF → {$r['dispatch']}");
+  ok($r['tick'] === '{"accepted":true,"stack":[8]}', "without ext/gmp, a tick is judged: a lock leaving 8 is accepted → {$r['tick']}");
+  ok($r['nocurve'] === '{"accepted":false,"stack":[0]}',
+     "without ext/gmp, a CHECKSIG of empty spans never reaches the curve, and is judged → {$r['nocurve']}");
+  ok($r['checksig'] === 'JfHostError',
+     "without ext/gmp, a CHECKSIG whose signature reaches the curve gives no verdict → {$r['checksig']}");
+  ok($r['signed'] === 'JfHostError',
+     "without ext/gmp, nor does a tick whose CHECKSIG checks a real signature → {$r['signed']}");
 }
+if (is_array($r) && !$r['sodium'])
+  ok($r['ed25519'] === 'JfHostError', "without ext/sodium, an ED25519-CHECKSIG that reaches sodium gives no verdict → {$r['ed25519']}");
+elseif (is_array($r))
+  echo "  - skipped: this PHP has ext/sodium built in, so php -n cannot take it away\n";
 
 // A host may ship interpreter-jf.php alone, while dispatch.php registers every set. A tick naming a set
 // whose file is not here gets a VersionError, never an error from inside require_once.

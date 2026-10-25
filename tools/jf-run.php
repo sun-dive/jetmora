@@ -16,7 +16,7 @@ for ($k = (int)($argv[1] ?? 0); $k < count($in); $k++) {
   $c = $in[$k];
   if (isset($c['unlocking'])) {
     $v = InterpreterJF::verifyTick(hex2bin($c['unlocking']), hex2bin($c['script']), isset($c['preimage']) ? hex2bin($c['preimage']) : null);
-    echo json_encode(isset($v['stack']) ? ['accepted' => $v['accepted'], 'stack' => array_map(fn($g) => gmp_strval($g), $v['stack'])]
+    echo json_encode(isset($v['stack']) ? ['accepted' => $v['accepted'], 'stack' => array_map('strval', $v['stack'])]
                                         : ['accepted' => false, 'error' => bin2hex($v['error'])]), "\n";
     flush();
     continue;
@@ -24,7 +24,7 @@ for ($k = (int)($argv[1] ?? 0); $k < count($in); $k++) {
   $vm = new InterpreterJF();
   $vm->setPreimage(isset($c['preimage']) ? hex2bin($c['preimage']) : null);
   try {
-    $r = ['stack' => array_map(fn($g) => gmp_strval($g), $vm->run(hex2bin($c['script'])))];
+    $r = ['stack' => array_map('strval', $vm->run(hex2bin($c['script'])))];
   } catch (Throwable $e) {
     $r = ['error' => bin2hex($e->getMessage()), 'diag' => $e instanceof JfScriptError && $e->diagnostic !== null ? bin2hex($e->diagnostic) : null,
           'jf' => $e instanceof JfScriptError];
