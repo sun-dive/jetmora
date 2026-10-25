@@ -7,22 +7,22 @@
 // (thread-ticks.php), judged by the PHP interpreter, then judged again by the JavaScript one. Every check
 // in the script is then disabled in turn, and some tick must change its verdict, or that check is untested.
 import { execFileSync } from 'node:child_process'
-import { createHash, createPrivateKey, createPublicKey, verify } from 'node:crypto'
+import { createHash, createPrivateKey, createPublicKey } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compileCovenant } from '../basic-jf.mjs'
 import { disassemble, unbasic } from '../unbasic-jf.mjs'
 import { verifyTick } from '../../tools/interpreter-jf.mjs'
 import { JF_WORD, JF_SMALL0 } from '../../tools/ops-jf.mjs'
+import { verify as ed25519 } from '../../tools/ed25519.mjs'     // libsodium 1.0.22's rules, as server/ed25519.php's
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const hex = b => Buffer.from(b).toString('hex'), unhex = h => Uint8Array.from(Buffer.from(h, 'hex'))
 const H = alg => b => Uint8Array.from(createHash(alg).update(b).digest())
 const hash160 = b => H('ripemd160')(H('sha256')(b))
-const SPKI = Buffer.from('302a300506032b6570032100', 'hex')
 const crypto = {
   sha256: H('sha256'), sha1: H('sha1'), ripemd160: H('ripemd160'),
-  ed25519Verify: (s, p, m) => verify(null, m, createPublicKey({ key: Buffer.concat([SPKI, p]), format: 'der', type: 'spki' }), s),
+  ed25519Verify: (s, p, m) => ed25519(s, m, p),
 }
 let pass = 0, fail = 0
 const ok = (c, what) => { c ? pass++ : fail++; console.log(`  ${c ? '✓' : '✗'} ${what}`) }

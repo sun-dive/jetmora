@@ -11,7 +11,8 @@
 //   stdForth   two bytes  — standard Forth, unmodified. A PURE FUNCTION: values in, values out.
 //
 // ⚠⚠⚠ CELLS ARE BigInt, never Number: a Number above 2^53 silently loses precision. A cell WRAPS at 64 bits.
-// ⚠ CRYPTO IS SUPPLIED, not built in, so one interpreter serves a page (WebCrypto) and a test (Node):
+// ⚠ CRYPTO IS SUPPLIED, not built in, so one interpreter serves a page and a test. ed25519Verify is tools/ed25519.mjs
+//   on both: a browser's WebCrypto accepts small-order keys that libsodium, and so every host, refuses.
 //   { sha256, sha1, ripemd160 }  (bytes) -> bytes, synchronous
 //   ed25519Verify(sig, pub, msg) -> boolean or a Promise of one
 //   ecdsaVerify(sig, pub, digest32) -> boolean or a Promise of one

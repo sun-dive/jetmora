@@ -17,6 +17,7 @@
 //   cannot prove the absence of a proof. Reported as suspicion, never as guilt — a detector that
 //   conflates the two is worse than none, because it convicts the merely unreachable.
 import { createHash, verify as nodeVerify, createPublicKey } from 'node:crypto'
+import { verify as ed25519 } from './ed25519.mjs'
 import * as M from './merkle.mjs'
 
 /** ⚠ Bitcoin's double SHA-256 — the same function the covenant uses to derive a branch id. */
@@ -29,12 +30,7 @@ const eq = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
 /** ⚠ Key length selects the scheme, matching the append rule: 32 ⇒ Ed25519, 33/65 ⇒ secp256k1. */
 export function verifySig(msg, pubkey, sig) {
   try {
-    if (pubkey.length === 32) {
-      const key = createPublicKey({ key: Buffer.concat([
-        Buffer.from([0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00]),
-        Buffer.from(pubkey)]), format: 'der', type: 'spki' })
-      return nodeVerify(null, Buffer.from(msg), key, Buffer.from(sig))
-    }
+    if (pubkey.length === 32) return ed25519(Uint8Array.from(sig), Uint8Array.from(msg), Uint8Array.from(pubkey))
     const prefix = pubkey.length === 33
       ? [0x30,0x36,0x30,0x10,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,0x02,0x01,0x06,0x05,0x2b,0x81,0x04,0x00,0x0a,0x03,0x22,0x00]
       : [0x30,0x56,0x30,0x10,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,0x02,0x01,0x06,0x05,0x2b,0x81,0x04,0x00,0x0a,0x03,0x42,0x00]

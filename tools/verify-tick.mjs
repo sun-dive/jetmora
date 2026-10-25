@@ -6,11 +6,12 @@
 // lock runs as a separate second run on the data stack and pushed bytes it left; one non-zero item accepts. Each case is judged
 // by both interpreters, which must agree, and each has the verdict the rules give it.
 import { execFileSync } from 'node:child_process'
-import { createHash, createPublicKey, verify as nodeVerify } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verifyTick, InterpreterJF, JfHostError, TICK_LIMITS, TICK_MAX_SCRIPT } from './interpreter-jf.mjs'
 import { JF_WORD, JF_LIT, JF_SMALL0, JF_RESERVED0, JF_ESC0, jf_bank_name } from './ops-jf.mjs'
+import { verify as ed25519 } from './ed25519.mjs'              // libsodium 1.0.22's rules, as server/ed25519.php's
 let ecdsa = null                                             // secp256k1 signing, from PharLap2 beside this repo
 try { ecdsa = await import('../../PharLap2/impl/js/ecdsa.mjs') } catch {}
 import { compileBasic } from '../basic/basic-jf.mjs'
@@ -20,10 +21,9 @@ const hex = b => Buffer.from(b).toString('hex')
 const W = n => JF_WORD[n], S = n => JF_SMALL0 + n
 const le16 = v => [v & 0xff, (v >> 8) & 0xff]
 const sha256 = b => Uint8Array.from(createHash('sha256').update(b).digest())
-const SPKI_ED25519 = Buffer.from('302a300506032b6570032100', 'hex')
 const crypto = {
   sha256, sha1: b => Uint8Array.from(createHash('sha1').update(b).digest()), ripemd160: b => Uint8Array.from(createHash('ripemd160').update(b).digest()),
-  ed25519Verify: (sig, pub, msg) => nodeVerify(null, msg, createPublicKey({ key: Buffer.concat([SPKI_ED25519, pub]), format: 'der', type: 'spki' }), sig),
+  ed25519Verify: (sig, pub, msg) => ed25519(sig, msg, pub),
   ...(ecdsa ? { ecdsaVerify: (sig, pub, d) => ecdsa.verifyDigest(sig, pub, d) } : {}),
 }
 let pass = 0, fail = 0
@@ -53,6 +53,10 @@ const pushes = n => Array.from({ length: n }, () => push([7])).flat()
 // a secp256k1 signature over a digest whose first byte is 0, so the 31 bytes after it are the same number
 const D = BigInt('0x' + Buffer.from(sha256(Buffer.from('a test key'))).toString('hex')), PUB = ecdsa?.publicKey(D)
 const DIGEST = Uint8Array.from([0, ...sha256(Buffer.from('a message')).subarray(0, 31)])
+const RFC8032_2 = {
+  pub: [...Buffer.from('3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c', 'hex')],
+  sig: [...Buffer.from('92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da'
+                     + '085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00', 'hex')] }
 const SIG = ecdsa?.sign(D, DIGEST)
 const checksig = (sig, digest) => [[...push(sig), ...push(PUB), ...push(digest)], [W('CHECKSIG')]]
 /** the same signature with R given a needless leading 0x00 */
@@ -100,6 +104,10 @@ const CASES = [
   ['100 CHECKSIGs: accepted', [], [...doLoop(100, [S(0), S(0), S(0), S(0), S(0), S(0), W('CHECKSIG'), W('DROP')]), W('TRUE')], true],
   ['101 CHECKSIGs: refused', [], [...doLoop(101, [S(0), S(0), S(0), S(0), S(0), S(0), W('CHECKSIG'), W('DROP')]), W('TRUE')], false],
   ['101 ED25519-CHECKSIGs: refused', [], [...doLoop(101, [S(0), S(0), S(0), S(0), S(0), S(0), W('ED25519-CHECKSIG'), W('DROP')]), W('TRUE')], false],
+  // a real signature reaches the verifier: RFC 8032's test 2, and the same with one bit of S changed
+  ['ED25519-CHECKSIG of RFC 8032 test 2: accepted', [], [...push(RFC8032_2.sig), ...push(RFC8032_2.pub), ...push([0x72]), W('ED25519-CHECKSIG')], true],
+  ['...its signature with one bit changed: refused', [], [...push(RFC8032_2.sig.map((b, i) => i === 63 ? b ^ 1 : b)), ...push(RFC8032_2.pub),
+    ...push([0x72]), W('ED25519-CHECKSIG')], false],
   ['3 CHECKMULTISIGs of 32 keys and 4 CHECKSIGs: 100, accepted', [],
     [...doLoop(3, [S(0), S(0), ...Array(64).fill(S(0)), JF_LIT.LIT8, 32, S(0), W('CHECKMULTISIG'), W('DROP')]),
      ...doLoop(4, [S(0), S(0), S(0), S(0), S(0), S(0), W('CHECKSIG'), W('DROP')]), W('TRUE')], true],

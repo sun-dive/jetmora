@@ -7,13 +7,14 @@
 // A difference is a bug in one of them; a refusal PHP raises from outside the interpreter is a PHP fault, reported.
 //   node tools/verify-jf.mjs [programs=3000] [seed]
 import { execFileSync } from 'node:child_process'
-import { createHash, createPublicKey, verify as nodeVerify, generateKeyPairSync, sign as nodeSign } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign as nodeSign } from 'node:crypto'
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as OPS from './ops-jf.mjs'
 import { InterpreterJF } from './interpreter-jf.mjs'
+import { verify as ed25519 } from './ed25519.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url)), ROOT = join(HERE, '..')
 const N_PROGRAMS = Number(process.argv[2] ?? 3000), SEED = Number(process.argv[3] ?? 20261003)
@@ -22,14 +23,13 @@ const ok = (c, what) => { c ? pass++ : fail++; if (!c || process.env.V) console.
 const hex = b => Buffer.from(b).toString('hex'), unhex = h => Uint8Array.from(Buffer.from(h, 'hex'))
 const latin1 = b => Buffer.from(b).toString('utf8')
 
-// ── crypto, supplied ──
+// ── crypto, supplied: Ed25519 is tools/ed25519.mjs, libsodium 1.0.22's rules, as server/ed25519.php's ──
 const h = alg => b => Uint8Array.from(createHash(alg).update(b).digest())
-const SPKI_ED25519 = Buffer.from('302a300506032b6570032100', 'hex')
 let ecdsa = null
 try { ecdsa = await import('../../PharLap2/impl/js/ecdsa.mjs') } catch {}
 const crypto = {
   sha256: h('sha256'), sha1: h('sha1'), ripemd160: h('ripemd160'),
-  ed25519Verify: (sig, pub, msg) => nodeVerify(null, msg, createPublicKey({ key: Buffer.concat([SPKI_ED25519, pub]), format: 'der', type: 'spki' }), sig),
+  ed25519Verify: (sig, pub, msg) => ed25519(sig, msg, pub),
   ...(ecdsa ? { ecdsaVerify: (sig, pub, d) => ecdsa.verifyDigest(sig, pub, d) } : {}),
 }
 const runJs = async (script, preimage = null) => {
