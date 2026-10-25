@@ -68,8 +68,8 @@ ok(!Appender::verifySignature($entry, $bPub, $bad),
    '⛔ a DOUBLE-hashed digest is refused — the wrong hash verifies nowhere and looks perfect');
 ok($b->signEntry($entry) === $bSig, 'RFC 6979 makes it deterministic too — same bytes every time');
 $der = Secp256k1::decodeDer($bSig);
-$n   = gmp_init('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16);
-ok($der !== null && gmp_cmp(gmp_mul($der[1], 2), $n) <= 0,
+$half = hex2bin('7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0');   // (n − 1) / 2: 2s <= n
+ok($der !== null && strcmp($der[1], $half) <= 0,
    '⚠ lowS defaults ON here — not a protocol rule, but a broadcaster can refuse high-s');
 
 // ── ⛔ the two do not accept each other ──────────────────────────────────────────────────────────────

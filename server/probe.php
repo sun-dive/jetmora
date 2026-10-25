@@ -43,13 +43,13 @@ if (is_file(__DIR__ . '/merkle.php')) {
 
 // ── secp256k1 — ⚠ NO LONGER A HOST CAPABILITY QUESTION ────────────────────────────────────────
 // This probe used to ask whether openssl had the curve, because `append.php` verified through
-// `openssl_verify`. It no longer does: `server/secp256k1.php` implements SEC1 verification over GMP
-// and depends on nothing. ⇒ **secp256k1 is available wherever ext-gmp is**, which the probe already
-// reports. Leaving the old line in would tell an operator to look for something that no longer
-// decides anything.
-$r['secp256k1'] = extension_loaded('gmp');
-$r['secp256k1_via'] = $r['secp256k1'] ? 'own implementation (server/secp256k1.php, needs ext-gmp)'
-                                      : 'UNAVAILABLE — ext-gmp is missing';
+// `openssl_verify`. It no longer does: `server/secp256k1.php` implements SEC1 verification in PHP
+// ints and depends on nothing. ⇒ **secp256k1 is available wherever PHP has 64-bit integers**, which
+// is what the check below asks. Leaving the old line in would tell an operator to look for something
+// that no longer decides anything.
+$r['secp256k1'] = PHP_INT_SIZE >= 8;
+$r['secp256k1_via'] = $r['secp256k1'] ? 'own implementation (server/secp256k1.php, 64-bit PHP)'
+                                      : 'UNAVAILABLE: this PHP has 32-bit integers';
 
 // ── ⚠ CAN IT WRITE? An append-only store is not much use otherwise. ────────────────────────────
 $dir = __DIR__ . '/_probe_tmp';
@@ -89,7 +89,7 @@ $store = $r['write']['sqlite_file'] ? 'sqlite' : ($r['write']['flock'] ? 'file+f
 //   secp256k1 is what a BSV-shaped key uses. Report them separately rather than picking one.
 $sig = implode(' + ', array_filter([
     $r['ext']['sodium'] ? 'ed25519 (sodium)' : null,
-    $r['secp256k1']     ? 'secp256k1 (own, ext-gmp)' : null,
+    $r['secp256k1']     ? 'secp256k1 (own, 64-bit PHP)' : null,
 ])) ?: 'NONE';
 $r['verdict'] = [
     'merkle'    => $must ? 'yes' : 'NO — needs ext/hash, sha256 and a writable directory',

@@ -70,7 +70,7 @@ ok($m['sdk_accepts_both'] === true && $m['ours_accepts_mutant'] === false,
    '★ the divergence is recorded in the vector itself, so the reason survives the SDK');
 // ★★ and they really are one signature, which is what makes it malleability
 $c = Secp256k1::decodeDer((string)hex2bin($m['canonical']));
-ok($c !== null && gmp_cmp($c[0], gmp_init(substr($m['canonical'], 10, 64), 16)) === 0,
+ok($c !== null && bin2hex($c[0]) === substr($m['canonical'], 10, 64),
    '★ both encode the SAME r ⇒ accepting both is malleability, not a different signature');
 
 // ── ★ this suite needs nothing but PHP ──────────────────────────────────────────────────────────────

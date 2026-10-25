@@ -34,20 +34,20 @@ function ok(bool $c, string $what): void {
 
 // ── 1. the AUTHORITATIVE grade: RFC 6979 Appendix A.2.5, curve P-256 ────────────────────────────────
 echo "── RFC 6979 §A.2.5 (P-256) — the k generator, graded by the RFC itself ──\n";
-$qP256 = gmp_init('FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551', 16);
-$xP256 = gmp_init('C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721', 16);
+$qP256 = hex2bin('FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551');
+$xP256 = hex2bin('C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721');
 foreach ([
   ['sample', 'A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60'],
   ['test',   'D16B6AE827F17175E040871A1C7EC3500192C4C92677336EC2537ACAEE0008E0'],
 ] as [$msg, $want]) {
   $k   = Rfc6979::k($qP256, $xP256, hash('sha256', $msg, true), 'sha256');
-  $got = strtoupper(str_pad(gmp_strval($k, 16), 64, '0', STR_PAD_LEFT));
+  $got = strtoupper(bin2hex($k));
   ok($got === $want, sprintf('"%s" → k = %s…', $msg, substr($got, 0, 24)));
 }
 // ⚠ the helpers have their own edge cases, and both are silent when wrong
-ok(gmp_strval(Rfc6979::bits2int(hex2bin('ffff'), 8)) === '255',
+ok(Rfc6979::bits2int(hex2bin('ffff'), 8) === "\xff",
    'bits2int SHIFTS RIGHT for an over-long input, never truncates bytes');
-ok(bin2hex(Rfc6979::int2octets(gmp_init(1), 4)) === '00000001',
+ok(bin2hex(Rfc6979::int2octets("\x01", 4)) === '00000001',
    'int2octets pads to a fixed width');
 
 // ── 2. secp256k1, graded by openssl ─────────────────────────────────────────────────────────────────
@@ -97,8 +97,8 @@ ok(Secp256k1::verifyDigest($a, Secp256k1::publicKey($d), $dig), 'k=1 edge key st
 
 $sigLowS = Secp256k1::sign($d, $dig, true);
 $der = Secp256k1::decodeDer($sigLowS);
-$n   = gmp_init('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', 16);
-ok($der !== null && gmp_cmp(gmp_mul($der[1], 2), $n) <= 0, 'lowS:true normalises s to the lower half');
+$half = hex2bin('7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0');   // (n − 1) / 2: 2s <= n
+ok($der !== null && strcmp($der[1], $half) <= 0, 'lowS:true normalises s to the lower half');
 ok(Secp256k1::verifyDigest($sigLowS, Secp256k1::publicKey($d), $dig), '...and the normalised signature still verifies');
 ok(Secp256k1::decodeDer(Secp256k1::sign($d, $dig)) !== null, 'our DER survives our own STRICT parser');
 
@@ -162,7 +162,7 @@ $m = Secp256k1::decodeDer((string)hex2bin($mutated));
 ok($c !== null, 'the canonical form (r padded with 0x00) is accepted');
 ok($m === null, "⛔ the mutated form — 0x00 stripped from a high-bit r — is REFUSED (the SDK accepts it)");
 // ★ and they really are the same number, which is what makes it MALLEABILITY rather than corruption
-ok($c !== null && gmp_cmp($c[0], gmp_init(substr($canonical, 10, 64), 16)) === 0,
+ok($c !== null && bin2hex($c[0]) === substr($canonical, 10, 64),
    '★ ...and the two encode the SAME r, so accepting both is malleability, not a different signature');
 // ⚠ the sighash byte must not become a loophole: allowTrailing permits trailing bytes, NOT bad integers
 ok(Secp256k1::decodeDer((string)hex2bin($mutated . '41'), true) === null,

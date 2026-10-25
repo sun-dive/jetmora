@@ -79,10 +79,18 @@ foreach ($lines as $cmd) {
 ok(count($lines) > 3 && $bad === [] && is_file("$docroot/threads/index.php"),
    sprintf('%d lines of .cpanel.yml stage the thread service%s', count($lines), $bad ? ': ' . implode('; ', $bad) : ''));
 
+// The service and the writers run as this PHP does: under php -n they get -n and the extensions loaded here, so a
+// run without gmp stages a host without gmp.
+$php = [PHP_BINARY];
+if (php_ini_loaded_file() === false) {
+  $php[] = '-n';
+  foreach (get_loaded_extensions() as $e)
+    if (is_file(ini_get('extension_dir') . '/' . strtolower($e) . '.so')) array_push($php, '-d', 'extension=' . strtolower($e));
+}
 $sock = stream_socket_server('tcp://127.0.0.1:0');
 $port = (int)substr((string)strrchr((string)stream_socket_get_name($sock, false), ':'), 1);
 fclose($sock);
-$server = proc_open([PHP_BINARY, '-S', "127.0.0.1:$port", '-t', $docroot],
+$server = proc_open([...$php, '-S', "127.0.0.1:$port", '-t', $docroot],
   [0 => ['file', '/dev/null', 'r'], 1 => ['file', "$dir/server.log", 'w'], 2 => ['file', "$dir/server.log", 'a']], $pp);
 for ($k = 0, $c = false; $k < 100 && !($c = @fsockopen('127.0.0.1', $port, $en, $es, 0.1)); $k++) usleep(50_000);
 if ($c) fclose($c);
@@ -259,7 +267,7 @@ $r = http('POST', 'op=append', json_encode(['genesis' => bin2hex($P['id']), 'ent
   'pubkey' => bin2hex($pub($owner)), 'signature' => bin2hex(sodium_crypto_sign_detached('other bytes', $sk($owner)))]));
 ok($r['status'] === 403, 'an append signature over other bytes → ' . $said($r));
 ok($count($P) === 0, 'nothing was recorded');
-$d = gmp_init(hash('sha256', 'a secp256k1 key'), 16);
+$d = hash('sha256', 'a secp256k1 key', true);
 $Q = $thread('Q', $S, [Secp256k1::publicKey($d)]);
 $tq = $tickOf($Q, $owner);                                   // the covenant's own signature is still the owner's
 $r = http('POST', 'op=append', json_encode(['genesis' => bin2hex($Q['id']), 'entry' => bin2hex($tq['bytes']),
@@ -274,7 +282,7 @@ $tr = $tickOf($R, $owner);
 $at = sprintf('%.6f', microtime(true) + 0.5);
 $ws = []; $wp = [];
 for ($i = 0; $i < 8; $i++)
-  $ws[$i] = proc_open([PHP_BINARY, __FILE__, 'race-worker', "$docroot/threads", $dbPath, bin2hex($R['id']), bin2hex($tr['bytes']),
+  $ws[$i] = proc_open([...$php, __FILE__, 'race-worker', "$docroot/threads", $dbPath, bin2hex($R['id']), bin2hex($tr['bytes']),
                        bin2hex($pub($owner)), bin2hex(sodium_crypto_sign_detached($tr['bytes'], $sk($owner))), $at],
                       [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $wp[$i]);
 $st = [];

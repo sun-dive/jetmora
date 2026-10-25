@@ -91,9 +91,9 @@ ok(!$fellBack, 'an unknown family NEVER falls back to a registered one');
 
 echo "\n── a host that lacks what a tick needs gives no verdict (spec §3.3) ──\n";
 // Without ext/gmp or ext/sodium: `php -n` reads no php.ini, so neither is loaded when it is a shared extension.
-// A JF cell is a 64-bit int, so JF rev 3 judges a tick without gmp. A CHECKSIG whose signature reaches the curve
-// (secp256k1.php computes with gmp), and an ED25519-CHECKSIG whose key and signature reach sodium, give no verdict
-// without the library. A PHP with the library built in cannot show its case here, and the check is skipped, never counted
+// A JF cell is a 64-bit int, and secp256k1.php computes in 64-bit ints, so JF rev 3 judges a tick and its CHECKSIG
+// with neither. Only ED25519-CHECKSIG, once a key and a signature of the right lengths reach sodium, gives no verdict
+// without sodium. A PHP with the library built in cannot show its case here, and the check is skipped, never counted
 // as passed.
 $child = <<<'PHP'
 require $argv[1] . '/dispatch.php';
@@ -134,10 +134,10 @@ if (!is_array($r)) {
   ok($r['tick'] === '{"accepted":true,"stack":[8]}', "without ext/gmp, a tick is judged: a lock leaving 8 is accepted → {$r['tick']}");
   ok($r['nocurve'] === '{"accepted":false,"stack":[0]}',
      "without ext/gmp, a CHECKSIG of empty spans never reaches the curve, and is judged → {$r['nocurve']}");
-  ok($r['checksig'] === 'JfHostError',
-     "without ext/gmp, a CHECKSIG whose signature reaches the curve gives no verdict → {$r['checksig']}");
-  ok($r['signed'] === 'JfHostError',
-     "without ext/gmp, nor does a tick whose CHECKSIG checks a real signature → {$r['signed']}");
+  ok($r['checksig'] === '{"accepted":false,"stack":[0]}',
+     "without ext/gmp, a CHECKSIG whose signature reaches the curve is judged: r = s = 1 is refused → {$r['checksig']}");
+  ok($r['signed'] === '{"accepted":true,"stack":[-1]}',
+     "without ext/gmp, a tick whose CHECKSIG checks a real signature is accepted → {$r['signed']}");
 }
 if (is_array($r) && !$r['sodium'])
   ok($r['ed25519'] === 'JfHostError', "without ext/sodium, an ED25519-CHECKSIG that reaches sodium gives no verdict → {$r['ed25519']}");

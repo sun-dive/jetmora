@@ -47,8 +47,8 @@ class JfScriptError extends RuntimeException
 }
 
 /**
- * THE HOST CANNOT JUDGE: a capability it lacks (a 64-bit int, which every cell is; ext/gmp, which secp256k1.php
- * computes CHECKSIG with; or ext/sodium for Ed25519). It is not a refusal, and verifyTick
+ * THE HOST CANNOT JUDGE: a capability it lacks (a 64-bit int, which every cell is and secp256k1.php computes
+ * CHECKSIG with; or ext/sodium for Ed25519). It is not a refusal, and verifyTick
  * passes it on rather than turn it into one: a tick is never refused here and accepted there because one
  * host is missing a library.
  */
@@ -1130,8 +1130,6 @@ final class InterpreterJF
   public static function ecdsaVerify(string $sig, string $pub, string $digest32): bool
   {
     if (strlen($digest32) !== 32 || !self::isStrictDer($sig)) return false;
-    // secp256k1.php computes with ext/gmp: without it this host gives no verdict, never a refusal
-    if (!extension_loaded('gmp')) throw new JfHostError('CHECKSIG needs ext/gmp on this host');
     return Secp256k1::verifyDigest($sig, $pub, $digest32);
   }
 

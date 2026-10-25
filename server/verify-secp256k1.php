@@ -23,7 +23,6 @@
 declare(strict_types=1);
 require_once __DIR__ . '/secp256k1.php';
 
-if (!extension_loaded('gmp'))     { fwrite(STDERR, "⛔ ext-gmp required\n"); exit(2); }
 if (!extension_loaded('openssl')) { fwrite(STDERR, "⚠ openssl absent — cannot run the oracle\n"); exit(2); }
 if (!in_array('secp256k1', openssl_get_curve_names() ?: [], true)) {
   fwrite(STDERR, "⚠ this openssl has no secp256k1 — cannot run the oracle\n"); exit(2);

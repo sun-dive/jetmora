@@ -12,7 +12,7 @@
 //                secp256k1.php must be this directory's: a link to each will do.
 //
 // The old engine is read from git and loaded beside the new one, its classes renamed; ops-jf.php and secp256k1.php
-// are shared. It computes with ext/gmp, so it is the oracle only where gmp is loaded and the revision is in this
+// are shared, so the signatures part grades the engine's signature words, and verify-secp256k1-native.php the curve. It computes with ext/gmp, so it is the oracle only where gmp is loaded and the revision is in this
 // repository's history. Without it the case-by-case comparison is skipped, and says so, and the cells part is
 // graded instead by CELLS_DIGEST, the old engine's results recorded below.
 //
