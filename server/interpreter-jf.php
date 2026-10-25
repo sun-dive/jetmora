@@ -26,6 +26,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/ops-jf.php';
 require_once __DIR__ . '/secp256k1.php';
+require_once __DIR__ . '/ed25519.php';
 
 class JfScriptError extends RuntimeException
 {
@@ -47,8 +48,8 @@ class JfScriptError extends RuntimeException
 }
 
 /**
- * THE HOST CANNOT JUDGE: a capability it lacks (a 64-bit int, which every cell is and secp256k1.php computes
- * CHECKSIG with; or ext/sodium for Ed25519). It is not a refusal, and verifyTick
+ * THE HOST CANNOT JUDGE: a capability it lacks (a 64-bit int, which every cell is and secp256k1.php and
+ * ed25519.php compute CHECKSIG and ED25519-CHECKSIG with). It is not a refusal, and verifyTick
  * passes it on rather than turn it into one: a tick is never refused here and accepted there because one
  * host is missing a library.
  */
@@ -1153,13 +1154,11 @@ final class InterpreterJF
     return true;
   }
 
-  /** Ed25519 (RFC 8032) via ext/sodium. A host without sodium cannot answer and must say so rather
-   *  than guess: a JfHostError, never a FALSE and never a refusal. */
+  /** Ed25519 (RFC 8032) by ed25519.php, with libsodium 1.0.22's rules, and never by ext/sodium where it is loaded:
+   *  libsodium's rules differ between versions, and a verdict must not depend on the version a host has. */
   public static function ed25519Verify(string $sig, string $pub, string $msg): bool
   {
-    if (strlen($pub) !== 32 || strlen($sig) !== 64) return false;
-    if (!extension_loaded('sodium')) throw new JfHostError('ED25519-CHECKSIG needs ext/sodium on this host');
-    try { return sodium_crypto_sign_verify_detached($sig, $msg, $pub); } catch (\Throwable) { return false; }
+    return Ed25519::verify($sig, $msg, $pub);
   }
 }
 

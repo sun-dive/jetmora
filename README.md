@@ -172,6 +172,7 @@ signed heads, and inclusion and consistency proofs over HTTP.
 | `dispatch.php` | the nVersion → interpreter registry (§6b) |
 | `preimage.php` | the BIP143 preimage over an entry |
 | `interpreter-jf.php`, `ops-jf.php` | the JF interpreter that judges a tick (spec §3.3), and its opcode table |
+| `ed25519.php` | Ed25519 verification by libsodium 1.0.22's rules, on every host: ED25519-CHECKSIG and 32-byte append keys never depend on the host's sodium |
 | `head.php` | 90-byte signed head. ⚠ Re-signing a size is impossible, not merely forbidden |
 | `threads.php` | the HTTP endpoints of the thread service |
 | `probe.php` | ⚠ host capability probe. Token-gated, delete after use |

@@ -8,13 +8,15 @@
 //   php server/verify-jf-native.php [programs=60000] [seed=20261024] [--ticks=FILE] [--engine=FILE]
 //     programs   random programs in the cells part, besides the fixed sweeps; a sixth as many in the signatures part
 //     --ticks    also run the programs in FILE, a JSON list as tools/jf-run.php reads it
-//     --engine   grade this copy of the engine instead of the one beside this file. Its ops-jf.php and
-//                secp256k1.php must be this directory's: a link to each will do.
+//     --engine   grade this copy of the engine instead of the one beside this file. Its ops-jf.php, secp256k1.php
+//                and ed25519.php must be this directory's: a link to each will do.
 //
 // The old engine is read from git and loaded beside the new one, its classes renamed; ops-jf.php and secp256k1.php
-// are shared, so the signatures part grades the engine's signature words, and verify-secp256k1-native.php the curve. It computes with ext/gmp, so it is the oracle only where gmp is loaded and the revision is in this
-// repository's history. Without it the case-by-case comparison is skipped, and says so, and the cells part is
-// graded instead by CELLS_DIGEST, the old engine's results recorded below.
+// are shared, so the signatures part grades the engine's signature words, and verify-secp256k1-native.php the curve.
+// The old engine checks Ed25519 with ext/sodium, so its ED25519-CHECKSIG verdicts are sodium's, and the new engine's
+// come from ed25519.php, which verify-ed25519.php grades. The old engine computes with ext/gmp, so it is the oracle only
+// where gmp is loaded and the revision is in this repository's history. Without it the case-by-case comparison is
+// skipped, and says so, and the cells part is graded instead by CELLS_DIGEST, the old engine's results recorded below.
 //
 // Two parts:
 //   cells        every arithmetic, logic, comparison, shift, double-width, memory, literal, BIN2NUM and NUM2BIN word
@@ -40,7 +42,7 @@ $seed = (int)($plain[1] ?? DEFAULT_SEED);
 $engine = $opt('engine') ?? __DIR__ . '/interpreter-jf.php';
 $ticksFile = $opt('ticks');
 
-foreach (['ops-jf.php', 'secp256k1.php'] as $f)
+foreach (['ops-jf.php', 'secp256k1.php', 'ed25519.php'] as $f)
   if (realpath(dirname($engine) . "/$f") !== realpath(__DIR__ . "/$f")) {
     fwrite(STDERR, "⛔ $engine must share $f with " . __DIR__ . "\n"); exit(2);
   }

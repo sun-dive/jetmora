@@ -12,6 +12,8 @@
 // Over HTTP, against a docroot staged by running .cpanel.yml's thread-service lines, so a file the deploy
 // leaves out fails here. The thread is the BASIC covenant of basic/test/thread.mjs (signed by the owner,
 // value + 1, the same script), compiled by basic/basic-jf.mjs; its ticks are built and signed here. Needs node.
+// Signing is not under test: ext/sodium signs, or on a PHP without it the sodium_compat whose autoload.php
+// JETMORA_SODIUM_COMPAT names, so `php -n -d extension=pdo_sqlite` stages a service with neither sodium nor gmp.
 //   php server/verify-tip.php
 declare(strict_types=1);
 
@@ -27,6 +29,14 @@ if (($argv[1] ?? '') === 'race-worker') {
   exit(0);
 }
 
+if (!extension_loaded('sodium')) {
+  $compat = getenv('JETMORA_SODIUM_COMPAT') ?: '';
+  if (!is_file($compat)) {
+    fwrite(STDERR, "⛔ nothing to sign with: no ext/sodium, and JETMORA_SODIUM_COMPAT names no sodium_compat autoload.php\n");
+    exit(2);
+  }
+  require_once $compat;
+}
 require_once __DIR__ . '/wallet/jetmora/thread.php';
 require_once __DIR__ . '/jf-asm.php';
 require_once __DIR__ . '/store.php';
@@ -87,6 +97,9 @@ if (php_ini_loaded_file() === false) {
   foreach (get_loaded_extensions() as $e)
     if (is_file(ini_get('extension_dir') . '/' . strtolower($e) . '.so')) array_push($php, '-d', 'extension=' . strtolower($e));
 }
+if (in_array('-n', $php, true))
+  printf("  - the service runs as %s: %s\n", implode(' ', array_slice($php, 1)),
+         extension_loaded('sodium') ? 'with ext/sodium' : 'without ext/sodium, its test signatures made by sodium_compat');
 $sock = stream_socket_server('tcp://127.0.0.1:0');
 $port = (int)substr((string)strrchr((string)stream_socket_get_name($sock, false), ':'), 1);
 fclose($sock);

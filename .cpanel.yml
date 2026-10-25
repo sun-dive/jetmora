@@ -54,10 +54,11 @@ deployment:
     - /bin/cp server/head.php "$DEPLOYPATH/threads/head.php"
     - /bin/cp server/secp256k1.php "$DEPLOYPATH/threads/secp256k1.php"
     - /bin/cp server/rfc6979.php "$DEPLOYPATH/threads/rfc6979.php"
+    - /bin/cp server/ed25519.php "$DEPLOYPATH/threads/ed25519.php"
     - /bin/cp server/covenant-entry.php "$DEPLOYPATH/threads/covenant-entry.php"
     # the judge, which append.php loads only when a tick is appended: a missing one breaks appends, never reads.
     # thread.php requires ../../ (threads/): covenant-entry, preimage, dispatch; the JF interpreter requires
-    # ops-jf and secp256k1 (rfc6979). JF is the only set served here: an SV or BT tick gets no verdict.
+    # ops-jf, secp256k1 (rfc6979) and ed25519. JF is the only set served here: an SV or BT tick gets no verdict.
     - /bin/cp server/dispatch.php "$DEPLOYPATH/threads/dispatch.php"
     - /bin/cp server/preimage.php "$DEPLOYPATH/threads/preimage.php"
     - /bin/cp server/interpreter-jf.php "$DEPLOYPATH/threads/interpreter-jf.php"

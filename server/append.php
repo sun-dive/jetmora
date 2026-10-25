@@ -27,6 +27,7 @@
 //   $authorise; the protocol defines no price, no currency and no settlement.
 declare(strict_types=1);
 require_once __DIR__ . '/secp256k1.php';
+require_once __DIR__ . '/ed25519.php';
 require_once __DIR__ . '/store.php';
 require_once __DIR__ . '/genesis.php';
 require_once __DIR__ . '/covenant-entry.php';
@@ -182,12 +183,9 @@ final class Appender
     public static function verifySignature(string $msg, string $pubkey, string $sig): bool
     {
         $n = strlen($pubkey);
-        if ($n === 32) {
-            if (!extension_loaded('sodium')) return false;
-            if (strlen($sig) !== 64) return false;
-            try { return sodium_crypto_sign_verify_detached($sig, $msg, $pubkey); }
-            catch (Throwable) { return false; }             // ⚠ malformed input is a failed check, not a crash
-        }
+        // ⚠ Ed25519 by `Ed25519`, never by ext/sodium where it is loaded: libsodium's rules differ between versions,
+        //   so the same append could pass on one host and fail on another. ed25519.php fixes them to 1.0.22's.
+        if ($n === 32) return Ed25519::verify($sig, $msg, $pubkey);
         if ($n === 33 || $n === 65) {
             // ⚠ STRICT DER: a chain entry signature carries no sighash-type byte, so nothing may follow
             //   the sequence. That leniency belongs to Bitcoin signatures and is opt-in, not default.

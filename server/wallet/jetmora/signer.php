@@ -21,6 +21,7 @@
 //   not owning the code is an ADVANTAGE, not a compromise.
 declare(strict_types=1);
 require_once __DIR__ . '/slip10.php';
+require_once __DIR__ . '/../../ed25519.php';
 
 final class JetmoraSignerError extends RuntimeException {}
 
@@ -53,11 +54,10 @@ final class JetmoraSigner
     return sodium_crypto_sign_detached($entryBytes, sodium_crypto_sign_secretkey($this->keypair));
   }
 
-  /** The same check `Appender::verifySignature` performs for a 32-byte key. */
+  /** The same check `Appender::verifySignature` performs for a 32-byte key: our own Ed25519, libsodium's rules. */
   public static function verify(string $entryBytes, string $publicKey, string $sig): bool
   {
     if (strlen($publicKey) !== 32 || strlen($sig) !== 64) return false;
-    try { return sodium_crypto_sign_verify_detached($sig, $entryBytes, $publicKey); }
-    catch (Throwable) { return false; }
+    return Ed25519::verify($sig, $entryBytes, $publicKey);
   }
 }

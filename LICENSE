@@ -20,6 +20,7 @@ file carries a one-line header naming it. The full text is below.
            specification; reproducing them makes nothing a derivative work.
 
   ⚠  Opcode semantics derive from Bitcoin 0.1.3 (MIT/X11). See NOTICE.
+  ⚠  Ed25519 arithmetic is ported from sodium_compat and libsodium (ISC). See NOTICE.
 
 ===============================================================================
 1)  BUSINESS SOURCE LICENSE 1.1   —   governs: the code

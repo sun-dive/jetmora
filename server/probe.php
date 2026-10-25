@@ -50,6 +50,11 @@ if (is_file(__DIR__ . '/merkle.php')) {
 $r['secp256k1'] = PHP_INT_SIZE >= 8;
 $r['secp256k1_via'] = $r['secp256k1'] ? 'own implementation (server/secp256k1.php, 64-bit PHP)'
                                       : 'UNAVAILABLE: this PHP has 32-bit integers';
+// ⚠ And the same for Ed25519: `server/ed25519.php` verifies it in PHP ints by libsodium 1.0.22's rules, and the
+//   thread service never asks ext/sodium, so sodium decides nothing here either.
+$r['ed25519'] = PHP_INT_SIZE >= 8;
+$r['ed25519_via'] = $r['ed25519'] ? 'own implementation (server/ed25519.php, 64-bit PHP)'
+                                  : 'UNAVAILABLE: this PHP has 32-bit integers';
 
 // ── ⚠ CAN IT WRITE? An append-only store is not much use otherwise. ────────────────────────────
 $dir = __DIR__ . '/_probe_tmp';
@@ -88,7 +93,7 @@ $store = $r['write']['sqlite_file'] ? 'sqlite' : ($r['write']['flock'] ? 'file+f
 // ⚠ BOTH schemes matter: ed25519 keys are what every live genesis currently authorises, and
 //   secp256k1 is what a BSV-shaped key uses. Report them separately rather than picking one.
 $sig = implode(' + ', array_filter([
-    $r['ext']['sodium'] ? 'ed25519 (sodium)' : null,
+    $r['ed25519']       ? 'ed25519 (own, 64-bit PHP)' : null,
     $r['secp256k1']     ? 'secp256k1 (own, 64-bit PHP)' : null,
 ])) ?: 'NONE';
 $r['verdict'] = [

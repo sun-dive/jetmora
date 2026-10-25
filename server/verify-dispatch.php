@@ -91,10 +91,9 @@ ok(!$fellBack, 'an unknown family NEVER falls back to a registered one');
 
 echo "\n── a host that lacks what a tick needs gives no verdict (spec §3.3) ──\n";
 // Without ext/gmp or ext/sodium: `php -n` reads no php.ini, so neither is loaded when it is a shared extension.
-// A JF cell is a 64-bit int, and secp256k1.php computes in 64-bit ints, so JF rev 3 judges a tick and its CHECKSIG
-// with neither. Only ED25519-CHECKSIG, once a key and a signature of the right lengths reach sodium, gives no verdict
-// without sodium. A PHP with the library built in cannot show its case here, and the check is skipped, never counted
-// as passed.
+// A JF cell is a 64-bit int, and secp256k1.php and ed25519.php compute in 64-bit ints, so JF rev 3 judges a tick, its
+// CHECKSIG and its ED25519-CHECKSIG with neither. A PHP with a library built in cannot show its case here, and the
+// check is skipped, never counted as passed.
 $child = <<<'PHP'
 require $argv[1] . '/dispatch.php';
 require_once $argv[1] . '/interpreter-jf.php';
@@ -119,6 +118,11 @@ echo json_encode([
   'signed'   => $what(fn() => InterpreterJF::verifyTick($push($sig), $push($pub) . $push($dig) . chr(JF_WORD['CHECKSIG']), null)),
   'ed25519'  => $what(fn() => InterpreterJF::verifyTick('', $push(str_repeat("\x00", 64)) . $push(str_repeat("\x00", 32))
                                                        . $push("\x01") . chr(JF_WORD['ED25519-CHECKSIG']), null)),
+  // RFC 8032 section 7.1, TEST 2: its signature, key and one-byte message
+  'edsigned' => $what(fn() => InterpreterJF::verifyTick($push(hex2bin('92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da'
+                                                       . '085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00')),
+                                                       $push(hex2bin('3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c'))
+                                                       . $push("\x72") . chr(JF_WORD['ED25519-CHECKSIG']), null)),
 ]);
 PHP;
 $proc = proc_open([PHP_BINARY, '-n', '-r', $child, '--', __DIR__], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
@@ -139,9 +143,12 @@ if (!is_array($r)) {
   ok($r['signed'] === '{"accepted":true,"stack":[-1]}',
      "without ext/gmp, a tick whose CHECKSIG checks a real signature is accepted → {$r['signed']}");
 }
-if (is_array($r) && !$r['sodium'])
-  ok($r['ed25519'] === 'JfHostError', "without ext/sodium, an ED25519-CHECKSIG that reaches sodium gives no verdict → {$r['ed25519']}");
-elseif (is_array($r))
+if (is_array($r) && !$r['sodium']) {
+  ok($r['ed25519'] === '{"accepted":false,"stack":[0]}',
+     "without ext/sodium, an ED25519-CHECKSIG of a zero key and signature is judged: refused → {$r['ed25519']}");
+  ok($r['edsigned'] === '{"accepted":true,"stack":[-1]}',
+     "without ext/sodium, a tick whose ED25519-CHECKSIG checks a real signature is accepted → {$r['edsigned']}");
+} elseif (is_array($r))
   echo "  - skipped: this PHP has ext/sodium built in, so php -n cannot take it away\n";
 
 // A host may ship interpreter-jf.php alone, while dispatch.php registers every set. A tick naming a set
