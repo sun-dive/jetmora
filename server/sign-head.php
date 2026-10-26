@@ -14,21 +14,20 @@ declare(strict_types=1);
 require __DIR__ . '/merkle.php';
 require __DIR__ . '/store.php';
 require __DIR__ . '/head.php';
+require __DIR__ . '/ed25519-sign.php';
 
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 [$_, $dbPath, $keyPath] = $argv + [null, null, null];
 if (!$dbPath || !$keyPath) { fwrite(STDERR, "usage: php sign-head.php <threads db> <key file>\n"); exit(2); }
-if (!extension_loaded('sodium')) { fwrite(STDERR, "sodium is required\n"); exit(2); }
 
 if (!is_file($keyPath)) {
-    $old = umask(077); file_put_contents($keyPath, random_bytes(SODIUM_CRYPTO_SIGN_SEEDBYTES)); umask($old);
-    $pub = sodium_crypto_sign_publickey(sodium_crypto_sign_seed_keypair(file_get_contents($keyPath)));
+    $old = umask(077); file_put_contents($keyPath, random_bytes(32)); umask($old);
+    $pub = Ed25519Sign::publicKey(file_get_contents($keyPath));
     echo gmdate('Y-m-d H:i:s'), ' made a new head key: ', bin2hex($pub), "\n";
 }
 $seed = file_get_contents($keyPath);
-if (strlen($seed) !== SODIUM_CRYPTO_SIGN_SEEDBYTES) { fwrite(STDERR, "the key file is not a 32-byte seed\n"); exit(2); }
-$pair = sodium_crypto_sign_seed_keypair($seed);
-$pub = sodium_crypto_sign_publickey($pair);
+if (strlen($seed) !== 32) { fwrite(STDERR, "the key file is not a 32-byte seed\n"); exit(2); }
+$pub = Ed25519Sign::publicKey($seed);
 
 $store = new ThreadStore($dbPath);
 $db = new PDO('sqlite:' . $dbPath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
@@ -39,6 +38,6 @@ $latest = $heads->latest();
 if ($n === 0 || ($latest !== null && SignedHead::parse($latest['head'])['tree_size'] >= $n)) exit(0);   // nothing new: say nothing
 
 $head = SignedHead::bytes($n, $store->root($n), time(), '', 0, $store->pruneState()['level']);
-$sig = sodium_crypto_sign_detached($head, sodium_crypto_sign_secretkey($pair));
+$sig = Ed25519Sign::sign($head, $seed);
 $heads->publish($head, $sig, $pub);                 // verifies the signature itself before storing
 echo gmdate('Y-m-d H:i:s'), " signed the head at size $n\n";

@@ -12,9 +12,9 @@
 //     --export   grade nothing: write the special and sweep cases as JSON on stdout, each with ed25519.php's refusing
 //                rule and, where the oracle is loaded, libsodium's verdict, for tools/verify-ed25519.mjs
 //
-// Test signatures are made with ext/sodium, or on a PHP without it with the sodium_compat whose autoload.php
-// JETMORA_SODIUM_COMPAT names. Signing is not under test, and Ed25519 signing is deterministic,
-// so either signer makes the same corpus. The special cases are built with ed25519.php's own arithmetic, as
+// Test signatures are made with ext/sodium, or on a PHP without it with ed25519-sign.php. Signing is not under test:
+// Ed25519 signing is deterministic, verify-ed25519-sign.php holds the two signers to the same bytes, and a corpus that
+// changed would change the pinned digests. The special cases are built with ed25519.php's own arithmetic, as
 // verify-secp256k1-native.php builds its branch cases: a construction that changed would change the cases, and the
 // pinned digest would catch it.
 //
@@ -67,19 +67,18 @@ $sodium = extension_loaded('sodium');
 $oracle = $sodium && SODIUM_LIBRARY_VERSION === ORACLE_VERSION;
 $other = $sodium && !$oracle;                           // a libsodium whose verdicts are shown, never graded against
 if (!$sodium) {
-  $compat = getenv('JETMORA_SODIUM_COMPAT') ?: '';
-  if (!is_file($compat)) {
-    fwrite(STDERR, "⛔ nothing to sign with: no ext/sodium, and JETMORA_SODIUM_COMPAT names no sodium_compat autoload.php\n");
+  // ed25519-sign.php signs with the ed25519.php beside it, so that must be the file graded
+  if (realpath($file) !== realpath(__DIR__ . '/ed25519.php')) {
+    fwrite(STDERR, "⛔ nothing to sign with: no ext/sodium, and ed25519-sign.php signs only with the ed25519.php beside it\n");
     exit(2);
   }
-  require_once $compat;
-  ParagonIE_Sodium_Compat::$fastMult = true;            // its native multiply: the keys are test keys, and public
+  require_once __DIR__ . '/ed25519-sign.php';
 }
 printf("  - grading %s\n", realpath($file) ?: $file);
 if ($oracle) echo "  - the oracle: ext/sodium, libsodium " . SODIUM_LIBRARY_VERSION . "\n";
 elseif ($other) echo '  - no oracle: this PHP has libsodium ' . SODIUM_LIBRARY_VERSION . ', not the ' . ORACLE_VERSION
                      . " the rules are taken from. Graded by the pinned digests; where this library differs is shown.\n";
-else echo "  - no oracle: ext/sodium is not loaded. Graded by the pinned digests; signed by sodium_compat.\n";
+else echo "  - no oracle: ext/sodium is not loaded. Graded by the pinned digests; signed by ed25519-sign.php.\n";
 
 /** libsodium's verdict. A wrong length throws there: a refusal, as the engine has always counted it. */
 function sodiumVerdict(string $sig, string $msg, string $pub): bool {
@@ -161,9 +160,14 @@ $isCanonical = fn(string $e): bool => strcmp(strrev(substr($e, 0, 31) . chr(ord(
 $rnd = fn(string $tag): string => hash('sha256', "$seed:$tag", true);
 $num = fn(string $tag, int $mod): int => unpack('N', $rnd($tag))[1] % $mod;
 $bytes = function (string $tag, int $n) use ($rnd): string { $b = ''; for ($i = 0; strlen($b) < $n; $i++) $b .= $rnd("$tag/$i"); return substr($b, 0, $n); };
-$keyOf = fn(string $name): string => sodium_crypto_sign_seed_keypair(hash('sha256', "$seed:key:$name", true));
-$signed = function (string $kp, string $msg): array {
-  return [sodium_crypto_sign_detached($msg, sodium_crypto_sign_secretkey($kp)), $msg, sodium_crypto_sign_publickey($kp)];
+/** A keypair as libsodium lays it out: seed ‖ public key ‖ public key. */
+$keyOf = function (string $name) use ($seed, $sodium): string {
+  $sd = hash('sha256', "$seed:key:$name", true);
+  return $sodium ? sodium_crypto_sign_seed_keypair($sd) : $sd . str_repeat(Ed25519Sign::publicKey($sd), 2);
+};
+$signed = function (string $kp, string $msg) use ($sodium): array {
+  $sk = substr($kp, 0, 64);
+  return [$sodium ? sodium_crypto_sign_detached($msg, $sk) : Ed25519Sign::sign($msg, $sk), $msg, substr($kp, 64)];
 };
 /** The sweep: random keys and messages, each valid signature followed by three single-bit mutations of it. */
 $sweep = function () use ($sigs, $num, $bytes, $keyOf, $signed) {

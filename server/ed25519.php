@@ -45,8 +45,16 @@
 // Bytes are little-endian, as Ed25519 writes them. Scalars compare as reversed bytes with strcmp, never `<`, which
 // compares numeric-looking strings as numbers.
 //
-// ★ Constant time is not a goal: a signature, a key and a message are public, and there is no secret here to leak by
-//   timing. This is a verifier, never a signer; signing stays with sodium.
+// ★ Constant time is not a goal of the verdict: a signature, a key and a message are public, and verify() has no secret
+//   to leak by timing. ed25519-sign.php signs with the functions marked protected and what they call: the field
+//   arithmetic, the doubling, the mixed addition, the encoding and scReduce. Those are straight-line, the same work for
+//   every value (addPrecomp's one branch is on its flag, which the signer passes as false), and verify-ed25519-sign.php
+//   checks that they stay so. encode() and isNegative() read bytes with ord() and chr(), whose cost can depend on the
+//   byte; the signer gives them only [a]B and [r]B, a public key and R. The rest, decodeNegated, mulAdd, digits and
+//   the rules, branch on their input, and the signer never calls them. Every parameter of every function the signer
+//   reaches is marked #[\SensitiveParameter], but addPrecomp's flag and sqMul's count, which are public, so that PHP
+//   8.2 and later leave the signer's secrets out of a stack trace, a fatal error's included; the mark changes nothing
+//   else, and PHP 8.1 ignores it.
 //
 // The field and point code is ported from sodium_compat (src/Core/Curve25519.php, src/Core/Ed25519.php), and the
 // rules and the small-order list from libsodium (open.c, crypto_core/ed25519/ref10/ed25519_ref10.c at 1.0.22-RELEASE).
@@ -87,7 +95,7 @@
 //   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 declare(strict_types=1);
 
-final class Ed25519
+class Ed25519
 {
   /** p = 2^255 − 19 and L = 2^252 + 27742317777372353535851937790883648493, big-endian. */
   private const P = '7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed';
@@ -220,7 +228,7 @@ final class Ed25519
    * The canonical 32 bytes of an element, fe25519_tobytes: q = floor((h + 19·h9/2^25 rounded) / 2^255) is how many
    * times p comes off, then a carry from the bottom drops q·2^255. Exact for any limbs far below 2^40.
    */
-  private static function bytes(array $h): string
+  private static function bytes(#[\SensitiveParameter] array $h): string
   {
     [$h0, $h1, $h2, $h3, $h4, $h5, $h6, $h7, $h8, $h9] = $h;
     $q = (19 * $h9 + (1 << 24)) >> 25;
@@ -262,7 +270,7 @@ final class Ed25519
   }
 
   /** The low bit of the canonical value: the sign of x in an encoding. */
-  private static function isNegative(array $f): int
+  private static function isNegative(#[\SensitiveParameter] array $f): int
   {
     return ord(self::bytes($f)[0]) & 1;
   }
@@ -272,7 +280,7 @@ final class Ed25519
    * odd limbs (both 25 bits) is doubled, since 25 + 25 is one bit short of the column it lands in. The carries round
    * to the nearest, so each limb ends signed and centred on 0.
    */
-  private static function mul(array $f, array $g): array
+  private static function mul(#[\SensitiveParameter] array $f, #[\SensitiveParameter] array $g): array
   {
     [$f0, $f1, $f2, $f3, $f4, $f5, $f6, $f7, $f8, $f9] = $f;
     [$g0, $g1, $g2, $g3, $g4, $g5, $g6, $g7, $g8, $g9] = $g;
@@ -293,7 +301,7 @@ final class Ed25519
   }
 
   /** f² mod p: fe25519_sq, mul() with each cross product taken once and doubled. */
-  private static function sq(array $f): array
+  private static function sq(#[\SensitiveParameter] array $f): array
   {
     [$f0, $f1, $f2, $f3, $f4, $f5, $f6, $f7, $f8, $f9] = $f;
     $f0_2 = 2 * $f0; $f1_2 = 2 * $f1; $f2_2 = 2 * $f2; $f3_2 = 2 * $f3; $f4_2 = 2 * $f4;
@@ -314,7 +322,7 @@ final class Ed25519
 
   /** 2f² mod p: fe25519_sq2, sq()'s columns doubled before the carry. A column is then twice sq()'s, so the operand
    *  may be at most 5 reduced limbs; the one caller squares a Z, which is 1. */
-  private static function sq2(array $f): array
+  private static function sq2(#[\SensitiveParameter] array $f): array
   {
     [$f0, $f1, $f2, $f3, $f4, $f5, $f6, $f7, $f8, $f9] = $f;
     $f0_2 = 2 * $f0; $f1_2 = 2 * $f1; $f2_2 = 2 * $f2; $f3_2 = 2 * $f3; $f4_2 = 2 * $f4;
@@ -338,7 +346,11 @@ final class Ed25519
    * limb comes back into the bottom times 19, then the bottom carries once more. The shifts are arithmetic, so a
    * negative column carries as a negative number.
    */
-  private static function carry(int $h0, int $h1, int $h2, int $h3, int $h4, int $h5, int $h6, int $h7, int $h8, int $h9): array
+  private static function carry(
+    #[\SensitiveParameter] int $h0, #[\SensitiveParameter] int $h1, #[\SensitiveParameter] int $h2,
+    #[\SensitiveParameter] int $h3, #[\SensitiveParameter] int $h4, #[\SensitiveParameter] int $h5,
+    #[\SensitiveParameter] int $h6, #[\SensitiveParameter] int $h7, #[\SensitiveParameter] int $h8,
+    #[\SensitiveParameter] int $h9): array
   {
     $c = ($h0 + (1 << 25)) >> 26; $h1 += $c; $h0 -= $c << 26;
     $c = ($h4 + (1 << 25)) >> 26; $h5 += $c; $h4 -= $c << 26;
@@ -356,25 +368,25 @@ final class Ed25519
   }
 
   // Limb by limb, with no carry: the caller keeps the result's limbs within what its next multiply allows.
-  private static function add(array $a, array $b): array
+  private static function add(#[\SensitiveParameter] array $a, #[\SensitiveParameter] array $b): array
   {
     return [$a[0] + $b[0], $a[1] + $b[1], $a[2] + $b[2], $a[3] + $b[3], $a[4] + $b[4],
             $a[5] + $b[5], $a[6] + $b[6], $a[7] + $b[7], $a[8] + $b[8], $a[9] + $b[9]];
   }
 
-  private static function sub(array $a, array $b): array
+  private static function sub(#[\SensitiveParameter] array $a, #[\SensitiveParameter] array $b): array
   {
     return [$a[0] - $b[0], $a[1] - $b[1], $a[2] - $b[2], $a[3] - $b[3], $a[4] - $b[4],
             $a[5] - $b[5], $a[6] - $b[6], $a[7] - $b[7], $a[8] - $b[8], $a[9] - $b[9]];
   }
 
-  private static function neg(array $a): array
+  protected static function neg(#[\SensitiveParameter] array $a): array
   {
     return [-$a[0], -$a[1], -$a[2], -$a[3], -$a[4], -$a[5], -$a[6], -$a[7], -$a[8], -$a[9]];
   }
 
   /** f squared n times, then times g. */
-  private static function sqMul(array $f, int $n, array $g): array
+  private static function sqMul(#[\SensitiveParameter] array $f, int $n, #[\SensitiveParameter] array $g): array
   {
     for ($i = 0; $i < $n; $i++) $f = self::sq($f);
     return self::mul($f, $g);
@@ -384,7 +396,7 @@ final class Ed25519
    * z^(2^250 − 1) and z^11: the squarings fe25519_invert and fe25519_pow22523 share, by the runs of ones
    * 2^5 − 1, 2^10 − 1, 2^20 − 1, 2^40 − 1, 2^50 − 1, 2^100 − 1, 2^200 − 1 and 2^250 − 1.
    */
-  private static function pow250(array $z): array
+  private static function pow250(#[\SensitiveParameter] array $z): array
   {
     $z2   = self::sq($z);
     $z9   = self::mul($z, self::sq(self::sq($z2)));
@@ -401,7 +413,7 @@ final class Ed25519
   }
 
   /** 1/z = z^(p − 2) = z^(2^255 − 21): 2^250 − 1, five squarings, times z^11. */
-  private static function invert(array $z): array
+  private static function invert(#[\SensitiveParameter] array $z): array
   {
     [$t250, $z11] = self::pow250($z);
     return self::sqMul($t250, 5, $z11);
@@ -420,7 +432,7 @@ final class Ed25519
   // affine. The comments give each multiply's operand sizes in units of a reduced limb.
 
   /** 2P for a p2 or p3 point, as p1p1: ge25519_p2_dbl. */
-  private static function dbl(array $p): array
+  protected static function dbl(#[\SensitiveParameter] array $p): array
   {
     $xx = self::sq($p[0]);
     $yy = self::sq($p[1]);                                                    // 2·2: a decoded y is 2
@@ -432,13 +444,13 @@ final class Ed25519
   }
 
   /** p1p1 as p2. */
-  private static function p2(array $p): array
+  protected static function p2(#[\SensitiveParameter] array $p): array
   {
     return [self::mul($p[0], $p[3]), self::mul($p[1], $p[2]), self::mul($p[2], $p[3])];   // 3·3, 2·3, 3·3
   }
 
   /** p1p1 as p3. */
-  private static function p3(array $p): array
+  protected static function p3(#[\SensitiveParameter] array $p): array
   {
     return [self::mul($p[0], $p[3]), self::mul($p[1], $p[2]), self::mul($p[2], $p[3]), self::mul($p[0], $p[1])];
   }
@@ -462,7 +474,7 @@ final class Ed25519
   }
 
   /** p + q for a p3 p and a precomp q, as p1p1: ge25519_madd. q negated, ge25519_msub, when $minus. */
-  private static function addPrecomp(array $p, array $q, bool $minus): array
+  protected static function addPrecomp(#[\SensitiveParameter] array $p, #[\SensitiveParameter] array $q, bool $minus): array
   {
     $a = self::mul(self::add($p[1], $p[0]), $minus ? $q[1] : $q[0]);          // 2·4: y ± x of B_ODD, read from bytes
     $b = self::mul(self::sub($p[1], $p[0]), $minus ? $q[0] : $q[1]);
@@ -497,7 +509,7 @@ final class Ed25519
   }
 
   /** The encoding of a p2 point: y canonical, the sign of x in the top bit. The one inversion. */
-  private static function encode(array $p): string
+  protected static function encode(#[\SensitiveParameter] array $p): string
   {
     $zi = self::invert($p[2]);
     $b = self::bytes(self::mul($p[1], $zi));
@@ -563,7 +575,7 @@ final class Ed25519
    * down as 2^252 = −(L − 2^252) (mod L), whose limbs are 666643, 470296, 654183, −997805, 136657 and −683901 times
    * 2^21 apart, from the top limb down, with carries between.
    */
-  private static function scReduce(string $s): string
+  protected static function scReduce(#[\SensitiveParameter] string $s): string
   {
     $b = unpack('C*', $s);
     $l3 = fn(int $i): int => $b[$i + 1] | ($b[$i + 2] << 8) | ($b[$i + 3] << 16);

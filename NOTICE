@@ -24,8 +24,11 @@ server/ed25519.php ports the Ed25519 field and point arithmetic of sodium_compat
 Copyright (c) 2016-2023 Paragon Initiative Enterprises and (c) 2013-2019 Frank
 Denis, and takes its verification rules from libsodium 1.0.22, Copyright (c)
 2013-2026 Frank Denis. tools/ed25519.mjs ports the same point code and rules
-from it. sodium_compat and libsodium are both under the ISC licence, whose
-notices are preserved in each of the two files as required.
+from it. server/ed25519-sign.php ports libsodium's Ed25519 signing: its base
+multiplication, the form of its table, its conditional moves and its signing
+steps, as sodium_compat also carries them. sodium_compat and libsodium are both
+under the ISC licence, whose notices are preserved in each of the three files
+as required.
 
 NOT derived from, and NOT licensed under, the Open BSV License. No code or text
 from any Open BSV Licensed work is included in this repository. The @bsv/sdk

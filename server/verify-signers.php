@@ -43,13 +43,87 @@ ok(Appender::verifySignature($entry, $jPub, $jSig),
 ok(!Appender::verifySignature($entry . 'x', $jPub, $jSig), 'a changed entry is refused');
 ok(JetmoraSigner::verify($entry, $jPub, $jSig), '...and our mirror agrees with it');
 // ⚠ THE TRAP: pre-hashing for ed25519 gives a well-formed signature the chain refuses.
-$wrong = sodium_crypto_sign_detached(hash('sha256', $entry, true),
-           sodium_crypto_sign_secretkey(sodium_crypto_sign_seed_keypair(
-             Slip10Ed25519::derive($seed, "m/44'/0'/0'")['key'])));
+$wrong = Ed25519Sign::sign(hash('sha256', $entry, true), Slip10Ed25519::derive($seed, "m/44'/0'/0'")['key']);
 ok(!Appender::verifySignature($entry, $jPub, $wrong),
    '⛔ pre-hashing for ed25519 produces a VALID-LOOKING signature the chain REFUSES — the trap named');
 // ★ deterministic by construction: ed25519 has no k to get wrong
 ok($j->signEntry($entry) === $jSig, '★ ed25519 is deterministic by construction — there is no k at all');
+
+// ⚠ what a signer shows of itself, and what the trace of a refused path holds. The phrase's seed, the master node and
+//   the signing key, as every run of 4 bytes: raw, in hex, and as a printed trace writes a string (a byte outside
+//   ASCII as \xNN).
+function traceEscaped(string $s): string {
+  $named = ["\n" => '\\n', "\r" => '\\r', "\t" => '\\t', "\f" => '\\f', "\v" => '\\v', '\\' => '\\\\', "\e" => '\\e'];
+  $out = '';
+  foreach (str_split($s) as $c) $out .= $named[$c] ?? (ord($c) < 32 || ord($c) > 126 ? sprintf('\\x%02X', ord($c)) : $c);
+  return $out;
+}
+/** Every string the arguments of a trace hold, at any depth, counting each SensitiveParameterValue in $hidden. */
+function traceStrings(array $args, int &$hidden): array {
+  $out = [];
+  foreach ($args as $v) {
+    if (is_array($v)) array_push($out, ...traceStrings($v, $hidden));
+    elseif ($v instanceof SensitiveParameterValue) $hidden++;
+    elseif (is_object($v)) $out[] = print_r($v, true);
+    elseif (is_scalar($v)) $out[] = (string)$v;
+  }
+  return $out;
+}
+$master = Slip10Ed25519::master($seed);
+$runs = [];
+foreach ([$seed, $master['key'], $master['chain'], Slip10Ed25519::derive($seed, "m/44'/0'/0'")['key']] as $secret)
+  for ($i = 0; $i + 4 <= strlen($secret); $i++) { $r = substr($secret, $i, 4); array_push($runs, $r, bin2hex($r), strtoupper(bin2hex($r)), traceEscaped($r)); }
+$has = fn(string $text): bool => array_filter($runs, fn($r) => str_contains($text, $r)) !== [];
+ob_start(); var_dump($j); $shown = ob_get_clean() . print_r($j, true);
+ok(str_contains($shown, bin2hex($jPub)) && !$has($shown), 'var_dump() and print_r() of a signer show its public key, and nothing of its seed');
+// the seed is held off the object: no dump of it, and no property of it, holds the seed
+ob_start(); debug_zval_dump($j); $zval = ob_get_clean();
+$props = '';
+foreach ((new ReflectionObject($j))->getProperties() as $p) if (!$p->isStatic()) $props .= var_export($p->getValue($j), true);
+$dumps = ['var_export' => var_export($j, true), '(array)' => var_export((array)$j, true), 'get_object_vars' => var_export(get_object_vars($j), true),
+          'json_encode' => (string)json_encode($j), 'debug_zval_dump' => $zval, 'its properties by reflection' => $props];
+ok(array_filter($dumps, $has) === [] && !(new ReflectionObject($j))->hasProperty('seed'),
+   sprintf('%s of a signer: no run of 4 bytes of its seed in any, and it has no seed property', implode(', ', array_keys($dumps))));
+/** The class of what $f throws, or 'nothing'. */
+$throws = function (callable $f): string { try { $f(); return 'nothing'; } catch (Throwable $e) { return get_class($e); } };
+$copy = 'O:13:"JetmoraSigner":1:{s:9:"publicKey";s:32:"' . str_repeat('x', 32) . '";}';
+ok($throws(fn() => serialize($j)) === LogicException::class && $throws(fn() => unserialize($copy)) === LogicException::class,
+   'serialize() of a signer, and unserialize() of one written by hand, each throw a LogicException');
+$twin = clone $j;
+ok($twin->publicKey() === $j->publicKey() && $twin->signEntry('a clone') === $j->signEntry('a clone'),
+   'a clone signs with the same seed');
+$store = (new ReflectionProperty(JetmoraSigner::class, 'seeds'))->getValue();
+$before = count($store);
+$k = JetmoraSigner::fromSeed($seed, "m/44'/0'/1'"); $with = count($store);
+$kSig = $k->signEntry($entry); unset($k); $after = count($store);
+ok($with === $before + 1 && $after === $before && Appender::verifySignature($entry, Slip10Ed25519::publicKey(Slip10Ed25519::derive($seed, "m/44'/0'/1'"), false), $kSig),
+   "the seed is kept for as long as its signer lives and goes with it: $before held, $with with a second signer, $after once it is gone; the second signs");
+// each refusal is made here, at the top level, so that its trace holds the wallet's frames and nothing of this file's.
+// A node of the wrong shape is refused before hash_hmac() sees it: an error raised inside a PHP function would print
+// that function's arguments, which cannot be marked.
+$ignoreArgs = (string)ini_get('zend.exception_ignore_args'); $maxLen = (string)ini_get('zend.exception_string_param_max_len');
+ini_set('zend.exception_ignore_args', '0'); ini_set('zend.exception_string_param_max_len', '1000000');
+$refusals = [];
+try { JetmoraSigner::fromSeed($seed, "m/0"); } catch (Throwable $e) { $refusals[] = $e; }
+try { JetmoraSigner::fromSeed($seed, 'm/x'); } catch (Throwable $e) { $refusals[] = $e; }
+try { Slip10Ed25519::master(substr($seed, 0, 15)); } catch (Throwable $e) { $refusals[] = $e; }
+try { Slip10Ed25519::child($master, 0); } catch (Throwable $e) { $refusals[] = $e; }
+$badNodes = [['key' => $master['key']], ['key' => $master['key'], 'chain' => null], ['key' => $master['key'], 'chain' => 7],
+             ['key' => [$master['key']], 'chain' => $master['chain']], ['chain' => $master['chain']],
+             ['key' => substr($master['key'], 0, 31), 'chain' => $master['chain']], ['key' => $master['key'], 'chain' => $master['chain'] . $master['key']]];
+foreach ($badNodes as $node) try { Slip10Ed25519::child($node, Slip10Ed25519::HARDENED); } catch (Throwable $e) { $refusals[] = $e; }
+ini_set('zend.exception_ignore_args', $ignoreArgs); ini_set('zend.exception_string_param_max_len', $maxLen);
+$hidden = 0; $leaked = 0; $clean = 0;
+foreach ($refusals as $e) {
+  $hay = [(string)$e]; $h0 = $hidden;
+  foreach ($e->getTrace() as $fr) array_push($hay, ...traceStrings($fr['args'] ?? [], $hidden));
+  if (array_filter($hay, $has) !== []) $leaked++;
+  if ($e instanceof Slip10Error && $hidden > $h0) $clean++;
+}
+$what = sprintf("a refused path, a short seed, a non-hardened index and %d nodes of the wrong shape (no 'chain', a null or int one, a 'key' that is an array, no 'key', a short 'key', a long 'chain'): %d refusals, %d of them a Slip10Error with a SensitiveParameterValue in its trace, traced with every argument kept; %d with a run of 4 bytes of the seed, a node or the key in a trace argument or the printed exception",
+                count($badNodes), count($refusals), $clean, $leaked);
+if (PHP_VERSION_ID < 80200 && $ignoreArgs === '1') printf("  - PHP %s has no #[\\SensitiveParameter]; zend.exception_ignore_args = 1 here keeps arguments out of every trace. Not counted as passed: %s\n", PHP_VERSION, $what);
+else ok(count($refusals) === 4 + count($badNodes) && $clean === count($refusals) && $leaked === 0, $what);
 
 // ── the BSV side: secp256k1 ─────────────────────────────────────────────────────────────────────────
 echo "\n── bsv · secp256k1 ──\n";

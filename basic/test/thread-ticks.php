@@ -19,6 +19,7 @@ require_once __DIR__ . '/../../server/interpreter-jf.php';
 require_once __DIR__ . '/../../server/wallet/jetmora/thread.php';
 require_once __DIR__ . '/../../server/dispatch.php';
 require_once __DIR__ . '/../../server/jf-asm.php';
+require_once __DIR__ . '/../../server/ed25519-sign.php';
 
 function handCounter(): string
 {
@@ -35,7 +36,7 @@ function hash256(string $b): string { return hash('sha256', hash('sha256', $b, t
 
 $in = json_decode((string)stream_get_contents(STDIN), true);
 $keys = [];
-foreach ($in['keys'] as $name => $seed) $keys[$name] = sodium_crypto_sign_seed_keypair(hex2bin($seed));
+foreach ($in['keys'] as $name => $seed) $keys[$name] = [hex2bin($seed), Ed25519Sign::publicKey(hex2bin($seed))];
 $genesis = hash('sha256', 'a thread', true);
 
 $out = [];
@@ -47,13 +48,12 @@ foreach ($in['cases'] as $c) {
     $c['seq'],
     function (string $pre) use ($u, $keys): string {
       if ($u['kind'] === 'raw') return hex2bin($u['hex']);
-      $kp = $keys[$u['key']];
+      [$seed, $pub] = $keys[$u['key']];
       $msg = hash256($pre);
       if (!empty($u['msgFlip'])) $msg[0] = chr(ord($msg[0]) ^ 1);
-      $sig = sodium_crypto_sign_detached($msg, sodium_crypto_sign_secretkey($kp));
+      $sig = Ed25519Sign::sign($msg, $seed);
       if (!empty($u['flip'])) $sig[5] = chr(ord($sig[5]) ^ 1);
       if (!empty($u['longSig'])) $sig .= "\x00";
-      $pub = sodium_crypto_sign_publickey($kp);
       if (!empty($u['onlySig'])) return push($sig);
       if (!empty($u['lit'])) return push($sig) . chr(JF_LIT['LIT8']) . "\x20";   // a number where the key belongs
       $s = !empty($u['swap']) ? push($pub) . push($sig) : push($sig) . push($pub);

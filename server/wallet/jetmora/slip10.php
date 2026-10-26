@@ -30,7 +30,13 @@
 // ★ One seed → many keys → and each key holds a STRING (his term, 7 Sept: a user's set of threads).
 //   ⇒ So a seed phrase does not recover one thread. It recovers **every string you own**, from any site
 //     that has them.
+//
+// ⚠ A parameter that holds a seed or a node (both halves of a node are secret) is marked #[\SensitiveParameter], so
+//   that PHP 8.2 and later leave it out of a stack trace, where PHP otherwise keeps each call's arguments (unless
+//   zend.exception_ignore_args is on). PHP 8.1 ignores the mark and runs the same; there, only that setting keeps the
+//   seed out of the trace of a refused path.
 declare(strict_types=1);
+require_once __DIR__ . '/../../ed25519-sign.php';
 
 final class Slip10Error extends RuntimeException {}
 
@@ -42,7 +48,7 @@ final class Slip10Ed25519
   public  const HARDENED = 0x80000000;
 
   /** @return array{key:string,chain:string} the master node from a BIP-39 seed */
-  public static function master(string $seed): array
+  public static function master(#[\SensitiveParameter] string $seed): array
   {
     if (strlen($seed) < 16 || strlen($seed) > 64)
       throw new Slip10Error('a seed is 16 to 64 bytes; BIP-39 produces 64');
@@ -57,7 +63,7 @@ final class Slip10Ed25519
    * ⛔ REFUSES a non-hardened index — it is not unimplemented, it is IMPOSSIBLE for this curve, and
    *   saying so is more useful than a generic error.
    */
-  public static function child(array $node, int $index): array
+  public static function child(#[\SensitiveParameter] array $node, int $index): array
   {
     if ($index < self::HARDENED)
       throw new Slip10Error(sprintf(
@@ -65,10 +71,14 @@ final class Slip10Ed25519
       . 'derivation always fails for ed25519". ⇒ Use %d\' (that is %d).',
         $index, $index, $index + self::HARDENED));
     if ($index > 0xffffffff) throw new Slip10Error('index must fit 32 bits');
+    // The node is checked before hash_hmac() sees it: a PHP function's own arguments cannot be marked, so an error
+    // raised inside it would put both halves of the node in the trace. Here only the marked $node is.
+    $key = $node['key'] ?? null; $chain = $node['chain'] ?? null;
+    if (!is_string($key) || strlen($key) !== 32 || !is_string($chain) || strlen($chain) !== 32)
+      throw new Slip10Error("a node is ['key' => 32 bytes, 'chain' => 32 bytes]");
     // ⚠ The 0x00 prefix is REQUIRED and is not padding: it is what distinguishes this from the
     //   public-key derivation the other curves have, and omitting it derives a different tree.
-    $data = "\x00" . $node['key'] . pack('N', $index);
-    $I = hash_hmac('sha512', $data, $node['chain'], true);
+    $I = hash_hmac('sha512', "\x00" . $key . pack('N', $index), $chain, true);
     // ★★ `k_i` IS `I_L`. ⛔ NOT `(IL + kpar) mod n` — that is BIP-32, and doing it here yields keys
     //    that verify perfectly and match no other wallet.
     return ['key' => substr($I, 0, 32), 'chain' => substr($I, 32, 32)];
@@ -79,7 +89,7 @@ final class Slip10Ed25519
    * number is REFUSED rather than silently hardened, because silently hardening would mean two wallets
    * reading one path differently.
    */
-  public static function derive(string $seed, string $path): array
+  public static function derive(#[\SensitiveParameter] string $seed, string $path): array
   {
     $node = self::master($seed);
     $path = trim($path);
@@ -101,18 +111,16 @@ final class Slip10Ed25519
   /**
    * The ed25519 public key for a node: **33 bytes, `0x00` then the point** — SLIP-0010's serialization.
    * ⚠ The leading zero keeps every curve's public key the same width; it is not part of the key.
-   * ★ sodium's ed25519 is CONSTANT TIME, which our own PHP secp256k1 cannot be. ⇒ For the signing path
-   *   specifically, not owning the code is an ADVANTAGE.
+   * ★ The point is ed25519-sign.php's [a]B, in ref10's constant-time shape: the node's key is secret.
    */
-  public static function publicKey(array $node, bool $withPrefix = true): string
+  public static function publicKey(#[\SensitiveParameter] array $node, bool $withPrefix = true): string
   {
-    if (!extension_loaded('sodium')) throw new Slip10Error('ext-sodium is required for ed25519');
-    $pub = sodium_crypto_sign_publickey(sodium_crypto_sign_seed_keypair($node['key']));
+    $pub = Ed25519Sign::publicKey($node['key']);
     return $withPrefix ? "\x00" . $pub : $pub;
   }
 
   /** BIP-32's fingerprint rule, over SLIP-0010's 33-byte serialization: first 4 bytes of hash160. */
-  public static function fingerprint(array $node): string
+  public static function fingerprint(#[\SensitiveParameter] array $node): string
   {
     return substr(hash('ripemd160', hash('sha256', self::publicKey($node), true), true), 0, 4);
   }

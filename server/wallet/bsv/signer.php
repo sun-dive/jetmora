@@ -10,8 +10,8 @@
 //     looks perfectly well-formed.
 //
 // ⚠⚠ THE TIMING CONSTRAINT IS REAL ON THIS SIDE. Our secp256k1 is scalar-blinded, but **PHP cannot be
-//   constant time**. ⇒ For anything material, prefer the air-gapped path. The jetmora signer has no
-//   such caveat: sodium's ed25519 IS constant time.
+//   constant time**. ⇒ For anything material, prefer the air-gapped path. The jetmora signer has the
+//   same caveat: ed25519-sign.php has ref10's constant-time shape, and PHP still promises nothing.
 //
 // ⚠ `lowS` is NOT a protocol rule — 0.1.3 has none and Chronicle removed it — but a BROADCASTER can
 //   still refuse a high-s signature, and this project has had a conformant spend refused by exactly
@@ -32,7 +32,7 @@ final class BsvSigner
    */
   private function __construct(private readonly GMP $d, private readonly bool $compressed = true) {}
 
-  public static function fromPrivateKey(string $raw32, bool $compressed = true): self
+  public static function fromPrivateKey(#[\SensitiveParameter] string $raw32, bool $compressed = true): self
   {
     if (strlen($raw32) !== 32) throw new BsvSignerError('a private key is 32 bytes');
     $d = gmp_import($raw32, 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
@@ -52,7 +52,7 @@ final class BsvSigner
    * ⛔ NEVER ASK A USER FOR ONE. This exists so a user can import a key THEY produced, on their own
    *   machine, and the standing rule is that a key is never solicited.
    */
-  public static function fromWif(string $wif): self
+  public static function fromWif(#[\SensitiveParameter] string $wif): self
   {
     $d = Wif::decode($wif);
     if ($d === null) throw new BsvSignerError('not a valid WIF — the checksum or the length is wrong');

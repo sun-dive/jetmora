@@ -12,8 +12,9 @@
 // Over HTTP, against a docroot staged by running .cpanel.yml's thread-service lines, so a file the deploy
 // leaves out fails here. The thread is the BASIC covenant of basic/test/thread.mjs (signed by the owner,
 // value + 1, the same script), compiled by basic/basic-jf.mjs; its ticks are built and signed here. Needs node.
-// Signing is not under test: ext/sodium signs, or on a PHP without it the sodium_compat whose autoload.php
-// JETMORA_SODIUM_COMPAT names, so `php -n -d extension=pdo_sqlite` stages a service with neither sodium nor gmp.
+// Signing is not under test: ext/sodium signs, or on a PHP without it ed25519-sign.php, so `php -n -d
+// extension=pdo_sqlite` stages a service with neither sodium nor gmp. Ed25519 signing is deterministic, and
+// verify-ed25519-sign.php holds the two to the same bytes.
 //   php server/verify-tip.php
 declare(strict_types=1);
 
@@ -29,20 +30,13 @@ if (($argv[1] ?? '') === 'race-worker') {
   exit(0);
 }
 
-if (!extension_loaded('sodium')) {
-  $compat = getenv('JETMORA_SODIUM_COMPAT') ?: '';
-  if (!is_file($compat)) {
-    fwrite(STDERR, "⛔ nothing to sign with: no ext/sodium, and JETMORA_SODIUM_COMPAT names no sodium_compat autoload.php\n");
-    exit(2);
-  }
-  require_once $compat;
-}
 require_once __DIR__ . '/wallet/jetmora/thread.php';
 require_once __DIR__ . '/jf-asm.php';
 require_once __DIR__ . '/store.php';
 require_once __DIR__ . '/genesis.php';
 require_once __DIR__ . '/append.php';
 require_once __DIR__ . '/secp256k1.php';
+require_once __DIR__ . '/ed25519-sign.php';
 
 $pass = 0; $fail = 0;
 function ok(bool $c, string $what): void {
@@ -99,7 +93,7 @@ if (php_ini_loaded_file() === false) {
 }
 if (in_array('-n', $php, true))
   printf("  - the service runs as %s: %s\n", implode(' ', array_slice($php, 1)),
-         extension_loaded('sodium') ? 'with ext/sodium' : 'without ext/sodium, its test signatures made by sodium_compat');
+         extension_loaded('sodium') ? 'with ext/sodium' : 'without ext/sodium, its test signatures made by ed25519-sign.php');
 $sock = stream_socket_server('tcp://127.0.0.1:0');
 $port = (int)substr((string)strrchr((string)stream_socket_get_name($sock, false), ':'), 1);
 fclose($sock);
@@ -127,10 +121,14 @@ $dbPath = "$home/jetmora-data/log.db";
 ok($info['status'] === 200 && is_file($dbPath), "the service answers ({$info['status']}), its database in jetmora-data beside the docroot");
 
 echo "\n── the thread: the BASIC covenant, compiled ──\n";
-$owner = sodium_crypto_sign_seed_keypair(hash('sha256', 'the owner', true));
-$other = sodium_crypto_sign_seed_keypair(hash('sha256', 'somebody else', true));
-$pub = fn(string $kp): string => sodium_crypto_sign_publickey($kp);
-$sk  = fn(string $kp): string => sodium_crypto_sign_secretkey($kp);
+// a keypair as libsodium lays it out, seed ‖ public key ‖ public key, and a signature by its 64-byte secret key
+$sodium = extension_loaded('sodium');
+$keypair = fn(string $seed): string => $sodium ? sodium_crypto_sign_seed_keypair($seed) : $seed . str_repeat(Ed25519Sign::publicKey($seed), 2);
+$owner = $keypair(hash('sha256', 'the owner', true));
+$other = $keypair(hash('sha256', 'somebody else', true));
+$pub = fn(string $kp): string => substr($kp, 64);
+$sk  = fn(string $kp): string => substr($kp, 0, 64);
+$sign = fn(string $msg, string $kp): string => $sodium ? sodium_crypto_sign_detached($msg, $sk($kp)) : Ed25519Sign::sign($msg, $sk($kp));
 $SRC = "VERSION JF 3\nDIM owner\$20";
 $ownerHash = hash('ripemd160', hash('sha256', $pub($owner), true), true);
 $js = 'const { pathToFileURL } = await import("node:url");'
@@ -149,7 +147,7 @@ $h256 = fn(string $b): string => hash('sha256', hash('sha256', $b, true), true);
 $push = fn(string $b): string => chr(strlen($b)) . $b;                // a jetForth direct push: the opcode is the length
 $lp   = fn(string $b): string => pack('N', strlen($b)) . $b;
 /** The unlocking script the covenant asks for: a signature over the preimage, by $kp, and its key. */
-$signs = fn(string $kp): Closure => fn(string $pre): string => $push(sodium_crypto_sign_detached($h256($pre), $sk($kp))) . $push($pub($kp));
+$signs = fn(string $kp): Closure => fn(string $pre): string => $push($sign($h256($pre), $kp)) . $push($pub($kp));
 /** Register a thread of $script, its genesis authorising the owner's key (or $keys). Its genesis is its tip until the first tick. */
 $thread = function (string $name, string $script, ?array $keys = null) use ($SRC, $owner, $pub): array {
   $r = http('POST', 'op=register', json_encode(['source_hash' => hash('sha256', $SRC), 'script' => bin2hex($script),
@@ -167,7 +165,7 @@ $tickOf = function (array $t, string $kp, array $o = []) use ($signs): array {
 /** Append over JSON, the append signed by the owner, whose key the genesis authorises. */
 $send = fn(array $t, string $bytes): array => http('POST', 'op=append', json_encode([
   'genesis' => bin2hex($t['id']), 'entry' => bin2hex($bytes), 'pubkey' => bin2hex($pub($owner)),
-  'signature' => bin2hex(sodium_crypto_sign_detached($bytes, $sk($owner)))]));
+  'signature' => bin2hex($sign($bytes, $owner))]));
 /** Send the next correct tick; the thread moves on when it lands. */
 $advance = function (array &$t) use ($tickOf, $send, $owner): array {
   $k = $tickOf($t, $owner); $r = $send($t, $k['bytes']);
@@ -193,7 +191,7 @@ ok($r2['status'] === 201 && $r3['status'] === 201 && $count($A) === 3, 'two more
 echo "\n── ⛔ only the tip can be ticked forward ──\n";
 // the second tick again, its signature in the STR8 push form: other bytes, and as valid
 $again = CovenantThread::tick($t1['hash'], 0, $S, pack('P', 1), [['value' => 2, 'locking' => $S]], 2,
-  fn(string $pre): string => chr(JF_LIT['STR8']) . chr(64) . sodium_crypto_sign_detached($h256($pre), $sk($owner)) . $push($pub($owner)));
+  fn(string $pre): string => chr(JF_LIT['STR8']) . chr(64) . $sign($h256($pre), $owner) . $push($pub($owner)));
 ok($again['bytes'] !== $t2['bytes'] && CovenantThread::judge($again['entry'], 0, $S, pack('P', 1))['accepted'],
    'a different tick spending the output the second tick spent is built, and its script accepts it');
 $r = $send($A, $again['bytes']);
@@ -232,7 +230,7 @@ ok($r['status'] === 422 && is_array($r['json']), 'the refusal is JSON that parse
 ok(($r['json']['reason_hex'] ?? '') === bin2hex("ABORT: \xffno"), 'reason_hex carries the bytes exactly: ' . ($r['json']['reason_hex'] ?? '?'));
 ok(($r['json']['reason'] ?? '') === "ABORT: \u{FFFD}no", 'reason carries the text, the byte that is not UTF-8 substituted');
 $packed = http('POST', 'op=append&genesis=' . bin2hex($F['id']),
-               $lp($tf['bytes']) . $lp($pub($owner)) . $lp(sodium_crypto_sign_detached($tf['bytes'], $sk($owner))),
+               $lp($tf['bytes']) . $lp($pub($owner)) . $lp($sign($tf['bytes'], $owner)),
                'application/octet-stream', 'application/octet-stream');
 ok($packed['status'] === 422 && ($packed['json']['reason_hex'] ?? '') === bin2hex("ABORT: \xffno"),
    'the packed transport answers the refusal in the same JSON → ' . $said($packed));
@@ -274,10 +272,10 @@ echo "\n── the checks before the script are kept ──\n";
 $P = $thread('P', $S);
 $tp = $tickOf($P, $owner);
 $r = http('POST', 'op=append', json_encode(['genesis' => bin2hex($P['id']), 'entry' => bin2hex($tp['bytes']),
-  'pubkey' => bin2hex($pub($other)), 'signature' => bin2hex(sodium_crypto_sign_detached($tp['bytes'], $sk($other)))]));
+  'pubkey' => bin2hex($pub($other)), 'signature' => bin2hex($sign($tp['bytes'], $other))]));
 ok($r['status'] === 403, 'appended under a key the genesis does not name → ' . $said($r));
 $r = http('POST', 'op=append', json_encode(['genesis' => bin2hex($P['id']), 'entry' => bin2hex($tp['bytes']),
-  'pubkey' => bin2hex($pub($owner)), 'signature' => bin2hex(sodium_crypto_sign_detached('other bytes', $sk($owner)))]));
+  'pubkey' => bin2hex($pub($owner)), 'signature' => bin2hex($sign('other bytes', $owner))]));
 ok($r['status'] === 403, 'an append signature over other bytes → ' . $said($r));
 ok($count($P) === 0, 'nothing was recorded');
 $d = hash('sha256', 'a secp256k1 key', true);
@@ -296,7 +294,7 @@ $at = sprintf('%.6f', microtime(true) + 0.5);
 $ws = []; $wp = [];
 for ($i = 0; $i < 8; $i++)
   $ws[$i] = proc_open([...$php, __FILE__, 'race-worker', "$docroot/threads", $dbPath, bin2hex($R['id']), bin2hex($tr['bytes']),
-                       bin2hex($pub($owner)), bin2hex(sodium_crypto_sign_detached($tr['bytes'], $sk($owner))), $at],
+                       bin2hex($pub($owner)), bin2hex($sign($tr['bytes'], $owner)), $at],
                       [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $wp[$i]);
 $st = [];
 foreach ($ws as $i => $w) {
@@ -312,7 +310,7 @@ echo "\n── the tip moves while a tick is judged ──\n";
 $M = $thread('M', $S);
 $first = $tickOf($M, $owner);
 $rival = CovenantThread::tick($M['id'], 0, $S, pack('P', 0), [['value' => 1, 'locking' => $S]], 1,
-  fn(string $pre): string => chr(JF_LIT['STR8']) . chr(64) . sodium_crypto_sign_detached($h256($pre), $sk($owner)) . $push($pub($owner)));
+  fn(string $pre): string => chr(JF_LIT['STR8']) . chr(64) . $sign($h256($pre), $owner) . $push($pub($owner)));
 $store->checkTip($M['id'], $M['id']);                        // the rival passes the check before its script runs,
 $r = $send($M, $first['bytes']);                             // the first tick lands,
 $v = (new ReflectionMethod(Appender::class, 'judge'))->invoke(new Appender($store, new GenesisRegistry($db)), $M['id'], $rival['entry']);
