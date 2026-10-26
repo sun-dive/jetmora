@@ -6,6 +6,8 @@
 // 3 the successor is this script · 4 the state is inside it. Each tick is built and signed by PHP
 // (thread-ticks.php), judged by the PHP interpreter, then judged again by the JavaScript one. Every check
 // in the script is then disabled in turn, and some tick must change its verdict, or that check is untested.
+// Last, every tick PHP judged here is judged again by tools/thread.mjs from its bytes alone (the entry, the tip's
+// script, its value), with its own preimage and its own crypto, and must get CovenantThread::judge's verdict.
 import { execFileSync } from 'node:child_process'
 import { createHash, createPrivateKey, createPublicKey } from 'node:crypto'
 import { join, dirname } from 'node:path'
@@ -15,6 +17,8 @@ import { disassemble, unbasic } from '../unbasic-jf.mjs'
 import { verifyTick } from '../../tools/interpreter-jf.mjs'
 import { JF_WORD, JF_SMALL0 } from '../../tools/ops-jf.mjs'
 import { verify as ed25519 } from '../../tools/ed25519.mjs'     // libsodium 1.0.22's rules, as server/ed25519.php's
+import { judge as judgeTick, VersionError } from '../../tools/thread.mjs'
+import { parseEntry } from '../../tools/entry.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const hex = b => Buffer.from(b).toString('hex'), unhex = h => Uint8Array.from(Buffer.from(h, 'hex'))
@@ -90,6 +94,8 @@ const verifies = script => disassemble(script).flatMap((x, k, all) =>
   x.name === '0=' && all[k + 1]?.name === '(ABORT")' && all[k + 1].data.length === 0 ? [x.at] : [])
 /** `0= (ABORT") ""` → `DROP 1 DROP`: the same three bytes, and the check gone. */
 const disable = (script, at) => { const b = Uint8Array.from(script); b[at] = JF_WORD.DROP; b[at + 1] = JF_SMALL0 + 1; b[at + 2] = JF_WORD.DROP; return b }
+/** Every tick PHP judged here, for tools/thread.mjs to judge again at the end. */
+const judgedByPhp = []
 /** Judge ticks in PHP. */
 function judge(list) {
   const res = JSON.parse(execFileSync('php', [join(HERE, 'thread-ticks.php')], {
@@ -97,6 +103,7 @@ function judge(list) {
       ({ script: typeof S === 'string' ? S : hex(S), value, seq, outputs, unlock, ...extra })) }),
     maxBuffer: 1 << 28,
   }).toString())
+  judgedByPhp.push(...res)
   return res
 }
 /** The same tick, judged by the JavaScript interpreter's verifyTick. */
@@ -230,6 +237,29 @@ for (const [name, base, list] of [
     const flipped = mutated.map((c, k) => [c, r[k]]).filter(([c, x]) => c[7] === at && x.accepted !== c[6])
     ok(flipped.length > 0, `${name}: the VERIFY at byte ${at} — ${flipped.length ? `${flipped.length} tick(s) change, e.g. "${flipped[0][0][0].replace(/^\w+ · /, '')}"` : 'NO tick changes'}`)
   }
+}
+
+// ── every tick above, judged again by the JavaScript judge, which is given only the tick's bytes ──
+console.log('\n── every tick above, judged again by tools/thread.mjs from the entry, the tip\'s script and its value ──')
+{
+  const le64 = b => b.reduceRight((v, x) => (v << 8n) | BigInt(x), 0n)
+  let same = 0, accepted = 0, refused = 0, none = 0
+  const diffs = []
+  for (const r of judgedByPhp) {
+    let js
+    try {
+      const v = await judgeTick(parseEntry(unhex(r.entry)), 0, unhex(r.lock), le64(unhex(r.value)))
+      js = { accepted: v.accepted, result: v.stack ? { stack: v.stack.map(String) } : { error: hex(v.errorBytes) } }
+    } catch (e) {
+      js = e instanceof VersionError ? { accepted: false, cannotJudge: e.message } : { threw: `${e.constructor.name}: ${e.message}` }
+    }
+    const php = r.cannotJudge !== undefined ? { accepted: false, cannotJudge: r.cannotJudge } : { accepted: r.accepted, result: r.result }
+    if (JSON.stringify(js) === JSON.stringify(php)) { same++; php.cannotJudge !== undefined ? none++ : php.accepted ? accepted++ : refused++ }
+    else if (diffs.length < 5) diffs.push(`      php ${JSON.stringify(php)}\n      js  ${JSON.stringify(js)}`)
+  }
+  for (const d of diffs) console.log(`  ✗ differ\n${d}`)
+  ok(same === judgedByPhp.length, `★ the JavaScript judge gives CovenantThread::judge's verdict on every tick PHP judged here (${same}/${judgedByPhp.length}: `
+     + `${accepted} accepted, ${refused} refused with the same bytes, ${none} no verdict in the same words)`)
 }
 
 console.log(`\n${fail === 0 ? '✅' : '⚠'}  ${pass} passed, ${fail} failed   [a covenant thread in BASIC]`)

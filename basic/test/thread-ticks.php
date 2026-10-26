@@ -13,6 +13,8 @@
 //     tamper?: bool  the successor's value changed after the tick was signed }
 // and writes, per case, the preimage, the unlocking script, the verdict of CovenantThread::judge, and asSigned:
 // verifyTick's verdict on the preimage that was signed. A host that cannot judge the version gives cannotJudge.
+// It writes the tick as judged too: entry (its bytes), lock (the tip's script) and value (its 8 bytes), for a judge
+// that is given only those (tools/thread.mjs).
 // A script given as "hand" is the 7 Sept counter, assembled from verify-wired.php itself.
 declare(strict_types=1);
 require_once __DIR__ . '/../../server/interpreter-jf.php';
@@ -63,7 +65,8 @@ foreach ($in['cases'] as $c) {
   $unlock = $t['entry']['inputs'][0]['unlocking'];
   $prev = pack('P', $c['value']);
   $r = ['preimage' => bin2hex(Preimage::build($t['entry'], 0, $S, $prev)), 'unlocking' => bin2hex($unlock),
-        'asSigned' => InterpreterJF::verifyTick($unlock, $S, $t['preimage'])['accepted']];
+        'asSigned' => InterpreterJF::verifyTick($unlock, $S, $t['preimage'])['accepted'],
+        'entry' => bin2hex(CovenantEntry::encode($t['entry'])), 'lock' => bin2hex($S), 'value' => bin2hex($prev)];
   try {
     $v = CovenantThread::judge($t['entry'], 0, $S, $prev);
   } catch (VersionError $e) {
