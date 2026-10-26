@@ -26,7 +26,7 @@ function refuses(callable $f, string $needle, string $what): void {
 
 // ── creating the thread ─────────────────────────────────────────────────────────────────────────────
 echo "── creating a thread (§2: the identity is DERIVED, never asserted) ──\n";
-$d   = gmp_import(random_bytes(32), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN);
+$d   = random_bytes(32);
 $pub = Secp256k1::publicKey($d);
 $script = "\x76\xa9\x14" . str_repeat("\x33", 20) . "\x88\xac";
 $auth = CovenantThread::authorisedHashes([$pub]);
@@ -45,10 +45,10 @@ ok(ord($auth[0]) === CovenantThread::AUTH_V2_HASHES, 'version byte is 0x02');
 ok(!str_contains($auth, $pub), '⛔ THE PUBLIC KEY IS NOT IN THE GENESIS — not greppable, not a search key');
 ok(str_contains($auth, hash('sha256', $pub, true)), '...its sha256 is');
 ok(CovenantThread::isAuthorised($auth, $pub), 'the real key is recognised as authorised');
-$other = Secp256k1::publicKey(gmp_import(random_bytes(32), 1, GMP_MSW_FIRST | GMP_BIG_ENDIAN));
+$other = Secp256k1::publicKey(random_bytes(32));
 ok(!CovenantThread::isAuthorised($auth, $other), 'another key is not');
 // ⚠ k-of-n is the multi-party case, which is why sha256 and not hash160
-$keys = array_map(fn() => Secp256k1::publicKey(gmp_import(random_bytes(32),1,GMP_MSW_FIRST|GMP_BIG_ENDIAN)), range(1,5));
+$keys = array_map(fn() => Secp256k1::publicKey(random_bytes(32)), range(1,5));
 $kof = CovenantThread::authorisedHashes($keys, 3);
 ok(ord($kof[1]) === 3 && ord($kof[2]) === 5, 'k-of-n packs k and n (3-of-5)');
 ok(CovenantThread::isAuthorised($kof, $keys[4]), 'any member of the set is authorised');
