@@ -13,11 +13,16 @@
 //
 // ⚠ FORKID is NOT set and MUST NOT be (spec §5.0c): replay protection makes a signed transition valid
 //   in exactly one place, which would rebuild the censorship freeze portability exists to prevent.
-import { createHash } from 'node:crypto'
+//
+// ⚠ Our own SHA-256, not node's: a writer and a reader in a page build the preimage with this file, the one
+//   tools/thread.mjs judges with, so it must run unchanged in a browser. tools/verify-judge.mjs holds it to
+//   server/preimage.php's Preimage::build, byte for byte.
+import { sha256d as dsha256 } from './sha256.mjs'
 import { varint } from './entry.mjs'
 
-const sha256 = b => [...createHash('sha256').update(Buffer.from(b)).digest()]
-const dsha256 = b => sha256(sha256(b))
+/** A preimage that cannot be built: no such input, or a sighash type jetmora does not assign. */
+export class PreimageError extends Error {}
+
 const ZERO32 = new Array(32).fill(0)
 const u32 = n => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]
 const u64 = n => { const o = []; let v = BigInt(n); for (let i = 0; i < 8; i++) { o.push(Number(v & 0xffn)); v >>= 8n } return o }
@@ -41,11 +46,11 @@ const outputBytes = o => [...u64(o.value), ...varint(o.locking.length), ...o.loc
  */
 export function preimage({ entry, inputIndex, scriptCode, value, sighashType = SIGHASH_ALL }) {
   const input = entry.inputs[inputIndex]
-  if (!input) throw new Error(`no input at index ${inputIndex}`)
-  if (sighashType & 0x40) throw new Error('FORKID must not be set (spec §5.0c)')
+  if (!input) throw new PreimageError(`no input at index ${inputIndex}`)
+  if (sighashType & 0x40) throw new PreimageError('FORKID must not be set (spec §5.0c)')
   const base = sighashType & 0x1f
   const anyone = (sighashType & SIGHASH_ANYONECANPAY) !== 0
-  if (sighashType !== SIGHASH_ALL) throw new Error('jetmora v1 supports SIGHASH_ALL only; other flags are unassigned')
+  if (sighashType !== SIGHASH_ALL) throw new PreimageError('jetmora v1 supports SIGHASH_ALL only; other flags are unassigned')
 
   const hashPrevouts = anyone ? ZERO32 : dsha256(entry.inputs.flatMap(outpointBytes))
   const hashSequence = (anyone || base === SIGHASH_NONE || base === SIGHASH_SINGLE)
