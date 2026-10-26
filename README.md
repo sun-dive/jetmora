@@ -201,10 +201,13 @@ other or the host; it is not a global consensus among strangers who care nothing
 | `tools/transcode.mjs` | **BSV numbering → jetmora numbering.** ⚠ Not optional — see below |
 | `tools/acid.mjs` | **the acid test** — a real covenant on three implementations |
 | `tools/crosscompile.mjs` | `node --experimental-strip-types tools/crosscompile.mjs` → compiles BASIC once, runs it both ways, requires one answer |
-| `tools/ecdsa.mjs` | secp256k1 verification, no dependencies. ⚠ Takes the **raw preimage** — see the contract note in the file |
+| `tools/ecdsa.mjs` | secp256k1 verification through node's own crypto (`node:crypto`), so for node only: a page loads `tools/secp256k1.mjs`. ⚠ Takes the **raw preimage**: see the contract note in the file |
 | `tools/ed25519.mjs`, `tools/sha512.mjs` | Ed25519 verification by libsodium 1.0.22's rules, as `server/ed25519.php`'s, and the SHA-512 it hashes with. No dependencies, synchronous: the same code in a page and in node. `node tools/verify-ed25519.mjs` holds it to the PHP, case by case |
 | `tools/entry.mjs` | the entry — canonical serialization, ⚠ refuses non-minimal varints and trailing bytes |
 | `tools/preimage.mjs` | the BIP143 preimage **over an entry** — what lets `OP_PUSH_TX` exist with no transaction |
+| `tools/jf-crypto.mjs` | the crypto a JF tick is judged with, the same in a page and in node: SHA-256, SHA-1, RIPEMD-160, Ed25519 by libsodium 1.0.22's rules, and secp256k1. All ours, synchronous, and never a browser's own |
+| `tools/sha1.mjs`, `tools/ripemd160.mjs` | SHA-1 and RIPEMD-160, no dependencies, synchronous |
+| `tools/secp256k1.mjs` | secp256k1 verification over a digest by `server/secp256k1.php`'s rules, no dependencies: the curve a page can load (`tools/ecdsa.mjs` goes through node:crypto) |
 | `tools/preimage-check.mjs` | proves an entry's preimage is byte-identical to a transaction's |
 | `tools/emit.mjs` | `node tools/emit.mjs` → writes `vectors/core.json` |
 | `tools/crosscheck.mjs` | `node tools/crosscheck.mjs` → differential check of the `bsv` subset. ⚠ Needs `@bsv/sdk` resolvable; set `BSV_SDK=/abs/path/to/@bsv/sdk/dist/esm/mod.js` if it is not installed alongside |
