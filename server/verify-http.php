@@ -22,10 +22,20 @@ function ok(bool $c, string $what): void {
 }
 $TMP = sys_get_temp_dir() . '/jetmora-http-test-' . getmypid();
 @mkdir($TMP, 0777, true);
-register_shutdown_function(function () use ($TMP) {
-  foreach (glob("$TMP/*") ?: [] as $f) @unlink($f);
-  @rmdir($TMP);
-});
+/** $path and all it holds, dotfiles and folders too: the lock files are dotfiles, and a test gets its own folder. */
+function removeTree(string $path): void {
+  if (is_link($path) || !is_dir($path)) { @unlink($path); return; }
+  @chmod($path, 0700);
+  foreach (scandir($path) ?: [] as $f) if ($f !== '.' && $f !== '..') removeTree("$path/$f");
+  @rmdir($path);
+}
+// ⚠ The temp folder is RAM on some hosts. It goes on every way out: the end, exit(), a fatal error, an uncaught
+//   exception, and Ctrl-C or kill, which end through exit() so that the shutdown function still runs.
+register_shutdown_function(fn() => removeTree($TMP));
+if (function_exists('pcntl_async_signals')) {
+  pcntl_async_signals(true);
+  foreach ([SIGINT, SIGTERM, SIGHUP] as $sig) pcntl_signal($sig, function (int $signo) { exit(128 + $signo); });
+}
 
 // ── ★★★ CROSS-PROCESS: concurrent PHP processes must QUEUE ──────────────────────────────────────────
 echo "── ★★★ 5 concurrent PHP processes, 3 requests each ──\n";
@@ -113,13 +123,13 @@ $http = new BsvHttp(function () use (&$calls) {
   $calls++;
   return $calls <= 2 ? ['status' => 429, 'body' => '', 'headers' => []]
                      : ['status' => 200, 'body' => '{"ok":true}', 'headers' => []];
-}, 3, 1);
+}, 3, 1, $TMP);
 $r = $http->get('https://api.whatsonchain.com/v1/bsv/main/x');
 ok($r['status'] === 200 && $calls === 3, "★ two 429s then success — retried, not thrown ($calls calls)");
 ok(json_decode($r['body'], true)['ok'] === true, 'the eventual body comes back intact');
 
 // ⛔ and after the retries are exhausted, the 429 is RETURNED, not thrown as "verification failed"
-$always = new BsvHttp(fn() => ['status' => 429, 'body' => '', 'headers' => []], 2, 1);
+$always = new BsvHttp(fn() => ['status' => 429, 'body' => '', 'headers' => []], 2, 1, $TMP);
 $r2 = $always->get('https://api.whatsonchain.com/v1/bsv/main/x');
 ok($r2['status'] === 429,
    '⛔ a persistent 429 comes back AS 429 — the SDK throws here, which reads as a bad proof');
@@ -128,13 +138,14 @@ ok($r2['status'] === 429,
 // ⚠⚠ Found by mutation testing: my first version used Retry-After: 0.3 and asserted ">= 0.29ms". The
 //   DEFAULT backoff is 500ms, which also satisfies that ⇒ ignoring the header passed the test. A value
 //   must be chosen that the default CANNOT produce, and checked from both sides.
-$waitFor = function (string $after) {
+@mkdir("$TMP/wait");                            // its own lock folder, inside this test's, not the system's
+$waitFor = function (string $after) use ($TMP) {
   $seen = []; $n = 0;
   $h = new BsvHttp(function () use (&$n, &$seen, $after) {
     $seen[] = microtime(true); $n++;
     return $n === 1 ? ['status' => 429, 'body' => '', 'headers' => ['retry-after' => $after]]
                     : ['status' => 200, 'body' => 'ok', 'headers' => []];
-  }, 3, 1, sys_get_temp_dir());
+  }, 3, 1, "$TMP/wait");
   $h->get('https://api.whatsonchain.com/v1/bsv/main/y' . $after);
   return (($seen[1] ?? 0) - ($seen[0] ?? 0)) * 1000;
 };
@@ -177,10 +188,10 @@ ok($ran, '⚠ pacing is lost but the request still RUNS — a lock file must nev
 
 // ── refusals ────────────────────────────────────────────────────────────────────────────────────────
 echo "\n── refusals ──\n";
-try { (new BsvHttp(fn() => ['status'=>200,'body'=>'','headers'=>[]]))->get('not-a-url');
+try { (new BsvHttp(fn() => ['status'=>200,'body'=>'','headers'=>[]], lockDir: $TMP))->get('not-a-url');
       ok(false, 'a URL with no host is refused'); }
 catch (Throwable $e) { ok(str_contains($e->getMessage(), 'no host'), 'a URL with no host is refused'); }
-try { (new BsvHttp(fn() => ['status'=>500,'body'=>'nope','headers'=>[]]))
+try { (new BsvHttp(fn() => ['status'=>500,'body'=>'nope','headers'=>[]], lockDir: $TMP))
         ->getJson('https://api.whatsonchain.com/v1/bsv/main/z');
       ok(false, 'a 500 is refused by getJson'); }
 catch (Throwable $e) { ok(str_contains($e->getMessage(), 'HTTP 500'), 'getJson refuses a non-2xx, naming the code'); }
