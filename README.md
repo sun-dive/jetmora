@@ -206,10 +206,12 @@ other or the host; it is not a global consensus among strangers who care nothing
 | `tools/entry.mjs` | the entry — canonical serialization, ⚠ refuses non-minimal varints and trailing bytes |
 | `tools/preimage.mjs` | the BIP143 preimage **over an entry**: what lets `OP_PUSH_TX` exist with no transaction. Our own SHA-256, so it runs in a page unchanged, byte for byte `Preimage::build`'s |
 | `tools/thread.mjs` | **`CovenantThread`, in JavaScript**: `tick()` builds a tick from the tip (the preimage first, then the caller's unlocking script), `judge(entry, inputIndex, prevLocking, prevValue)` runs the script as the service does, and `create()` and `authorisedHashes()` make a genesis. Ports of the PHP. ⚠ `judge` **throws** when it cannot judge (`VersionError`, `JfHostError`), and on what `CovenantEntry::decode` refuses (`CovenantEntryError`: an input with no unlocking script, an output with no locking script): no verdict, never a refusal |
+| `tools/run-folder.mjs` | a test run's temp folder and the processes it starts, gone however the run ends; a run killed outright is cleared by the next run of the same test |
 | `tools/dispatch.mjs` | the nVersion → interpreter registry, a port of `dispatch.php`, its errors in the same words |
 | `tools/jf-crypto.mjs` | the crypto a JF tick is judged with, the same in a page and in node: SHA-256, SHA-1, RIPEMD-160, Ed25519 by libsodium 1.0.22's rules, and secp256k1. All ours, synchronous, and never a browser's own |
 | `tools/sha1.mjs`, `tools/ripemd160.mjs` | SHA-1 and RIPEMD-160, no dependencies, synchronous |
 | `tools/secp256k1.mjs` | secp256k1 verification over a digest by `server/secp256k1.php`'s rules, no dependencies: the curve a page can load (`tools/ecdsa.mjs` goes through node:crypto) |
+| `tools/verify-judge.mjs` | `node tools/verify-judge.mjs [--browser]` → the judge, its preimage and its crypto held to the PHP tick for tick: `verify-tip.php`'s ticks, `verify-wired.php`'s counter, random ticks, bytes `CovenantEntry::decode` refuses (no verdict on either side), and mutants that must be caught. `--browser` runs the judge in headless Chromium too. Its PHP side is `tools/judge-run.php` |
 | `tools/preimage-check.mjs` | proves an entry's preimage is byte-identical to a transaction's |
 | `tools/emit.mjs` | `node tools/emit.mjs` → writes `vectors/core.json` |
 | `tools/crosscheck.mjs` | `node tools/crosscheck.mjs` → differential check of the `bsv` subset. ⚠ Needs `@bsv/sdk` resolvable; set `BSV_SDK=/abs/path/to/@bsv/sdk/dist/esm/mod.js` if it is not installed alongside |

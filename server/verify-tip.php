@@ -15,7 +15,10 @@
 // Signing is not under test: ext/sodium signs, or on a PHP without it ed25519-sign.php, so `php -n -d
 // extension=pdo_sqlite` stages a service with neither sodium nor gmp. Ed25519 signing is deterministic, and
 // verify-ed25519-sign.php holds the two to the same bytes.
-//   php server/verify-tip.php
+//   php server/verify-tip.php [--export=FILE]
+//     --export  writes every tick sent, with the output it spends and the service's answer, as JSON to FILE, for
+//               tools/verify-judge.mjs to judge again in JavaScript:
+//               [{entry, lock, value, status, error, reason_hex}, ...], bytes as hex, value as its 8 raw bytes
 declare(strict_types=1);
 
 // A writer in the race below: one append through the staged service's own files, at the instant given.
@@ -162,10 +165,21 @@ $tickOf = function (array $t, string $kp, array $o = []) use ($signs): array {
                               $o['outputs'] ?? [['value' => $n, 'locking' => $t['locking']]], $o['seq'] ?? $n,
                               $o['unlock'] ?? $signs($kp), $o['version'] ?? null);
 };
-/** Append over JSON, the append signed by the owner, whose key the genesis authorises. */
-$send = fn(array $t, string $bytes): array => http('POST', 'op=append', json_encode([
-  'genesis' => bin2hex($t['id']), 'entry' => bin2hex($bytes), 'pubkey' => bin2hex($pub($owner)),
-  'signature' => bin2hex($sign($bytes, $owner))]));
+/** Append over JSON, the append signed by the owner, whose key the genesis authorises. Each is kept for --export,
+ *  with the output it spends: the thread's script, at the value the thread has reached, or at $n for a tick built
+ *  to spend another. */
+$EXPORT = null;
+foreach ($argv as $a) if (str_starts_with($a, '--export=')) $EXPORT = substr($a, 9);
+$sent = [];
+$send = function (array $t, string $bytes, ?int $n = null) use ($pub, $owner, $sign, &$sent): array {
+  $r = http('POST', 'op=append', json_encode([
+    'genesis' => bin2hex($t['id']), 'entry' => bin2hex($bytes), 'pubkey' => bin2hex($pub($owner)),
+    'signature' => bin2hex($sign($bytes, $owner))]));
+  $sent[] = ['entry' => bin2hex($bytes), 'lock' => bin2hex($t['locking']), 'value' => bin2hex(pack('P', $n ?? $t['n'])),
+             'status' => $r['status'], 'error' => is_array($r['json']) ? ($r['json']['error'] ?? null) : null,
+             'reason_hex' => is_array($r['json']) ? ($r['json']['reason_hex'] ?? null) : null];
+  return $r;
+};
 /** Send the next correct tick; the thread moves on when it lands. */
 $advance = function (array &$t) use ($tickOf, $send, $owner): array {
   $k = $tickOf($t, $owner); $r = $send($t, $k['bytes']);
@@ -194,9 +208,9 @@ $again = CovenantThread::tick($t1['hash'], 0, $S, pack('P', 1), [['value' => 2, 
   fn(string $pre): string => chr(JF_LIT['STR8']) . chr(64) . $sign($h256($pre), $owner) . $push($pub($owner)));
 ok($again['bytes'] !== $t2['bytes'] && CovenantThread::judge($again['entry'], 0, $S, pack('P', 1))['accepted'],
    'a different tick spending the output the second tick spent is built, and its script accepts it');
-$r = $send($A, $again['bytes']);
+$r = $send($A, $again['bytes'], 1);
 ok($r['status'] === 409, 'once spent, there is no output to spend: the second attempt is rejected → ' . $said($r));
-$r = $send($A, $t1['bytes']);
+$r = $send($A, $t1['bytes'], 0);
 ok($r['status'] === 409, 'and the first tick sent again, as a stale page would, is rejected too → ' . $said($r));
 ok($count($A) === 3, 'nothing was recorded: the thread still has three ticks');
 
@@ -247,7 +261,7 @@ ok($r['status'] === 501, 'a tick with two inputs, input 0 naming the tip → ' .
 ok($count($G) === 0, 'nothing was recorded');
 $stale = $two;
 $stale['inputs'][0]['prevEntry'] = $A['id'];                // A's genesis output, spent by A's first tick
-$r = $send($A, CovenantEntry::encode($stale));
+$r = $send($A, CovenantEntry::encode($stale), 0);
 ok($r['status'] === 409 && $count($A) === 3, 'the same, input 0 naming an output already spent: rejected as spent, as a node would → ' . $said($r));
 foreach ([['ZZ', 1, 'H'], ['JF', 2, 'I'], ['SV', 1, 'J']] as [$family, $revision, $name]) {
   $X = $thread($name, $S);
@@ -356,7 +370,7 @@ echo "\n── ⛔ a tip that is not known is never ticked ──\n";
 $forget();
 $db->prepare("UPDATE entries SET body = '' WHERE genesis = ?")->execute([$A['id']]);   // no row, newest body gone
 ok($store->tipHashOf($A['id']) === null, 'with no row and the newest body pruned the tip is unknown');
-$guess = $send($A, $tickOf(['tip' => str_repeat("\x42", 32), 'n' => 4] + $A, $owner)['bytes']);
+$guess = $send($A, $tickOf(['tip' => str_repeat("\x42", 32), 'n' => 4] + $A, $owner)['bytes'], 4);
 ok($guess['status'] === 409, 'a tick naming anything is refused, never accepted once → ' . $said($guess));
 ok($count($A) === 4, 'and nothing was recorded');
 
@@ -367,6 +381,7 @@ $ported = http('POST', 'op=port', '{}');
 ok($ported['status'] === 501 && str_contains((string)($ported['json']['error'] ?? ''), 'moving a thread to this host is not available yet'),
    'port is switched off until moving a thread is designed → ' . $said($ported));
 
+if ($EXPORT !== null) file_put_contents($EXPORT, json_encode($sent));
 if ($fail) echo "\n── the server's log, last lines ──\n", implode('', array_slice(file("$dir/server.log") ?: [], -12));
 printf("\n%s  %d passed · %d failed   [only the tip can be ticked forward, and the script decides]\n", $fail === 0 ? '✅' : '⚠', $pass, $fail);
 exit($fail ? 1 : 0);
