@@ -161,17 +161,42 @@ final class CovenantThread
 
   // ── judging a tick ────────────────────────────────────────────────────────────────────────────────
   /**
-   * Judge input $inputIndex of $entry against the tip it spends. The entry's nVersion names the interpreter;
-   * the preimage is built here from the entry and the tip, never taken from the caller; that interpreter's
-   * verifyTick judges the rest.
-   * @throws VersionError when this host has no interpreter that judges ticks for the version named.
+   * ★ THE LOCK DECLARES ITS VERSION (his call, 26 Oct): every lock starts with VER and the four bytes of the version
+   *   its code is written for, as an entry's nVersion carries them: D1 03 00 4A 46 for JF 3. *"The wrong execution
+   *   engine will give a wrong output."* The host reads the declaration before it runs anything, so VER is the same
+   *   byte in every version; the engine it names steps over it.
+   */
+  public const VER = 0xd1;
+  /** A tick that names another version than its lock declares: one version, never two that disagree. */
+  public const OTHER_VERSION = 'the tick does not name the version its lock declares';
+
+  /**
+   * The version a lock declares: the four bytes after VER, read as an nVersion is read.
+   * @throws VersionError when it declares none: it is shorter than five bytes, or does not start with VER.
+   */
+  public static function declaredVersion(string $lock): int
+  {
+    if (strlen($lock) < 5 || ord($lock[0]) !== self::VER)
+      throw new VersionError('the lock declares no version: it does not start with VER and four version bytes');
+    return unpack('V', substr($lock, 1, 4))[1];
+  }
+
+  /**
+   * Judge input $inputIndex of $entry against the tip it spends. The lock's declaration names the interpreter, and
+   * the entry must name the same version, or it is refused with OTHER_VERSION and the script is never run. The
+   * preimage is built here from the entry and the tip, never taken from the caller; that interpreter's verifyTick
+   * judges the rest.
+   * @throws VersionError when the lock declares no version, or this host has no interpreter that judges ticks for the
+   *         version it declares.
    * @throws JfHostError when it lacks a library that interpreter needs (no verdict, never a refusal).
    * @return array{accepted: bool, stack?: int[], error?: string}
    */
   public static function judge(array $entry, int $inputIndex, string $prevLocking, string $prevValue): array
   {
-    $vm = interpreter_for($entry['version']);
+    $declared = self::declaredVersion($prevLocking);
+    $vm = interpreter_for($declared);
     if (!method_exists($vm, 'verifyTick')) throw new VersionError(get_class($vm) . ' does not judge ticks');
+    if ($entry['version'] !== $declared) return ['accepted' => false, 'error' => self::OTHER_VERSION];
     $pre = Preimage::build($entry, $inputIndex, $prevLocking, $prevValue);
     return $vm::verifyTick($entry['inputs'][$inputIndex]['unlocking'], $prevLocking, $pre);
   }

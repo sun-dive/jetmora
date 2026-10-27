@@ -12,12 +12,12 @@
 //
 // ⚠ What JavaScript carries is not what PHP carries, and the registry says so. JF revision 3 judges ticks here, by
 //   tools/interpreter-jf.mjs's verifyTick. SV and BT are registered under the names PHP registers them by, without a
-//   judge, so an entry naming them gets PHP's answer, "InterpreterSV does not judge ticks": tools/interpreter.mjs runs
+//   judge, so judging under either gets PHP's answer, "InterpreterSV does not judge ticks": tools/interpreter.mjs runs
 //   SV scripts but judges no tick, and BT has no JavaScript interpreter. A host whose PHP does not ship a set answers
 //   differently ("this host does not ship interpreter-sv.php"); either way it is no verdict, never a refusal.
 import { verifyTick } from './interpreter-jf.mjs'
 
-/** This host has no interpreter that judges ticks for the version an entry names: no verdict, never a refusal. */
+/** This host has no interpreter that judges ticks for the nVersion asked for: no verdict, never a refusal. */
 export class VersionError extends Error {}
 
 const hex2 = c => c.toString(16).padStart(2, '0')
@@ -60,16 +60,15 @@ export function registerSet(family, interpreter, revisions = [1]) {
 }
 
 /**
- * The interpreter the entry's nVersion names. ⛔ Never "the newest" or "ours": §6b forbids a verifier applying its own.
+ * The interpreter an nVersion names. ⛔ Never "the newest" or "ours": §6b forbids a verifier applying its own.
  * @throws {VersionError} when nothing here is registered for that version
  */
 export function interpreterFor(nVersion) {
   const v = versionParse(nVersion)
   if (v.legacy !== undefined) {
-    // PHP's words, character for character: the dash in them is PHP's, written here as its code
     throw new VersionError(
-      `entry names legacy version ${v.legacy}; no interpreter is registered for legacy versions. ` +
-      '⚠ Legacy entries predate the family scheme and keep their own semantics (§6b) \u2014 they are not ' +
+      `legacy version ${v.legacy}: no interpreter is registered for legacy versions. ` +
+      '⚠ Legacy versions predate the family scheme and keep their own semantics (§6b): they are not ' +
       'reinterpretable as a family.')
   }
   const f = v.family

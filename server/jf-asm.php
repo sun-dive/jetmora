@@ -24,9 +24,11 @@ require_once __DIR__ . '/ops-jf.php';
 //          BRANCH>name    a branch to a label
 //          INVOKE#0       an opcode with a u8 operand
 //          [FLOATING:3]   a bank escape and selector, to prove refusal
+//          VER JF 3       the lock's declaration: VER, then the version as nVersion lies on the wire, the revision
+//                         first and then the family (D1 03 00 4A 46). Three tokens, one instruction
 function jf_asm(string $src): string
 {
-  $toks = preg_split('/\s+/', trim($src), -1, PREG_SPLIT_NO_EMPTY);
+  $toks = jf_asm_tokens($src);
   // pass 1: sizes, to place labels
   $labels = []; $at = 0; $sized = [];
   foreach ($toks as $t) {
@@ -38,9 +40,23 @@ function jf_asm(string $src): string
   foreach ($sized as [$t, $pos]) $out .= jf_asm_emit($t, $pos, $labels);
   return $out;
 }
+/** The tokens of $src, `VER <family> <revision>` taken as one: a family is two of A to Z and 0 to 9, as dispatch.php's. */
+function jf_asm_tokens(string $src): array {
+  $raw = preg_split('/\s+/', trim($src), -1, PREG_SPLIT_NO_EMPTY);
+  $toks = [];
+  for ($k = 0; $k < count($raw); $k++) {
+    if ($raw[$k] !== 'VER') { $toks[] = $raw[$k]; continue; }
+    [$f, $r] = [$raw[$k + 1] ?? '', $raw[$k + 2] ?? ''];
+    if (!preg_match('/^[A-Z0-9]{2}$/', $f) || !preg_match('/^\d{1,5}$/', $r) || (int)$r > 0xffff)
+      throw new RuntimeException('asm: VER takes a family and a revision: VER JF 3');
+    $toks[] = "VER $f $r"; $k += 2;
+  }
+  return $toks;
+}
 function jf_asm_size(string $t): int {
   // ⚠ EXACT WORD MATCH FIRST. `>R`, `2R>`, `S>D`, `U>` all contain '>' and are not branches.
   if (isset(JF_WORD[$t]) || isset(JF_LIT[$t])) return 1;
+  if (str_starts_with($t, 'VER '))         return 5;                       // VER + the version's 4 bytes
   if ($t[0] === '$') { $n = intdiv(strlen($t) - 1, 2);
                        return ($n <= JF_PUSH_MAX ? 1 : 2) + $n; }        // over 72 B needs STR8
   if ($t[0] === '[')                       return 2;
@@ -60,6 +76,8 @@ function jf_asm_size(string $t): int {
 function jf_asm_emit(string $t, int $pos, array $labels): string {
   if (isset(JF_WORD[$t])) return chr(JF_WORD[$t]);          // ⚠ exact match first, as in jf_asm_size
   if (isset(JF_LIT[$t]))  return chr(JF_LIT[$t]);
+  if (str_starts_with($t, 'VER ')) { [, $f, $r] = explode(' ', $t);
+                                     return chr(JF_WORD['VER']) . pack('v', (int)$r) . $f; }
   if ($t[0] === '$') { $b = hex2bin(substr($t, 1));
     // ⚠ A DER signature is 70-73 B and an uncompressed key is 65 — both DIRECT now. Longer than 72
     //   (a sighash preimage, say) takes STR8, which is one byte more and says so.

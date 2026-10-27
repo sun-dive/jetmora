@@ -11,7 +11,10 @@
 //   lands     ticks land (201) over JSON and packed in turn; read back, each linked and accepted, each verdict the PHP
 //             judge's (tools/judge-run.php)
 //   refused   a tick the script refuses is refused here with the PHP judge's reason, byte for byte, and never sent; an
-//             nSequence not past the tip's is refused before the script runs; then the tick the script accepts lands
+//             nSequence not past the tip's is refused before the script runs; a step naming another version than the
+//             lock declares is refused by the judge; then the tick the script accepts lands. A lock declaring JF 2: the
+//             tick names JF 2, and gets no verdict. A lock that declares no version, the thread's or a tip's second
+//             output's: no verdict, before anything is recorded or signed
 //   stale     two writers on one tip: the second gets the service's 409 and the service's tip, and sends nothing more
 //             until it has read the thread again
 //   lost      an answer lost: the same bytes sent again, and the 409 recognised as that tick having landed. A send that
@@ -26,12 +29,13 @@
 //   putback   three ticks, the host cut back to the first: resend() sends the second and the third, their very bytes
 //   cross     one key, two threads, one ledger: a host files one thread's tick under the other, after a pruned body. No
 //             output gets two successors signed, and nothing is sent
-//   forged    a tick in a version nothing judges, put into the host's rows: the writer does not extend it
+//   forged    ticks put into the host's rows: one naming JF 2 on a lock that declares JF 3 (refused), and one spending a
+//             lock that declares no version (no verdict). The writer extends neither
 //   limits    a tick over the service's 100,000 bytes, and a genesis that needs two signatures: refused before anything
 //             is recorded or signed; 100,000 bytes exactly lands
 //   liars     a host whose pages stop short, repeat, give nothing, or never end: each a problem, never a loop
 //   paging    260 ticks, read back in the service's pages of 256 and in pages of 7
-//   reader    ticks put straight into the store, past the judge: a refusal, an nVersion with no judge, two inputs, an
+//   reader    ticks put straight into the store, past the judge: a refusal, a lock that declares no version, two inputs, an
 //             output that is not there, a broken link, an entry with no unlocking script, bytes that are not an entry, and a
 //             tick after them. Each reported by position, nothing skipped, the verdicts PHP's; a writer will not extend it
 //   pruned    bodies pruned by the store's retention: each a gap, by position and seq, its entry a 410; the writer that
@@ -57,7 +61,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { compileCovenant } from '../basic/basic-jf.mjs'
 import { sha256, sha256d } from './sha256.mjs'
 import { ripemd160 } from './ripemd160.mjs'
-import { tick, create, authorisedHashes } from './thread.mjs'
+import { tick, create, authorisedHashes, OTHER_VERSION } from './thread.mjs'
 import { serializeEntry, varint } from './entry.mjs'
 import { preimage } from './preimage.mjs'
 import { versionBuild } from './dispatch.mjs'
@@ -147,10 +151,14 @@ const OWNER = await newKey(), OTHER = await newKey()
 const SRC = 'VERSION JF 3\nDIM owner$20'
 const covenantFor = key => compileCovenant(SRC, { state: { owner: [...ripemd160(Uint8Array.from(sha256(key.publicKey)))] } }).bytes
 const JF3 = versionBuild('JF', 3)
-/** The signed lock: <key> 1000 PREIMAGE 3000 HASH256 3000 32 ED25519-CHECKSIG. Any successor its owner signs is accepted */
 const W = JF_WORD, lit16 = n => [JF_LIT.LIT16, n & 0xff, n >> 8]
-const signedLock = key => Uint8Array.from([32, ...key.publicKey, ...lit16(1000), W.PREIMAGE, ...lit16(3000), W.HASH256, ...lit16(3000),
+/** The lock's declaration, VER JF 3, which every lock starts with */
+const DECLARATION = [W.VER, 3, 0, 0x4a, 0x46]
+/** The signed lock: VER JF 3 <key> 1000 PREIMAGE 3000 HASH256 3000 32 ED25519-CHECKSIG. Any successor its owner signs is accepted */
+const signedLock = key => Uint8Array.from([...DECLARATION, 32, ...key.publicKey, ...lit16(1000), W.PREIMAGE, ...lit16(3000), W.HASH256, ...lit16(3000),
                                            JF_LIT.LIT8, 32, W['ED25519-CHECKSIG']])
+/** A lock that declares no version: the judge gives no verdict on a tick that spends it */
+const UNDECLARED = Uint8Array.of(W['2DROP'], W.TRUE)
 /** Its unlocking script: the owner's signature over HASH256(PREIMAGE), one direct push, 65 bytes */
 const signedUnlock = key => { const u = async pre => Uint8Array.from([64, ...await key.sign(Uint8Array.from(sha256d(pre)))]); u.size = 65; return u }
 
@@ -322,9 +330,34 @@ const SCENARIOS = {
     const e3 = await thrown(() => w.write(tip => ({ ...counter(tip), sequence: tip.index }), { unlock: async pre => { unlocked++; return M.basicUnlock(OWNER)(pre) } }))
     c.ok(e3?.constructor === M.WriterError && /tick index/.test(e3.message) && unlocked === 0 && t.appends() === sent,
          `an nSequence that is not past the tip's: refused before anything is signed or run (${e3?.constructor.name}: ${e3?.message})`)
+    // a step that names its own version keeps it: JF 2, on a lock that declares JF 3, is the judge's to refuse
+    const ev = await thrown(() => w.write(tip => ({ ...counter(tip), version: versionBuild('JF', 2) })))
+    c.ok(ev instanceof M.TickRefused && hex(ev.reasonBytes ?? []) === hex(utf8(OTHER_VERSION)) && t.appends() === sent && await w.pending() === null,
+         `a step naming JF 2 on a lock that declares JF 3: refused here, its record taken back, and not sent (${ev?.reason})`)
     c.ok((await SERVICE.tip(T.id)).count === 1, 'the service still holds one tick')
     const r2 = await w.write(counter)
     c.ok(r1.status === 201 && r2.status === 201, `then the tick the script accepts lands: a refused tick is no successor, so its record was taken back (${r2.status})`)
+    // a thread whose lock declares no version: the tick would name none, so nothing is recorded or signed
+    const seen = signings(), N = await thread('undeclared', OWNER, { script: UNDECLARED })
+    const n = writerOf(M, N, { unlock: seen.unlock(OWNER, signedUnlock(OWNER)) })
+    const e4 = await thrown(() => n.w.write(bump(1)))
+    c.ok(e4 instanceof M.NoVerdict && seen.count() === 0 && n.t.appends() === 0 && await n.w.pending() === null,
+         `a thread whose lock declares no version: no verdict, nothing recorded, signed or sent (${e4?.message})`)
+    // a lock that declares JF 2: the tick names JF 2, as the preimage's first four bytes show, and gets no verdict
+    const pres = [], J2 = await thread('declares JF 2', OWNER, { script: Uint8Array.from([W.VER, 2, 0, 0x4a, 0x46, W['2DROP'], W.TRUE]) })
+    const j2 = writerOf(M, J2, { unlock: async pre => { pres.push(pre); return Uint8Array.of(1, 1) } })
+    const e5 = await thrown(() => j2.w.write(bump(1)))
+    c.ok(e5 instanceof M.NoVerdict && pres.length === 1 && hex(pres[0].subarray(0, 4)) === '02004a46' && j2.t.appends() === 0 && await j2.w.pending() === null,
+         `a thread whose lock declares JF 2: the tick names JF 2 (its preimage opens ${pres.length ? hex(pres[0].subarray(0, 4)) : 'nowhere'}), `
+         + `and gets no verdict here, so its record is taken back and nothing is sent (${e5?.message})`)
+    // the lock read is the spent output's: output 1 of a tip, which declares nothing where output 0 declares JF 3
+    const S = signedLock(OWNER), seen2 = signings(), X = await thread('two outputs', OWNER, { script: S })
+    const x = writerOf(M, X, { unlock: seen2.unlock(OWNER, signedUnlock(OWNER)) })
+    const rx = await x.w.write({ outputs: [{ value: 1n, locking: S }, { value: 1n, locking: UNDECLARED }] })
+    const signed = seen2.count()
+    const e6 = await thrown(() => x.w.write({ index: 1, outputs: [{ value: 2n, locking: S }] }))
+    c.ok(rx.status === 201 && e6 instanceof M.NoVerdict && seen2.count() === signed && x.t.appends() === 1 && await x.w.pending() === null,
+         `output 1 of a tip, its lock declaring no version where output 0's declares JF 3: no verdict, nothing recorded, signed or sent (${e6?.message})`)
   },
 
   async stale(M, c) {
@@ -490,15 +523,27 @@ const SCENARIOS = {
     const ledger = M.memoryLedger(), seen = signings()
     const one = writerOf(M, T, { ledger })
     const t1 = await one.w.write(counter), t2 = await one.w.write(counter)
-    // the host puts a tick into its rows: nVersion JF 2, which nothing judges, spending the second tick's output, no signature
+    // the host puts a tick into its rows: nVersion JF 2, spending the second tick's output, whose lock declares JF 3, no signature
     const forged = { version: versionBuild('JF', 2), locktime: 0, outputs: [{ value: 1000000n, locking: T.script }],
                      inputs: [{ prevEntry: t2.hash, index: 0, unlocking: Uint8Array.of(1, 0x66), sequence: 50 }] }
     store('append', hex(T.id), hex(Uint8Array.from(serializeEntry(forged))))
     const two = writerOf(M, T, { ledger, unlock: seen.unlock(OWNER) })      // the page, reloaded
     const e = await thrown(() => two.w.write(counter))
-    c.ok(t1.status === 201 && t2.status === 201 && e instanceof M.ThreadBroken && e.problem?.kind === 'no verdict' && e.problem.position === 3
+    c.ok(t1.status === 201 && t2.status === 201 && e instanceof M.ThreadBroken && e.problem?.kind === 'refused' && e.problem.position === 3
          && two.t.appends() === 0 && seen.count() === 0,
-         `a forged tick in JF revision 2 after this writer's own: it does not stand on it, nothing signed or sent: ${e?.message}`)
+         `a forged tick naming JF 2 after this writer's own, on a lock that declares JF 3: refused, and the writer does not stand on it, nothing signed or sent: ${e?.message}`)
+    // a forged tick nothing has a verdict on: it spends an output of this writer's own tick whose lock declares no version
+    const S = signedLock(OWNER), U = await thread('forged, no verdict', OWNER, { script: S })
+    const w1 = writerOf(M, U, { ledger, unlock: signedUnlock(OWNER) })
+    const u1 = await w1.w.write(tip => ({ outputs: [{ value: tip.outputs[0].value + 1n, locking: S }, { value: 1n, locking: UNDECLARED }] }))
+    const loose = { version: JF3, locktime: 0, outputs: [{ value: 7n, locking: S }],
+                    inputs: [{ prevEntry: u1.hash, index: 1, unlocking: Uint8Array.of(1, 0x66), sequence: 2 }] }
+    store('append', hex(U.id), hex(Uint8Array.from(serializeEntry(loose))))
+    const w2 = writerOf(M, U, { ledger, unlock: seen.unlock(OWNER, signedUnlock(OWNER)) })   // the page, reloaded
+    const e2 = await thrown(() => w2.w.write(bump(1)))
+    c.ok(u1.status === 201 && e2 instanceof M.ThreadBroken && e2.problem?.kind === 'no verdict' && e2.problem.position === 2
+         && w2.t.appends() === 0 && seen.count() === 0,
+         `a forged tick spending an output of this writer's own whose lock declares no version: no verdict, and the writer does not stand on it, nothing signed or sent: ${e2?.message}`)
   },
 
   async limits(M, c) {
@@ -591,9 +636,9 @@ const SCENARIOS = {
     for (let k = 0; k < 3; k++) good.push(await w.write(counter))
     const S = T.script, unlock = REAL.basicUnlock(OWNER)
     const put = b => store('append', hex(T.id), hex(b))
-    const t4 = await tick(good[2].hash, 0, S, 3n, [{ value: 5n, locking: S }], 5, unlock)                      // a value skipped
+    const t4 = await tick(good[2].hash, 0, S, 3n, [{ value: 5n, locking: S }, { value: 1n, locking: UNDECLARED }], 5, unlock)   // a value skipped
     put(t4.bytes)
-    const t5 = await tick(t4.hash, 0, S, 5n, [{ value: 6n, locking: S }], 6, unlock, versionBuild('JF', 2))    // no judge for JF 2
+    const t5 = await tick(t4.hash, 1, UNDECLARED, 1n, [{ value: 6n, locking: S }], 6, unlock)                  // a lock with no declaration
     put(t5.bytes)
     const two = { version: JF3, locktime: 0, outputs: [{ value: 7n, locking: S }], inputs: [                   // two inputs
       { prevEntry: t5.hash, index: 0, unlocking: Uint8Array.of(1, 1), sequence: 7 },
@@ -626,8 +671,8 @@ const SCENARIOS = {
          `the broken link reported; the tick after the bytes that are not an entry linked to them, and not judged: ${rep.ticks[10].why}`)
     const { judged, differ } = phpAgrees(rep)
     c.ok(judged === 6 && differ.length === 0,
-         `the ${judged} ticks judged by their script, the refusal and the JF 2 tick's no verdict among them: CovenantThread::judge's answer on each (${judged - differ.length}/${judged})`)
-    c.ok(norm(rep.ticks[4].verdict).noVerdict === 'VersionError', `no verdict for JF revision 2, in PHP's words: ${rep.ticks[4].verdict?.message}`)
+         `the ${judged} ticks judged by their script, the refusal and the no verdict among them: CovenantThread::judge's answer on each (${judged - differ.length}/${judged})`)
+    c.ok(norm(rep.ticks[4].verdict).noVerdict === 'VersionError', `no verdict on a tick spending a lock that declares no version, in PHP's words: ${rep.ticks[4].verdict?.message}`)
     const fresh = writerOf(M, T)
     const e = await thrown(() => fresh.w.write(counter))
     c.ok(e instanceof M.ThreadBroken && fresh.t.appends() === 0, `a writer will not extend it: ${e?.message}`)
@@ -728,6 +773,10 @@ console.log('\n── mutants: the modules altered in copies; each copy must fai
     ['thread-writer.mjs', 'a thread without this writer\'s newest tick extended', '        if (report.gaps.length === 0) throw new TipRolledBack(mine, tip)', '        if (report.gaps.length === 0) return', ['rollback']],
     ['thread-writer.mjs', 'a tick the service confirmed not noted', '    await this.ledger.update(threadKey(this.id), p => p === null || index > p.index ? { hash: toHex(built.hash), index, seq } : p)', '    return', ['rollback']],
     ['thread-writer.mjs', 'the nSequence check gone', 'step.sequence <= tip.index || ', '', ['refused']],
+    ['thread-writer.mjs', 'the tick names JF 3 whatever the lock it spends declares', 'version: declaredVersion(spent.locking)', 'version: (declaredVersion(spent.locking), 0x464a0003)', ['refused']],
+    ['thread-writer.mjs', 'the version read from output 0, whatever output is spent', 'version: declaredVersion(spent.locking)', 'version: declaredVersion(tip.outputs[0].locking)', ['refused']],
+    ['thread-writer.mjs', 'the version a step names not kept', '    if (step.version === undefined) {', '    if (true) {', ['refused']],
+    ['thread-writer.mjs', 'the lock\'s declaration not read before signing, so the judge finds none after', 'version: declaredVersion(spent.locking)', 'version: 0x464a0003', ['refused']],
     ['thread-writer.mjs', 'the size limit not checked before signing', '    if (size > SERVICE_LIMITS.entryBytes)\n', '    if (false)\n', ['limits']],
     ['thread-writer.mjs', 'a genesis needing several signatures let through', 'a[1] > SERVICE_LIMITS.signatures)', 'a[1] > 99)', ['limits']],
     ['thread-writer.mjs', 'resend() sends one tick, and does not walk on', '      if (!a.landed) break', '      break', ['putback']],

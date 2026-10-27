@@ -20,7 +20,9 @@
 //       first what CovenantEntry::decode refuses before PHP's judge ever sees an entry: an input with no unlocking script,
 //       an output with no locking script, a tick reference that is not 32 bytes. Each is CovenantEntryError, thrown, as
 //       decode throws it: no verdict. Then rules 1 and 2 of spec §3.3:
-//         1  the entry's nVersion names the interpreter (tools/dispatch.mjs); JF revision 3 is the one that judges
+//         1  the lock's declaration names the interpreter (declaredVersion, tools/dispatch.mjs); JF revision 3 is the one
+//            that judges. The entry's nVersion must be that version, or the tick is refused with OTHER_VERSION, its
+//            script never run
 //         2  the preimage is built HERE, from the entry and the output it spends (tools/preimage.mjs), never taken from
 //            the caller: OP_PUSH_TX is secure only because the verifier recomputes it
 //       and that interpreter's verifyTick (tools/interpreter-jf.mjs) judges the rest, rules 3 to 5, 7 and 8.
@@ -37,7 +39,8 @@
 //
 // ⚠⚠ NO VERDICT IS NOT A REFUSAL. judge() THROWS when this host cannot judge the tick, and a caller must keep that apart
 //   from { accepted: false }:
-//     VersionError  nothing here judges ticks for the version the entry names (PHP's VersionError, the same words)
+//     VersionError  the lock declares no version, or nothing here judges ticks for the version it declares (PHP's
+//                   VersionError, the same words)
 //     JfHostError   a crypto function the script needs was not supplied, or failed: a host fault is never a verdict
 //   so no tick is refused in a page and accepted by the host, or the other way round, because one of them lacks a library.
 //     CovenantEntryError  bytes that are not a covenant entry (above): the service answers 400 for them, and judges nothing
@@ -170,6 +173,26 @@ export const appendSighash = entryBytes => Uint8Array.from(sha256(bytes(entryByt
 
 // ── judging a tick ──────────────────────────────────────────────────────────────────────────────────────────────────
 /**
+ * VER, the byte every lock starts with: the lock's declaration of the version its code is written for, its four bytes
+ * after it as an entry's nVersion carries them (D1 03 00 4A 46 for JF 3). The host reads it before it runs anything, so
+ * it is the same byte in every version. CovenantThread::VER.
+ */
+export const VER = 0xd1
+/** A tick that names another version than its lock declares: refused, its script never run. CovenantThread::OTHER_VERSION. */
+export const OTHER_VERSION = 'the tick does not name the version its lock declares'
+
+/**
+ * The version a lock declares: the four bytes after VER, read as an nVersion is read. CovenantThread::declaredVersion.
+ * @param {Uint8Array|number[]} lock
+ * @returns {number} the nVersion, a u32
+ * @throws {VersionError} when it declares none: it is shorter than five bytes, or does not start with VER
+ */
+export function declaredVersion(lock) {
+  if (lock.length < 5 || lock[0] !== VER) throw new VersionError('the lock declares no version: it does not start with VER and four version bytes')
+  return (lock[1] | (lock[2] << 8) | (lock[3] << 16) | (lock[4] << 24)) >>> 0
+}
+
+/**
  * Judge input `inputIndex` of `entry` against the output it spends.
  * @param {import('./entry.mjs').Entry} entry  a decoded entry, as parseEntry (tools/entry.mjs) reads one
  * @param {number} inputIndex                  which input is judged; its outpoint names the spent output
@@ -177,13 +200,15 @@ export const appendSighash = entryBytes => Uint8Array.from(sha256(bytes(entryByt
  * @param {bigint|number} prevValue            the spent output's value, a u64 (parseEntry gives it as a bigint)
  * @param {object} [crypto]                    { sha256, sha1, ripemd160, ed25519Verify, ecdsaVerify }; tools/jf-crypto.mjs
  * @returns {Promise<{accepted: boolean, stack?: bigint[], error?: string, errorBytes?: Uint8Array}>}
- *   verifyTick's verdict: a refusal's errorBytes are the bytes the PHP judge's error carries.
+ *   verifyTick's verdict, or OTHER_VERSION's refusal: a refusal's errorBytes are the bytes the PHP judge's error carries.
  * @throws {CovenantEntryError|VersionError|JfHostError} no verdict.  @throws {PreimageError|RangeError} the caller's mistake.
  */
 export async function judge(entry, inputIndex, prevLocking, prevValue, crypto = jfCrypto) {
   isCovenantEntry(entry)
-  const vm = interpreterFor(entry.version)
+  const declared = declaredVersion(prevLocking)
+  const vm = interpreterFor(declared)
   if (typeof vm.verifyTick !== 'function') throw new VersionError(`${vm.name} does not judge ticks`)
+  if (entry.version !== declared) return { accepted: false, error: OTHER_VERSION, errorBytes: new TextEncoder().encode(OTHER_VERSION) }
   // In Preimage::build's order: the input first, then the value
   const input = entry.inputs[inputIndex]
   if (!input) throw new PreimageError(`no input at index ${inputIndex}`)

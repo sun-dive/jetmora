@@ -9,8 +9,8 @@
 //   2  the service's own limits (server/append.php), before anything is recorded or signed: a tick over 100,000 bytes,
 //      or a genesis whose authorised set needs more than one signature, is one the service cannot store: ServiceLimit
 //   3  the skeleton: the tick with its unlocking script empty, built by tick() of tools/thread.mjs, a port of
-//      CovenantThread::tick. Its preimage covers everything but the unlocking script, so HASH256 of it names the
-//      successor before anything is signed
+//      CovenantThread::tick, naming the version the lock of the output it spends declares. Its preimage covers
+//      everything but the unlocking script, so HASH256 of it names the successor before anything is signed
 //   4  the ledger records that successor for the output it spends BEFORE anything is signed (below)
 //   5  the caller's unlock(preimage, tip) builds the unlocking script: the covenant's own signature
 //   6  the judge runs the script, as the service will (tools/thread.mjs judge). A tick it refuses is never sent: the
@@ -68,8 +68,9 @@
 //   open() → { tip, report }            find the tip (report is the reader's, or null when the tip is this writer's own
 //                                       tick). Throws ThreadBroken or TipRolledBack (above): such a tip is not extended
 //   tip                                 the tip it stands on: { position, seq, hash, bytes, entry, outputs, index }
-//   write(next, { unlock }) → answer    next(tip) or an object: { outputs, sequence = tip.index + 1, index = 0,
-//                                       version = JF 3 }, index being which of the tip's outputs it spends
+//   write(next, { unlock }) → answer    next(tip) or an object: { outputs, sequence = tip.index + 1, index = 0, version },
+//                                       index being which of the tip's outputs it spends, and version by default the one
+//                                       that output's lock declares (another is refused by the judge: TickRefused)
 //   resend() → answer | null            the successors this writer recorded for this thread, sent again in order from the
 //                                       tip, each its very bytes: the recorded successor of the tip, then that tick's,
 //                                       until one does not land. Its answer is the last one's, with answers, all of
@@ -77,7 +78,8 @@
 //   pending() → { hash, bytes, step, index } | null   the successor recorded for the tip, without sending it
 // write() and resend() run one at a time per writer. They THROW when nothing was sent:
 //     TickRefused (reason, reasonBytes)   the script refuses the tick, so it is not sent
-//     NoVerdict                           the judge cannot judge it here, so it is not sent
+//     NoVerdict                           the judge cannot judge it here, or the lock it spends declares no version,
+//                                         so it is not sent
 //     ServiceLimit (limit)                the service could not store it: 'entryBytes' or 'signatures'
 //     TipAlreadyAdvanced (record)         another successor of this output is recorded
 //     TipRolledBack (mine, tip)           from open(): this writer's newest confirmed tick is not in the thread
@@ -102,8 +104,7 @@
 //                                        Ed25519 signature over HASH256(PREIMAGE), and the key, as two direct pushes
 // A ledger is { get(key), update(key, fn) }: update calls fn(record or null) once, synchronously, and stores what it
 // returns (null deletes), atomically. Records are plain objects of strings and numbers.
-import { tick, judge, jfCrypto, VersionError, JfHostError, AUTH_V1_KEYS, AUTH_V2_HASHES } from './thread.mjs'
-import { versionBuild } from './dispatch.mjs'
+import { tick, judge, declaredVersion, jfCrypto, VersionError, JfHostError, AUTH_V1_KEYS, AUTH_V2_HASHES } from './thread.mjs'
 import { parseEntry } from './entry.mjs'
 import { sha256d, toHex } from './sha256.mjs'
 import { readThread, NOT_ONE } from './thread-reader.mjs'
@@ -154,7 +155,6 @@ export class ThreadBroken extends WriterError {
 
 /** Problems that stop a writer wherever they are: a thread its script did not permit, or a read the service cut short */
 const BROKEN = new Set(['malformed', 'broken link', 'refused', 'missing', 'paging'])
-const JF3 = versionBuild('JF', 3)
 const bytes = b => b instanceof Uint8Array ? b : Uint8Array.from(b)
 const unhex = h => Uint8Array.from(h.match(/../g) ?? [], x => parseInt(x, 16))
 /** Two byte strings, equal byte for byte */
@@ -298,7 +298,7 @@ export class ThreadWriter {
   async #write(next, unlock) {
     if (this.#tip === null) await this.#open()
     const tip = this.#tip
-    const step = { index: 0, version: JF3, sequence: tip.index + 1, ...(typeof next === 'function' ? await next(tip) : next) }
+    const step = { index: 0, sequence: tip.index + 1, ...(typeof next === 'function' ? await next(tip) : next) }
     if (!Number.isInteger(step.sequence) || step.sequence <= tip.index || step.sequence > 0xffffffff)
       throw new WriterError(`nSequence is the tick index (spec §3): this tick's must be a u32 past the tip's, ${tip.index}`)
     return this.#send(tip, step, unlock)
@@ -331,6 +331,12 @@ export class ThreadWriter {
   async #send(tip, step, unlock) {
     const spent = tip.outputs[step.index]
     if (spent === undefined) throw new TickRefused(`the tip has no output ${step.index} to spend`, null, null)
+    // the tick names the version the spent output's lock declares, unless the step names one; a lock that declares none
+    // gets no verdict, so nothing is recorded or signed
+    if (step.version === undefined) {
+      try { step = { ...step, version: declaredVersion(spent.locking) } }
+      catch (e) { if (e instanceof VersionError) throw new NoVerdict(e.message, e); throw e }
+    }
     await this.#withinLimits(step, unlock)
     const key = this.#key(toHex(tip.hash), step.index)
     let next = null, fresh = false, recorded = null

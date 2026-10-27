@@ -152,8 +152,9 @@ final class Appender
         if ($spent === null)
             return new AppendResult(false, null, "the tip has no output {$in['index']} to spend", 422);
 
-        // ⚠ No verdict is not a refusal: a host without the interpreter the tick names, or a library it needs,
-        //   says so and records nothing, so no tick is refused here and accepted on another host.
+        // ⚠ No verdict is not a refusal: a host without the interpreter the spent lock declares (or a lock that
+        //   declares none), or a library it needs, says so and records nothing, so no tick is refused here and
+        //   accepted on another host.
         try { $v = CovenantThread::judge($tick, 0, $spent['locking'], $spent['value']); }
         catch (VersionError | JfHostError $e) { return new AppendResult(false, null, 'no verdict: ' . $e->getMessage(), 501); }
         if ($v['accepted']) return null;

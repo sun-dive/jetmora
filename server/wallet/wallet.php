@@ -35,7 +35,9 @@ require_once __DIR__ . '/../append.php';             // ⚠ the CHAIN's verifier
 // ── the covenant this wallet mints: a counter that may only increment ────────────────────────────────
 // ⚠ The state is the OUTPUT VALUE — §3's "application-defined quantity". The script never changes, so
 //   it needs no self-modification, and the successor must carry the SAME script with value + 1.
+// ⚠ It declares the version it is written for first, as every lock does: VER JF 3.
 const COUNTER_SRC = <<<'ASM'
+  VER JF 3
   2DROP
   1000 PREIMAGE  DUP 8 !
   2DUP 8 @ 52 - 8 2000 SUBSTR BIN2NUM 16 !

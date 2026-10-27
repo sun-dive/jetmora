@@ -40,7 +40,8 @@
 //                      'malformed'          not a covenant entry, or not canonical
 //                      'broken link'        input 0 does not name the tick before it
 //                      'refused'            the script refused it, or it spends an output that is not there
-//                      'no verdict'         this reader cannot judge it (an nVersion nothing here judges, a library missing)
+//                      'no verdict'         this reader cannot judge it (the lock it spends declares no version, or one
+//                                           nothing here judges; a library missing)
 //                      'unjudged'           the output it spends is in a pruned body, or in an entry that does not decode
 //                      'inputs not judged'  more than one input: input 0 is judged, the others spend outputs of other
 //                                           threads, which this reader does not hold (the service refuses such a tick)

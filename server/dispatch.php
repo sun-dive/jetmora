@@ -76,7 +76,7 @@ function register_set(string $family, string $file, string $class, array $revisi
 }
 
 /**
- * The whole job: given an entry's nVersion, return the interpreter that entry named.
+ * The whole job: given an nVersion, return the interpreter for the version it names.
  * ⛔ Never returns "the newest" or "ours" — §6b forbids a verifier applying its own semantics.
  */
 function interpreter_for(int $nVersion): object
@@ -85,8 +85,8 @@ function interpreter_for(int $nVersion): object
 
   if (isset($v['legacy'])) {
     throw new VersionError(
-      "entry names legacy version {$v['legacy']}; no interpreter is registered for legacy versions. " .
-      '⚠ Legacy entries predate the family scheme and keep their own semantics (§6b) — they are not ' .
+      "legacy version {$v['legacy']}: no interpreter is registered for legacy versions. " .
+      '⚠ Legacy versions predate the family scheme and keep their own semantics (§6b): they are not ' .
       'reinterpretable as a family.');
   }
 

@@ -272,18 +272,19 @@ the result back into BASIC, so the rules a thread runs can be read by a person, 
 <a href="./basic.html">Try it in your browser.</a></p>
 
 <p>What runs is <strong>jetForth</strong>: a small language based on Forth, a compact programming language
-from 1970. Unlike Bitcoin's script it can loop, and it works in 64-bit numbers. Each tick names the engine
-that judges it, and a jetForth BASIC program says which on its first line, <code>VERSION JF 3</code>, so a
-verifier years from now runs the revision the tick named rather than its own.</p>
+from 1970. Unlike Bitcoin's script it can loop, and it works in 64-bit numbers. Each lock declares the engine
+its code is written for, in its first five bytes, and a tick must name that same engine or it is refused. A
+jetForth BASIC program says which on its first line, <code>VERSION JF 3</code>, so a verifier years from now
+runs the revision the lock declares rather than its own.</p>
 
 <p>Once a revision is fixed it never changes: a change is a new revision number. Revision 3 is not fixed yet.
 The engine runs in PHP and in JavaScript.</p>
 
-<p class="note">A tick will be able to name other engines too. One is Bitcoin's script as it stood in 2009,
+<p class="note">A lock will be able to declare other engines too. One is Bitcoin's script as it stood in 2009,
 with the original instruction numbers; that engine runs scripts today but does not yet judge ticks. Bitcoin
 switched concatenate, multiply, substring and shift off in the middle of 2010, so an early program that used
 them cannot run there. BSV switched them back on, but gave three of the old numbers to different
-instructions, so some early programs run there and give a different answer. Named this way, a 2009 program
+instructions, so some early programs run there and give a different answer. Declared this way, a 2009 program
 runs as it was written. Nobody has yet looked for an early program that used them.</p>
 
 <hr>

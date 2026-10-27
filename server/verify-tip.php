@@ -143,7 +143,8 @@ $p = proc_open(['node', '--input-type=module', '-e', $js, '--', "$repo/basic/bas
 $hex = trim((string)stream_get_contents($pipes[1])); $err = trim((string)stream_get_contents($pipes[2]));
 fclose($pipes[1]); fclose($pipes[2]); proc_close($p);
 $S = preg_match('/^([0-9a-f]{2})+$/', $hex) ? hex2bin($hex) : '';
-ok($S !== '' && str_contains($S, $ownerHash), sprintf('the covenant compiles: %d bytes, the owner inside it%s', strlen($S), $S === '' ? " ($err)" : ''));
+ok($S !== '' && str_contains($S, $ownerHash) && CovenantThread::declaredVersion($S) === version_build('JF', 3),
+   sprintf('the covenant compiles: %d bytes, declaring JF 3, the owner inside it%s', strlen($S), $S === '' ? " ($err)" : ''));
 if ($S === '') { printf("\n⚠  %d passed · %d failed   [nothing to tick without the covenant]\n", $pass, $fail); exit(1); }
 
 $h256 = fn(string $b): string => hash('sha256', hash('sha256', $b, true), true);
@@ -237,7 +238,7 @@ ok($r['status'] === 422 && str_contains((string)($r['json']['error'] ?? ''), 'no
 ok($count($E) === 1, 'nothing was recorded: one tick');
 
 echo "\n── a refusal's reason is the script's own bytes ──\n";
-$F = $thread('F', jf_asm('2DROP 1 (ABORT")$ff6e6f'));        // drops the push, then refuses with a reason that is not UTF-8
+$F = $thread('F', jf_asm('VER JF 3 2DROP 1 (ABORT")$ff6e6f'));   // drops the push, then refuses with a reason that is not UTF-8
 $tf = $tickOf($F, $owner, ['unlock' => fn(string $pre): string => "\x01\x01"]);
 $r = $send($F, $tf['bytes']);
 ok($r['status'] === 422 && is_array($r['json']), 'the refusal is JSON that parses → ' . $said($r));
@@ -263,11 +264,6 @@ $stale = $two;
 $stale['inputs'][0]['prevEntry'] = $A['id'];                // A's genesis output, spent by A's first tick
 $r = $send($A, CovenantEntry::encode($stale), 0);
 ok($r['status'] === 409 && $count($A) === 3, 'the same, input 0 naming an output already spent: rejected as spent, as a node would → ' . $said($r));
-foreach ([['ZZ', 1, 'H'], ['JF', 2, 'I'], ['SV', 1, 'J']] as [$family, $revision, $name]) {
-  $X = $thread($name, $S);
-  $r = $send($X, $tickOf($X, $owner, ['version' => version_build($family, $revision)])['bytes']);
-  ok($r['status'] === 501 && $count($X) === 0, "a tick naming $family revision $revision, nothing recorded → " . $said($r));
-}
 // the tip's body blanked, as ThreadStore::prune can, its tips row kept: the tip is known, its output is not held here
 $K = $thread('K', $S);
 [, $r] = $advance($K);
@@ -281,6 +277,32 @@ $store->append($junk, $N['id'], $N['id']);
 $r = $send($N, $tickOf(['tip' => $h256($junk)] + $N, $owner)['bytes']);
 ok($r['status'] === 501 && str_contains((string)($r['json']['error'] ?? ''), 'does not decode') && $count($N) === 1,
    'a tick spending a tip held here that does not decode, nothing recorded → ' . $said($r));
+
+echo "\n── the lock declares its version, and the host runs that engine ──\n";
+// A tick naming another version than its lock declares is refused, its script never run (each of these the covenant
+// would accept). A lock that declares none, or a version this host does not serve, gets no verdict.
+foreach ([['ZZ', 1, 'H'], ['JF', 2, 'I'], ['SV', 1, 'J']] as [$family, $revision, $name]) {
+  $X = $thread($name, $S);
+  $r = $send($X, $tickOf($X, $owner, ['version' => version_build($family, $revision)])['bytes']);
+  ok($r['status'] === 422 && ($r['json']['reason'] ?? '') === CovenantThread::OTHER_VERSION
+     && ($r['json']['reason_hex'] ?? '') === bin2hex(CovenantThread::OTHER_VERSION) && $count($X) === 0,
+     "a tick naming $family revision $revision on a lock that declares JF 3: refused, the reason given, nothing recorded → "
+     . $said($r) . ': ' . ($r['json']['reason'] ?? '?'));
+}
+foreach ([[substr($S, 5), 'the covenant without its declaration', 'L1'], [substr($S, 0, 4), 'a lock of four bytes, VER and three', 'L2'],
+          [jf_asm('VER JF 2') . substr($S, 5), 'the covenant declaring JF 2, which this host does not serve', 'L3'],
+          [jf_asm('VER ZZ 1') . substr($S, 5), 'the covenant declaring ZZ 1, a family nothing registers', 'L4'],
+          ["\x04" . substr($S, 1), 'the covenant with its version bytes pushed: it starts with a push, not VER', 'L5']] as [$lock, $what, $name]) {
+  $X = $thread($name, $lock);
+  $r = $send($X, $tickOf($X, $owner)['bytes']);
+  ok($r['status'] === 501 && str_starts_with((string)($r['json']['error'] ?? ''), 'no verdict: ') && $count($X) === 0,
+     "$what: no verdict, nothing recorded → " . $said($r));
+}
+// the declaration alone is a lock: judged, and refused, as the signature and key its tick pushes are left on the stack
+$X = $thread('L6', substr($S, 0, 5));
+$r = $send($X, $tickOf($X, $owner)['bytes']);
+ok($r['status'] === 422 && ($r['json']['reason'] ?? '') === 'the script did not end with exactly one non-zero item' && $count($X) === 0,
+   'VER JF 3 alone, a lock of five bytes: judged, and refused, nothing recorded → ' . $said($r) . ': ' . ($r['json']['reason'] ?? '?'));
 
 echo "\n── the checks before the script are kept ──\n";
 $P = $thread('P', $S);

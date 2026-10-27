@@ -312,6 +312,29 @@ final class InterpreterJF
   /** ⚠ The reserved slot the compiler emits for the header. Reserved region, append-only. */
   private const DEFS_MARK = JF_RESERVED0;
 
+  // ── the lock's declaration ─────────────────────────────────────────────────────────────────────────
+  // `VER <version:4>`: the version the lock's code is written for, its four bytes as an entry's nVersion carries
+  // them: D1 03 00 4A 46 for JF 3. Every lock starts with it, before its DEFS header, and a host reads it before
+  // anything runs and runs the engine for the version it declares. ⇒ To the engine it is a statement, not a
+  // question asked each tick: at the start of a lock it is stepped over, and so is a branch back to it. Anywhere else
+  // it declares nothing, and is refused.
+  private const VER_ELSEWHERE = 'VER declares the version a lock is written for, and is valid only as its first instruction';
+
+  /** Where a script's code begins: past its declaration when it starts with one, then past its DEFS header. */
+  private function codeStart(string $script): int
+  {
+    $i = 0;
+    if ($script !== '' && ord($script[0]) === JF_WORD['VER']) $i = self::pastDeclaration($script, 1);
+    $this->parseDefs($script, $i);
+    return $i;
+  }
+  /** Past VER's four version bytes, $i being just after VER. */
+  private static function pastDeclaration(string $code, int $i): int
+  {
+    if ($i + 4 > strlen($code)) throw new JfScriptError('truncated operand');
+    return $i + 4;
+  }
+
   private function varint(string $s, int &$i): int {
     $b = self::u8($s, $i); $i++;
     if ($b < 0xfd) return $b;
@@ -361,9 +384,7 @@ final class InterpreterJF
       $vm->exec($unlocking, 0, true);
       // the second run: the data stack and the pushed bytes carry over, and the op and signature counts run on
       $vm->rs = $vm->frames = []; $vm->depth = 0; $vm->frameCells = 0;
-      $i = 0;
-      $vm->parseDefs($lock, $i);
-      $vm->exec($lock, $i, true);
+      $vm->exec($lock, $vm->codeStart($lock), true);
       if ($vm->frames) throw new JfScriptError('unbalanced locals frame');
     } catch (JfHostError $e) {
       throw $e;                                     // this host cannot judge: never a refusal
@@ -400,9 +421,7 @@ final class InterpreterJF
     $this->opCount = 0; $this->depth = 0; $this->frameCells = 0; $this->held = 0; $this->sigOps = 0;
     $this->mem = '';
     $this->pmem = ''; $this->pbase = self::PUSH_BASE; $this->mbase = 0;
-    $i = 0;
-    $this->parseDefs($script, $i);
-    $this->exec($script, $i, /* covenant tier */ true);
+    $this->exec($script, $this->codeStart($script), /* covenant tier */ true);
     if ($this->frames) throw new JfScriptError('unbalanced locals frame');
     return $this->ds;
   }
@@ -869,8 +888,10 @@ final class InterpreterJF
         //   being something to remember later.
         $this->covenantOnly(jf_op_name($op), $covenant);
         throw new JfScriptError(jf_op_name($op) . ': not built yet — derive it from PREIMAGE with SUBSTR');
+      // the lock's declaration (codeStart): a lock's first instruction, reached here only by a branch back to it
       case $W['VER']:
-        throw new JfScriptError(jf_op_name($op) . ': version words are §6b and not built yet');
+        if (!$covenant || $i !== 1) throw new JfScriptError(self::VER_ELSEWHERE);
+        return self::pastDeclaration($code, $i);
 
       // ── INVOKE: the tier boundary ─────────────────────────────────────────────────────────────────
       case $W['INVOKE']: { $ix = self::u8($code, $i); $i++; $this->invoke($ix); return $i; }

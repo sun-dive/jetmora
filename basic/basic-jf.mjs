@@ -20,12 +20,15 @@
  *   3. never improve a released version in place: a new version, proved against the old one.
  *
  * A program names its version as its first statement, `VERSION JF 3`, and the compiler refuses one it
- * does not emit. Every result carries `nVersion`: the version an entry carrying the script must name.
+ * does not emit. The line compiles to the lock's declaration, VER and the version's four bytes, D1 03 00 4A 46:
+ * the script's first five bytes, a covenant's and a program's alike. A host reads it before it runs anything
+ * and runs the engine it names, and a tick must name that same version. Every result carries it as `nVersion`.
  *
  * ── A COVENANT ─────────────────────────────────────────────────────────────────────────────────────
  * The compiler writes the script once. Every rule a tick must meet is in it, and each tick the script
  * rebuilds itself into the new tip, as a Bitcoin covenant rebuilds itself into its next output:
  *
+ *   VER JF 3        the declaration, carried into every successor unchanged
  *   <f0> … <fn>     the DIM fields: the thread's state, as pushes at the head of the script
  *   the frame       bind the fields and the unlocking pushes ( sig pub ); then rules 1 and 2:
  *                   signed by the owner over HASH256(PREIMAGE); value + 1, and nSequence equal to it
@@ -40,15 +43,18 @@
 import { JF_PUSH_MAX, JF_SMALL0, JF_LIT, JF_WORD } from '../tools/ops-jf.mjs'
 
 /** The version of this compiler. A script's bytes are a function of it. */
-export const BASIC_JF_VERSION = '0.3'
+export const BASIC_JF_VERSION = '0.4'
 
 /** The JF revision the bytes are numbered in: tools/ops-jf.mjs, revision 3. */
 export const JF_REVISION = 3
 /**
- * The nVersion an entry carrying this script names, so the JF revision 3 interpreter runs it (spec §6b,
- * server/dispatch.php): family `JF`, revision 3 — on the wire `03 00 4A 46`.
+ * The version the script declares, and an entry spending it names, so the JF revision 3 interpreter runs it
+ * (spec §6b, server/dispatch.php): family `JF`, revision 3, on the wire `03 00 4A 46`.
  */
 export const JF_NVERSION = ((0x46 << 24) | (0x4a << 16) | JF_REVISION) >>> 0
+/** The lock's declaration, `VER JF 3`: VER and the four bytes of JF_NVERSION as the wire carries them. The script's first five bytes. */
+export const DECLARATION = Object.freeze([JF_WORD.VER, JF_NVERSION & 0xff, (JF_NVERSION >>> 8) & 0xff,
+                                          (JF_NVERSION >>> 16) & 0xff, JF_NVERSION >>> 24])
 
 /** 1.0 in the project's fixed point — 2^32, as in basic.ts. */
 export const BASIC_S = 2n ** 32n
@@ -831,7 +837,8 @@ export function compileBasic(src, env = {}) {
   const memory = em.bufNext, pushed = em.code.pushed ?? 0
   if (memory > MEMORY) throw new Error(`BASIC: the program needs ${memory} bytes of memory, and the interpreter has ${MEMORY}`)
   if (pushed > PUSH_MEM) throw new Error(`BASIC: the program pushes ${pushed} bytes, and the push space has ${PUSH_MEM}`)
-  return { bytes: Uint8Array.from(em.code.assemble()), nVersion: JF_NVERSION, revision: JF_REVISION,
+  /* The VERSION line is the declaration, ahead of the code: every branch is relative, so nothing in the code moves. */
+  return { bytes: Uint8Array.from([...DECLARATION, ...em.code.assemble()]), nVersion: JF_NVERSION, revision: JF_REVISION,
            compiler: BASIC_JF_VERSION, assigned: em.assigned, names: namesOf(em), inputs: env.stack ?? [], leave, memory, pushed }
 }
 
@@ -876,7 +883,8 @@ function frameText(layout, vl, written) {
   }
   const H = layout.reduce((n, f) => n + 1 + f.width, 0)
   const piece = f => `CAT(&H${hex([f.width])}, ${f.bytes ? f.name : `NUM2BIN(${f.name}, ${f.width})`})`
-  const after = [`#vi, #rest = SPLIT(#field, ${vl})`, `#old, #suf = SPLIT(#rest, ${H})`]
+  /* #vi is what comes before the state: the length prefix and the declaration, carried into the successor as they are. */
+  const after = [`#vi, #rest = SPLIT(#field, ${vl + DECLARATION.length})`, `#old, #suf = SPLIT(#rest, ${H})`]
   for (const f of layout) if (f.bytes && written.has(f.name)) after.push(`VERIFY SIZE(${f.name}) = ${f.width}`)
   /* A % field is unsigned. Below 8 bytes NUM2BIN refuses a negative; at 8 a negative cell fits, so it is checked. */
   for (const f of layout) if (!f.bytes && f.width === 8 && written.has(f.name)) after.push(`VERIFY ${f.name} >= 0`)
@@ -935,6 +943,7 @@ function buildCovenant(layout, body, state, L, written, consts) {
   const { before, after } = frameText(layout, varintSize(L), written)
 
   const head = new Code()
+  head.bytes(...DECLARATION)
   for (const f of layout) head.push(fieldBytes(f, state[f.name]))
   /* The frame is laid out before the program, so its addresses are the same whatever the program is.
      Emission order is head, frame, program, rebuild; allocation order is frame, rebuild, program. */
@@ -990,7 +999,8 @@ export function compileCovenant(src, env = {}) {
 
 /**
  * The frame and the rebuild of a covenant with this layout and length, as bytes: for the reader, which
- * finds them in a script by laying them down again. `written` is the fields the program assigns.
+ * finds them in a script by laying them down again. `written` is the fields the program assigns. H is where
+ * the frame starts: past the declaration and the fields.
  */
 export function covenantFrame(layout, L, written) {
   const state = Object.fromEntries(layout.map(f => [f.name, f.bytes ? new Array(f.width).fill(0) : 0]))

@@ -151,7 +151,8 @@
     <tr><td>a variable</td><td>at an address fixed when compiling: one cell for a number, two for bytes</td></tr>
     <tr><td><code>FOR … NEXT</code></td><td>a real loop. jetForth can branch back, so nothing is unrolled</td></tr>
     <tr><td><code>^</code></td><td>a multiply loop. Nothing is worked out in advance: the script says what the program says</td></tr>
-    <tr><td><code>VERSION JF 3</code></td><td>the first line. It names the interpreter, and an entry carrying the script names
+    <tr><td><code>VERSION JF 3</code></td><td>the first line. It becomes the script's first five bytes, <code>VER JF 3</code>:
+      the lock declares the version its code is written for. A tick spending it must name the same version,
       <code>nVersion</code> 0x464a0003</td></tr>
   </table>
 

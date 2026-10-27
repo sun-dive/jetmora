@@ -70,6 +70,7 @@ const OP = new Map()
 for (const [k, v] of Object.entries(JF_WORD)) OP.set(v, k)
 for (const [k, v] of Object.entries(JF_LIT)) OP.set(v, k)
 const DEFS_MARK = JF_RESERVED0                               // the reserved slot the compiler emits for the header
+const VER_ELSEWHERE = 'VER declares the version a lock is written for, and is valid only as its first instruction'
 const BANK_SEL = new Map(Object.entries(JF_BANK_WORD).map(([set, words]) => {
   const m = new Map(); for (const [w, v] of Object.entries(words)) if (!m.has(v)) m.set(v, w)
   return [set, m]
@@ -166,6 +167,16 @@ export class InterpreterJF {
     }
     return i
   }
+  // ── the lock's declaration ── `VER <version:4>`: see InterpreterJF in server/interpreter-jf.php. Stepped over at the
+  //   start of a lock, and on a branch back to it; refused anywhere else.
+  /** Where a script's code begins: past its declaration when it starts with one, then past its DEFS header. */
+  codeStart(script) {
+    const i = script.length && script[0] === JF_WORD.VER ? InterpreterJF.pastDeclaration(script, 1) : 0
+    return this.parseDefs(script, i)
+  }
+  /** Past VER's four version bytes, i being just after VER. */
+  static pastDeclaration(s, i) { if (i + 4 > s.length) throw new JfScriptError('truncated operand'); return i + 4 }
+
   /** [value, new position] */
   varint(s, i) {
     const b = InterpreterJF.u8(s, i); i++
@@ -185,8 +196,7 @@ export class InterpreterJF {
     this.opCount = 0; this.depth = 0; this.frameCells = 0; this.held = 0; this.sigOps = 0
     this.mem = null
     this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE; this.mbase = 0
-    const i = this.parseDefs(script, 0)
-    await this.exec(script, i, /* covenant tier */ true)
+    await this.exec(script, this.codeStart(script), /* covenant tier */ true)
     if (this.frames.length) throw new JfScriptError('unbalanced locals frame')
     return this.ds
   }
@@ -544,8 +554,10 @@ export class InterpreterJF {
       case 'SCRIPTCODE': case 'TXVALUE': case 'NSEQUENCE': case 'OUTPUTS-HASH': case 'LOCKTIME':
         this.covenantOnly(jf_op_name(op), covenant)
         throw new JfScriptError(`${jf_op_name(op)}: not built yet — derive it from PREIMAGE with SUBSTR`)
+      // the lock's declaration (codeStart): a lock's first instruction, reached here only by a branch back to it
       case 'VER':
-        throw new JfScriptError(`${jf_op_name(op)}: version words are §6b and not built yet`)
+        if (!covenant || i !== 1) throw new JfScriptError(VER_ELSEWHERE)
+        return InterpreterJF.pastDeclaration(code, i)
 
       // ── INVOKE: the tier boundary ──
       case 'INVOKE': { const ix = InterpreterJF.u8(code, i); i++; await this.invoke(ix); return i }
@@ -752,8 +764,7 @@ export async function verifyTick({ unlocking, lock, preimage, crypto = {} }) {
     await vm.exec(unlocking, 0, true)
     // the second run: the data stack and the pushed bytes carry over, and the op and signature counts run on
     vm.rs = []; vm.frames = []; vm.depth = 0; vm.frameCells = 0
-    const i = vm.parseDefs(lock, 0)
-    await vm.exec(lock, i, true)
+    await vm.exec(lock, vm.codeStart(lock), true)
     if (vm.frames.length) throw new JfScriptError('unbalanced locals frame')
   } catch (e) {
     if (e instanceof JfHostError) throw e                     // this host cannot judge: never a refusal

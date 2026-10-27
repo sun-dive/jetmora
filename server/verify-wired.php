@@ -37,9 +37,11 @@ function ok(bool $c, string $what): void {
 }
 
 // ── the covenant, in jetForth ───────────────────────────────────────────────────────────────────────
+// ⚠ It declares the version it is written for first, as every lock does: VER JF 3.
 // ⚠ The tick's unlocking script is one byte push (an unlocking script is byte pushes only), and the lock drops it first.
 // ⚠ Scratch slots: 8 = preimage length · 16 = old value · 24 = script length
 const COUNTER_SRC = <<<'ASM'
+  VER JF 3
   2DROP
   1000 PREIMAGE  DUP 8 !
   2DUP 8 @ 52 - 8 2000 SUBSTR BIN2NUM 16 !
@@ -124,6 +126,25 @@ for ($n = 0; $n < 5; $n++) {
 }
 ok($steps === 5, sprintf('five consecutive ticks, each accepted by the covenant (counter now %d)', $v));
 ok($tip !== $genesis['id'], 'the tip moved — every link verified by the program, not by an operator');
+
+// ── the lock declares its version, and the host runs that engine ────────────────────────────────────
+echo "\n── ★ the lock declares the version its code is written for ──\n";
+ok(substr($script, 0, 5) === "\xd1\x03\x00\x4a\x46" && CovenantThread::declaredVersion($script) === version_build('JF', 3),
+   'the counter starts with its declaration, VER JF 3: D1 03 00 4A 46');
+ok(CovenantThread::VER === JF_WORD['VER'], sprintf("the byte the host reads the declaration by is the JF table's VER, 0x%02x", JF_WORD['VER']));
+// 41 → 42 is a tick the counter accepts: refused for its version alone, so the script never ran
+$jf2 = CovenantThread::tick($genesis['id'], 0, $script, pack('P', 41), [['value' => 42, 'locking' => $script]], 1,
+                            fn(string $pre) => "\x01\x01", version_build('JF', 2));
+ok(CovenantThread::judge($jf2['entry'], 0, $script, pack('P', 41)) === ['accepted' => false, 'error' => CovenantThread::OTHER_VERSION],
+   '⛔ a tick naming JF 2 on a lock that declares JF 3 is refused, its script never run: "' . CovenantThread::OTHER_VERSION . '"');
+foreach ([[substr($script, 5), 'the counter without its declaration'], ["\xd1\x03\x00\x4a", 'a lock of four bytes, VER and three'],
+          [jf_asm('VER JF 2') . substr($script, 5), 'the counter declaring JF 2, which this host does not serve'],
+          ["\x04" . substr($script, 1), 'the counter with its version bytes pushed: it starts with a push, not VER']] as [$lock, $what]) {
+  $said = 'a verdict';
+  try { CovenantThread::judge(tickTo($lock, $genesis['id'], 41, 42)['entry'], 0, $lock, pack('P', 41)); }
+  catch (VersionError $e) { $said = $e->getMessage(); }
+  ok($said !== 'a verdict', "$what: no verdict, $said");
+}
 
 printf("\n%s  %d passed, %d failed   [a real covenant, wired end to end]\n",
   $fail === 0 ? '✅' : '⚠', $pass, $fail);

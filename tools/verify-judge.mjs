@@ -14,8 +14,11 @@
 //   judge      tools/thread.mjs's judge against CovenantThread::judge, tick for tick: the ticks server/verify-tip.php sends
 //              (its --export; an answer the service gave from its judge must be the PHP judge's), server/verify-wired.php's
 //              counter, and random ticks of several inputs, each version, locks that read the preimage, hash it, sign it
-//              (secp256k1 and Ed25519) or abort. The same verdict, the same refusal bytes, the same stack, and no verdict in
-//              the same cases in the same words. Then crypto missing or broken: no verdict, never a refusal
+//              (secp256k1 and Ed25519) or abort, each lock declaring its version, now and then another or none. The same
+//              verdict, the same refusal bytes, the same stack, and no verdict in the same cases in the same words. Then
+//              crypto missing or broken: no verdict, never a refusal. Then the lock's declaration case by case: a tick
+//              naming another version, a lock with none or one this host does not serve, VER later in a lock or in a
+//              function, and a branch back to it
 //   mutants    tools/preimage.mjs altered in a copy (field order, value width, the scriptCode length varint, and more), and
 //              the judge and the dispatcher altered: each copy must disagree with PHP somewhere
 //   browser    what a page loads names nothing of node's; with --browser, headless Chromium runs the judge on the same
@@ -33,10 +36,11 @@ import { sha1 } from './sha1.mjs'
 import { ripemd160 } from './ripemd160.mjs'
 import { verifyDigest } from './secp256k1.mjs'
 import { preimage } from './preimage.mjs'
-import { judge, jfCrypto } from './thread.mjs'
+import { judge, jfCrypto, OTHER_VERSION, VER } from './thread.mjs'
+import { NOT_ONE } from './thread-reader.mjs'
 import { versionBuild } from './dispatch.mjs'
 import { serializeEntry, parseEntry, varint } from './entry.mjs'
-import { JF_WORD, JF_LIT, JF_SMALL0 } from './ops-jf.mjs'
+import { JF_WORD, JF_LIT, JF_SMALL0, JF_RESERVED0 } from './ops-jf.mjs'
 import { runFolder } from './run-folder.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url)), ROOT = join(HERE, '..')
@@ -317,7 +321,10 @@ const TIP = []
   const served = TIP.map(c => {
     const s = c.service, p = c.php
     if (s.status === 201) return p.accepted === true ? 'accepted' : 'MISMATCH'
-    if (s.status === 422 && s.reason_hex !== null) return p.accepted === false && p.error === s.reason_hex ? `refused: ${Buffer.from(s.reason_hex, 'hex').toString('latin1').replace(/[^\x20-\x7e]/g, '?')}` : 'MISMATCH'
+    // a run that ends without exactly one non-zero item gives the judge's stack and no error: the service's reason
+    // is then append.php's own words, which the reader gives too
+    const why = p.error ?? (p.accepted === false && p.stack ? hex(new TextEncoder().encode(NOT_ONE)) : null)
+    if (s.status === 422 && s.reason_hex !== null) return p.accepted === false && why === s.reason_hex ? `refused: ${Buffer.from(s.reason_hex, 'hex').toString('latin1').replace(/[^\x20-\x7e]/g, '?')}` : 'MISMATCH'
     if (s.status === 501 && p.noVerdict && s.error === `no verdict: ${p.message}`) return 'no verdict'
     // a host that does not ship a set says so, where the repository's PHP has the set and says it judges no ticks
     if (s.status === 501 && p.noVerdict && /^no verdict: family `\w\w` is registered, but this host does not ship /.test(s.error)) return 'no verdict (the set not shipped there)'
@@ -383,6 +390,13 @@ const FIELDS = [['version', 4, 0], ['hashPrevouts', 32, 4], ['hashSequence', 32,
                 ['the value', 8, -52], ['nSequence', 4, -44], ['the value and nSequence', 12, -52], ['hashOutputs', 32, -40], ['locktime', 4, -8], ['the sighash type', 4, -4]]
 const DIGEST = { SHA256: H('sha256'), SHA1: H('sha1'), RIPEMD160: H('ripemd160'), HASH160: b => H('ripemd160')(H('sha256')(b)), HASH256: b => H('sha256')(H('sha256')(b)) }
 const lit32 = n => [L.LIT32, n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]
+const u32le = n => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, n >>> 24]
+/** The lock's declaration, VER and a version: VER JF 3 */
+const declare = (v = versionBuild('JF', 3)) => [W.VER, ...u32le(v)]
+/** A random lock's declaration: VER JF 3 mostly; now and then a version nothing here judges, four random bytes, or none */
+const DECLARATIONS = [() => declare(versionBuild('JF', 2)), () => declare(versionBuild('JF', 4)), () => declare(versionBuild('SV', 1)),
+                      () => declare(103), () => declare(0x62610003), () => [W.VER, ...rbytes(4)], () => []]
+const declaration = () => chance(0.9) ? declare() : pick(DECLARATIONS)()
 for (let t = 0; t < N_TICKS; t++) {
   const kind = pick(KINDS)
   const nIn = chance(0.6) ? 1 : int(2, 4)
@@ -395,6 +409,7 @@ for (let t = 0; t < N_TICKS; t++) {
   const entry = { version, inputs, outputs, locktime: 0 }
   // now and then a long lock, so that its scriptCode varint takes 3 bytes
   const pad = chance(0.25) ? [...push(rbytes(int(180, 255))), W['2DROP']] : []
+  const decl = declaration()                                 // at the head of the lock, before anything else
   /** The judged input's preimage over a lock. It covers the lock, never an unlocking script. */
   const pre = lock => Uint8Array.from(preimage({ entry, inputIndex: Math.min(at, nIn - 1), scriptCode: lock, value }))
   /** 2DROP for each push of the unlocking script; now and then one too few, so two items are left */
@@ -407,7 +422,7 @@ for (let t = 0; t < N_TICKS; t++) {
     const pub = kind === 'ecdsa' ? (chance(0.5) ? key.pub33 : key.pub65) : key.pub
     const whole = kind === 'ed25519' && chance(0.5)           // Ed25519 over the whole preimage, or over its HASH256
     const verify = kind === 'ecdsa' ? (chance(0.8) ? 'CHECKSIG' : 'CHECKSIGVERIFY') : (chance(0.8) ? 'ED25519-CHECKSIG' : 'ED25519-CHECKSIGVERIFY')
-    lock = Uint8Array.from([...pad, ...push(pub), ...num(1000), W.PREIMAGE, ...(whole ? [] : [...num(3000), W.HASH256, ...num(3000), ...num(32)]),
+    lock = Uint8Array.from([...decl, ...pad, ...push(pub), ...num(1000), W.PREIMAGE, ...(whole ? [] : [...num(3000), W.HASH256, ...num(3000), ...num(32)]),
                             W[verify], ...(verify.endsWith('VERIFY') ? [W.TRUE] : [])])
     const p = pre(lock), how = rnd()
     const other = Uint8Array.from(p).map((b, i) => i === p.length - 5 ? b ^ 1 : b)   // the preimage of another tick
@@ -421,13 +436,13 @@ for (let t = 0; t < N_TICKS; t++) {
     // the digest is pushed by the unlocking script: the lock cannot hold the hash of a preimage that covers the lock
     alg = kind === 'hash256' ? 'HASH256' : pick(['SHA256', 'SHA1', 'RIPEMD160', 'HASH160', 'HASH256'])
     const len = alg === 'SHA256' || alg === 'HASH256' ? 32 : 20
-    lock = Uint8Array.from([...pad, ...num(1000), W.PREIMAGE, ...num(3000), W[alg], ...num(3000), ...num(len), W['BYTES=']])
+    lock = Uint8Array.from([...decl, ...pad, ...num(1000), W.PREIMAGE, ...num(3000), W[alg], ...num(3000), ...num(len), W['BYTES=']])
     unlock = [...pushAny(chance(0.85) ? DIGEST[alg](pre(lock)) : rbytes(len)), ...extra()]
   } else if (kind === 'slice') {
     // a field the lock does not change, read with SUBSTR and compared with the bytes the lock carries
     unlock = randomPushes()
     const drops = dropsFor(unlock), [, cnt, from] = pick(FIELDS)
-    const build = (off, want) => Uint8Array.from([...pad, ...drops, ...num(1000), W.PREIMAGE, ...lit32(off), ...num(cnt), ...num(3000), W.SUBSTR,
+    const build = (off, want) => Uint8Array.from([...decl, ...pad, ...drops, ...num(1000), W.PREIMAGE, ...lit32(off), ...num(cnt), ...num(3000), W.SUBSTR,
                                                   ...push(want), W['BYTES='], ])
     const p = pre(build(0, new Uint8Array(cnt)))               // the same length whatever the offset and bytes: lit32 and a fixed push
     const off = from >= 0 ? from : p.length + from
@@ -438,10 +453,10 @@ for (let t = 0; t < N_TICKS; t++) {
     unlock = randomPushes()
     if (chance(0.05)) unlock.push(...num(5))                  // not byte pushes only
     const drops = dropsFor(unlock)
-    if (kind === 'true') lock = Uint8Array.from([...pad, ...drops, W.TRUE])
+    if (kind === 'true') lock = Uint8Array.from([...decl, ...pad, ...drops, W.TRUE])
     else if (kind === 'abort')
-      lock = Uint8Array.from([...pad, ...drops, ...num(1000), W.PREIMAGE, W.NIP, ...num(int(100, 400)), W['>'], W['(ABORT")'], 4, 0xff, 0x6e, 0x6f, int(0, 255), W.TRUE])
-    else { const body = chance(0.5) ? drops : []; for (let n = int(1, 20); n > 0; n--) body.push(...token()); lock = Uint8Array.from([...pad, ...body]) }
+      lock = Uint8Array.from([...decl, ...pad, ...drops, ...num(1000), W.PREIMAGE, W.NIP, ...num(int(100, 400)), W['>'], W['(ABORT")'], 4, 0xff, 0x6e, 0x6f, int(0, 255), W.TRUE])
+    else { const body = chance(0.5) ? drops : []; for (let n = int(1, 20); n > 0; n--) body.push(...token()); lock = Uint8Array.from([...decl, ...pad, ...body]) }
   }
   if (at < nIn) inputs[at].unlocking = Uint8Array.from(unlock)
   RANDOM.push({ what: `random tick ${t} (${kind}${alg ? ` ${alg}` : ''}, ${nIn} input${nIn > 1 ? 's' : ''}, judged at ${at})`, kind, alg,
@@ -528,7 +543,7 @@ const DECODE = []
   const signed = { prev: new Uint8Array(32).fill(0x11), index: 0, unlocking: Uint8Array.of(1, 1), seq: 1 }
   const bare = { ...signed, unlocking: new Uint8Array(0) }
   const kept = { value: 1n, locking: TRUE }, blank = { value: 1n, locking: new Uint8Array(0) }
-  const add = (what, version, inputs, outputs, input = 0, lock = TRUE) =>
+  const add = (what, version, inputs, outputs, input = 0, lock = Uint8Array.from([...declare(), W.TRUE])) =>
     DECODE.push({ what, entry: hex(raw(version, inputs, outputs)), input, lock: hex(lock), value: hex(le64(0)) })
   add('one input, no unlocking script, a lock that accepts anything', JF3, [bare], [kept])
   add('an output with no locking script', JF3, [signed], [blank])
@@ -547,6 +562,55 @@ const DECODE = []
   const parsed = DECODE.every(c => { try { parseEntry(unhex(c.entry)); return true } catch { return false } })
   for (const { c, js, same } of rows)
     ok(same && parsed, `${c.what}: PHP ${c.php.thrown ?? kindOf(c.php)}, JS ${js.thrown ?? kindOf(js)} (${js.message ?? ''})${same ? ', the same part refused' : ''}`)
+}
+
+// 4f. the lock's declaration: it names the engine, the tick names the same version, and VER is a lock's first instruction
+console.log('\n── the lock\'s declaration: the version a lock is written for, and the engine that runs it ──')
+const DECLARE = []
+{
+  const JF3 = versionBuild('JF', 3), tip = rbytes(32), utf8 = s => new TextEncoder().encode(s)
+  /** A tick of one input, its unlocking script one push, and what the PHP judge must answer: accepted, refused, refused
+   *  for naming another version than the lock declares (OTHER_VERSION), or no verdict */
+  const add = (what, lock, expect, version = JF3, input = 0) => {
+    const e = { version, locktime: 0, outputs: [{ value: 1n, locking: Uint8Array.of(W.TRUE) }],
+                inputs: [{ prevEntry: tip, index: 0, unlocking: Uint8Array.of(1, 1), sequence: 1 }] }
+    DECLARE.push({ what, expect, entry: hex(serializeEntry(e)), input, lock: hex(Uint8Array.from(lock)), value: hex(le64(0)) })
+  }
+  const body = [W['2DROP'], W.TRUE]
+  /** a DEFS header of one function, ( -- x ), whose body is given */
+  const defs1 = fn => [JF_RESERVED0, 1, 0, 1, 0, 0, fn.length, ...fn]
+  add('VER JF 3, the tick naming JF 3: judged, and accepted', [...declare(), ...body], 'accepted')
+  add('...the tick naming JF 2: refused, its script never run', [...declare(), ...body], 'another version', versionBuild('JF', 2))
+  add('...the tick naming JF 4', [...declare(), ...body], 'another version', versionBuild('JF', 4))
+  add('...the tick naming legacy 103', [...declare(), ...body], 'another version', 103)
+  add('...the tick naming SV 1, judged at an input that is not there: refused before the input is looked at', [...declare(), ...body],
+      'another version', versionBuild('SV', 1), 3)
+  add('a lock with no declaration', body, 'no verdict')
+  add('a lock of no bytes', [], 'no verdict')
+  add('VER and three bytes, a lock of four', [W.VER, 3, 0, 0x4a], 'no verdict')
+  add('VER JF 3 alone, a lock of five bytes: judged, and refused', declare(), 'refused')
+  add('the four version bytes pushed, the lock starting with a push and not VER: no declaration',
+      [4, ...u32le(JF3), W['2DROP'], W['2DROP'], W.TRUE], 'no verdict')
+  add('VER JF 2, a version this host does not serve, the tick naming it too', [...declare(versionBuild('JF', 2)), ...body], 'no verdict', versionBuild('JF', 2))
+  add('VER SV 1, a set that judges no ticks', [...declare(versionBuild('SV', 1)), ...body], 'no verdict', versionBuild('SV', 1))
+  add('VER 103, a legacy version', [...declare(103), ...body], 'no verdict', 103)
+  add('VER and a family in lowercase', [...declare(0x62610003), ...body], 'no verdict', 0x62610003)
+  add('VER a second time, after the first instruction: refused', [...declare(), W['2DROP'], ...declare(), W.TRUE], 'refused')
+  add('VER in a function: refused', [...declare(), ...defs1([...declare(), W.TRUE]), W['2DROP'], W.INVOKE, 0], 'refused')
+  add('...the same function without it: accepted', [...declare(), ...defs1([W.TRUE]), W['2DROP'], W.INVOKE, 0], 'accepted')
+  // pushes 1 and branches back to offset 0 until five items are held, then adds the three ones and drops the push
+  add('a branch back to the declaration steps over it: a loop of three, then 3', [...declare(), small(1), W.DEPTH, small(5), W['<'],
+      W['0BRANCH'], 3, 0, W.BRANCH, -15 & 0xff, 0xff, W['+'], W['+'], W.NIP, W.NIP], 'accepted')
+  ok(VER === W.VER, `the byte the judge reads the declaration by is the JF table's VER, 0x${W.VER.toString(16)}`)
+  withPhp(DECLARE)
+  for (const c of DECLARE) {
+    const js = await normJs(judge, c), same = JSON.stringify(js) === JSON.stringify(c.php)
+    const right = c.expect === 'another version' ? c.php.accepted === false && c.php.error === hex(utf8(OTHER_VERSION))
+                : c.expect === 'refused' ? c.php.accepted === false && c.php.error !== hex(utf8(OTHER_VERSION))
+                : c.expect === 'accepted' ? c.php.accepted === true : c.php.noVerdict === 'VersionError'
+    ok(same && right, `${c.what}: ${kindOf(c.php)}${c.php.error ? `, "${Buffer.from(c.php.error, 'hex').toString('latin1')}"` : c.php.message ? `, ${c.php.message}` : ''}`
+       + (same ? '' : ` · JS ${JSON.stringify(js).slice(0, 100)}`))
+  }
 }
 
 // ── 5. mutants ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -587,6 +651,9 @@ const GRAPH = importGraph(HERE, 'thread.mjs')
     ['thread.mjs', 'judge: the spent value left out of the preimage', 'scriptCode: prevLocking, value })', 'scriptCode: prevLocking, value: 0n })'],
     ['thread.mjs', 'judge: a verify that throws read as a failed check', 'if (host.fault) throw host.fault', 'if (false) throw host.fault'],
     ['thread.mjs', 'judge: bytes decode refuses judged anyway', '  isCovenantEntry(entry)\n', ''],
+    ['thread.mjs', 'judge: the engine the tick names run, not the one its lock declares', 'const vm = interpreterFor(declared)', 'const vm = interpreterFor(entry.version)'],
+    ['thread.mjs', 'judge: a tick naming another version than its lock declares, run anyway', '  if (entry.version !== declared) return', '  if (false) return'],
+    ['thread.mjs', 'judge: a lock that does not start with VER read as declaring a version', '  if (lock.length < 5 || lock[0] !== VER) throw', '  if (false) throw'],
     ['dispatch.mjs', 'dispatch: every JF revision judged', "registerSet('JF', { name: 'InterpreterJF', verifyTick }, [3])", "registerSet('JF', { name: 'InterpreterJF', verifyTick }, [1, 2, 3, 4])"],
     ['sha1.mjs', 'SHA-1: a round constant', 'k = 0x6ed9eba1', 'k = 0x6ed9eba2'],
     ['sha1.mjs', 'SHA-1: the padding one byte short', 'len - whole + 9 <= 64', 'len - whole + 8 <= 64'],
@@ -600,7 +667,7 @@ const GRAPH = importGraph(HERE, 'thread.mjs')
     ['secp256k1.mjs', 'secp256k1: a trailing byte allowed by default', 'digest32, allowTrailing = false)', 'digest32, allowTrailing = true)'],
     ['jf-crypto.mjs', 'Ed25519: the key and the message swapped', 'ed25519(sig, msg, pub)', 'ed25519(sig, pub, msg)'],
   ]
-  const TICKS = [...TIP, ...COUNTER, ...RANDOM]
+  const TICKS = [...TIP, ...COUNTER, ...RANDOM, ...DECLARE]
   const native = { sha256: H('sha256'), sha1: H('sha1'), ripemd160: H('ripemd160') }
   const HASHED = [...Array.from({ length: 301 }, (_, n) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + n) & 0xff)), rbytes(65537)]
   for (const [k, [file, what, from, to]] of MUTANTS.entries()) {
@@ -649,7 +716,7 @@ console.log('\n── browser: what a page loads to judge ──')
   const caught = foreignIn(dir, importGraph(dir, 'thread.mjs'))
   ok(caught.some(x => x.includes('node:crypto')), `and the check finds node:crypto put back into a copy of preimage.mjs: ${caught.join('; ')}`)
   if (!BROWSER) console.log('  - headless Chromium not run: pass --browser to run the judge in it')
-  else await inBrowser([...TIP, ...COUNTER, ...RANDOM.slice(0, 300)])
+  else await inBrowser([...TIP, ...COUNTER, ...DECLARE, ...RANDOM.slice(0, 300)])
 }
 
 /** Judge the cases in headless Chromium, from the files in tools/, and compare with PHP's answers. */

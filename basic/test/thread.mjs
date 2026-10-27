@@ -17,7 +17,7 @@ import { disassemble, unbasic } from '../unbasic-jf.mjs'
 import { verifyTick } from '../../tools/interpreter-jf.mjs'
 import { JF_WORD, JF_SMALL0 } from '../../tools/ops-jf.mjs'
 import { verify as ed25519 } from '../../tools/ed25519.mjs'     // libsodium 1.0.22's rules, as server/ed25519.php's
-import { judge as judgeTick, VersionError } from '../../tools/thread.mjs'
+import { judge as judgeTick, VersionError, OTHER_VERSION } from '../../tools/thread.mjs'
 import { parseEntry } from '../../tools/entry.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -125,17 +125,21 @@ for (const [k, c] of ALL.entries()) {
 ok(right === ALL.length, `★★ every tick is accepted or refused as its rules say (${right}/${ALL.length})`)
 ok(same === ALL.length, `★ the JavaScript interpreter gives the same verdict and leaves the same thing on every tick (${same}/${ALL.length})`)
 
-// ── rules 1 and 2: the entry's version names the interpreter, and the judge builds the preimage from the entry ──
+// ── rules 1 and 2: the lock's declaration names the interpreter, and the judge builds the preimage from the entry ──
 console.log('\n── rules 1 and 2: the version, and the preimage built from the entry ──')
 {
   const tick = extra => ['', counting(7), 41, 42, [out(42, counting(8))], sign(), null, extra]
   const version = (family, revision) => ((family.charCodeAt(1) << 24) | (family.charCodeAt(0) << 16) | revision) >>> 0
   const [named, tampered, jf2, sv, legacy] = judge([tick({ version: version('JF', 3) }), tick({ tamper: true }),
     tick({ version: version('JF', 2) }), tick({ version: version('SV', 1) }), tick({ version: 103 })])
-  ok(named.accepted, 'an entry naming JF revision 3 is judged by it, and accepted')
+  ok(named.accepted, 'an entry naming JF revision 3, the version its lock declares, is judged by it, and accepted')
   ok(!tampered.accepted && tampered.asSigned, '★ the successor\'s value changed after signing: refused, though the preimage that was signed passes')
   for (const [r, what] of [[jf2, 'JF revision 2'], [sv, 'SV revision 1'], [legacy, 'legacy version 103']])
-    ok(r.cannotJudge !== undefined, `an entry naming ${what}: this host cannot judge it — ${r.cannotJudge ?? 'a verdict'}`)
+    ok(r.accepted === false && r.result?.error === hex(new TextEncoder().encode(OTHER_VERSION)),
+       `an entry naming ${what} on a lock that declares JF 3: refused, its script never run (${r.cannotJudge ?? (r.result?.error ? Buffer.from(r.result.error, 'hex').toString() : 'accepted')})`)
+  const undeclared = counting(7).slice(5)
+  const [none] = judge([['', undeclared, 41, 42, [out(42, undeclared)], sign(), null]])
+  ok(none.cannotJudge !== undefined, `the counting covenant with its declaration taken off: this host cannot judge it, ${none.cannotJudge ?? 'a verdict'}`)
 }
 
 // ── an 8-byte % field is unsigned: it does not come round past 2^63 ──
@@ -144,7 +148,7 @@ console.log('\n── an 8-byte number field at its top ──')
   const WIDE = 'VERSION JF 3\nDIM owner$20\nDIM n%8\nn = n + 1'
   const top = 2n ** 63n - 1n
   const tip = compileCovenant(WIDE, { state: { owner: OWNER, n: top } }).bytes
-  const wrapped = Uint8Array.from(tip); wrapped.set([0, 0, 0, 0, 0, 0, 0, 0x80], 22)   // n = 2^63, as a cell −2^63
+  const wrapped = Uint8Array.from(tip); wrapped.set([0, 0, 0, 0, 0, 0, 0, 0x80], 27)   // n = 2^63, as a cell −2^63: past VER JF 3, owner's push and n's length
   const r = judge([['', compileCovenant(WIDE, { state: { owner: OWNER, n: top - 1n } }).bytes, 41, 42, [out(42, tip)], sign(), true],
                    ['', tip, 41, 42, [out(42, wrapped)], sign(), false]])
   ok(r[0].accepted, 'n 2^63 − 2 → 2^63 − 1 is accepted')
@@ -174,9 +178,9 @@ console.log('\n── a program that writes its $ field ──')
   const tipT = compileCovenant(TRANSFER, { state: { owner: OWNER } }).bytes
   const nextT = compileCovenant(TRANSFER, { state: { owner: OTHER } }).bytes
   const tipB = compileCovenant(BADWIDTH, { state: { owner: OWNER } }).bytes
-  /* what BADWIDTH's rebuild would make: the push says 20 bytes and carries 2, so 18 bytes of the code
-     after it would be read as the field, and the rest would run */
-  const malformed = Uint8Array.from([20, 1, 2, ...tipB.slice(21)])
+  /* what BADWIDTH's rebuild would make: the declaration, then a push that says 20 bytes and carries 2, so 18 bytes
+     of the code after it would be read as the field, and the rest would run */
+  const malformed = Uint8Array.from([...tipB.slice(0, 5), 20, 1, 2, ...tipB.slice(26)])
   const list = [
     ['transfer: the thread passes to the new owner', tipT, 41, 42, [out(42, nextT)], sign(), true],
     ['transfer: and only to them', tipT, 41, 42, [out(42, tipT)], sign(), false],

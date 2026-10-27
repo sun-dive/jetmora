@@ -13,7 +13,7 @@
 //
 // The old engine is read from git and loaded beside the new one, its classes renamed, with its own opcode table, the
 // one at f4f05d1, under renamed names. The table has changed since only as DROPPED declares, and the two engines'
-// results differ only as DECLARED says.
+// results differ only as DECLARED says, and on a script that starts with the lock's declaration, as forOld says.
 // secp256k1.php is shared, so the signatures part grades the engine's signature words, and verify-secp256k1-native.php
 // the curve.
 // The old engine checks Ed25519 with ext/sodium, so its ED25519-CHECKSIG verdicts are sodium's, and the new engine's
@@ -32,20 +32,23 @@ declare(strict_types=1);
 
 const REV = 'f4f05d192bbd44e47f22447c9b4b51a1f8215abb';
 const DEFAULT_PROGRAMS = 60000, DEFAULT_SEED = 20261024;
-/** sha256 over the cells part at the default programs and seed: each case, then the old engine's result with DECLARED
- *  applied. */
-const CELLS_DIGEST = '36c050244dfa9dbf2e518c85a547d6215148322d81fc3711d63864422e3bd2df';
+/** sha256 over the cells part at the default programs and seed: each case, then the old engine's result with forOld and
+ *  DECLARED applied. */
+const CELLS_DIGEST = 'c917d8fd87cbfd70883faa1fc4f10ba25363087c1fc573723e88dd7241614753';
 /** What the opcode table has changed since REV: these words were dropped from revision 3, their bytes left unassigned,
  *  and nothing else moved. */
 const DROPPED = ['TXVERSION' => 0xd0, 'VERIF' => 0xd2, 'VERNOTIF' => 0xd3];
 /** What that changes in a result: the old engine's refusal on a dropped word's byte, and revision 3's on the same byte,
- *  the unknown-opcode refusal. Nothing else may differ. */
+ *  the unknown-opcode refusal. And VER, built since REV as the lock's declaration: the old engine refused it everywhere,
+ *  and revision 3 refuses it anywhere but a lock's first instruction (forOld below has that one). Nothing else may differ. */
 const DECLARED = [
   'TXVERSION: not built yet — derive it from PREIMAGE with SUBSTR' => 'unknown opcode 0xd0',
   'TXVERSION is covenant-tier only: a stdForth function computes from what it was given, and reaches for nothing else'
     => 'unknown opcode 0xd0',
   'VERIF: version words are §6b and not built yet' => 'unknown opcode 0xd2',
   'VERNOTIF: version words are §6b and not built yet' => 'unknown opcode 0xd3',
+  'VER: version words are §6b and not built yet'
+    => 'VER declares the version a lock is written for, and is valid only as its first instruction',
 ];
 
 $plain = array_values(array_filter(array_slice($argv, 1), fn($a) => !str_starts_with($a, '--')));
@@ -114,9 +117,25 @@ function oldTableIsDeclared(): bool {
      === [OLD_JF_PUSH_MAX, OLD_JF_SMALL0, OLD_JF_SMALL_NEG1, OLD_JF_LIT, OLD_JF_ESC0, OLD_JF_PLANE, OLD_JF_RESERVED0, OLD_JF_BANK,
           OLD_JF_BANK_WORD, OLD_JF_CORE_KIND, OLD_JF_PROMOTED];
 }
-/** The old engine's result as revision 3 gives it: a refusal DECLARED names becomes revision 3's, anything else is kept. */
-function declared(string $outcome): string {
-  foreach (DECLARED as $was => $now)
+/** The script a case runs in the covenant tier: a program, or a tick's lock. */
+function covenantScript(array $c): string { return $c[0] === 'tick' ? $c[2] : $c[1]; }
+/**
+ * The case as the old engine is given it. A script that starts with VER starts with the lock's declaration, VER and its
+ * four version bytes, which revision 3 steps over and the old engine did not have: so it is given the same script with
+ * those five bytes as five CHARS, the word that does nothing, and every other byte where it was.
+ */
+function forOld(array $c): array {
+  $s = covenantScript($c);
+  if (strlen($s) >= 5 && ord($s[0]) === JF_WORD['VER']) $c[$c[0] === 'tick' ? 2 : 1] = str_repeat(chr(JF_WORD['CHARS']), 5) . substr($s, 5);
+  return $c;
+}
+/** The old engine's result as revision 3 gives it: a refusal DECLARED names becomes revision 3's, anything else is kept.
+ *  A script that is VER and fewer than its four version bytes is refused by revision 3 as a truncated operand. */
+function declared(string $outcome, array $c): string {
+  $map = DECLARED;
+  $s = covenantScript($c);
+  if ($s !== '' && strlen($s) < 5 && ord($s[0]) === JF_WORD['VER']) $map['VER: version words are §6b and not built yet'] = 'truncated operand';
+  foreach ($map as $was => $now)
     foreach (['JfScriptError: ', 'refused | '] as $form)
       if ($outcome === $form . $was) return $form . $now;
   return $outcome;
@@ -164,8 +183,9 @@ function grade(string $part, iterable $cases, ?string $noOracle, callable $shown
   foreach ($cases as $c) {
     $new = outcome('InterpreterJF', $c);
     if ($noOracle === null) {
-      $raw = outcome('OldInterpreterJF', $c); $old = declared($raw);
-      if ($old !== $raw) $changed++;
+      $given = forOld($c);
+      $raw = outcome('OldInterpreterJF', $given); $old = declared($raw, $c);
+      if ($old !== $raw || $given !== $c) $changed++;
     }
     else $old = $new;
     $n++;

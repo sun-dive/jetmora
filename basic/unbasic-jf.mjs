@@ -8,6 +8,9 @@
  * the reader does not model stops the reading, by name, at the instruction. It never guesses: a listing
  * that quietly skipped an instruction would be believed.
  *
+ * A script's first instruction is the lock's declaration, `VER JF 3`, and it is read back as the VERSION
+ * line. A script that declares no version, or another one, is not read: this reader reads JF revision 3.
+ *
  * A covenant is read by its parts: the pushes at its head are its DIM fields; its frame and rebuild are
  * found by laying them down again for that layout, and must match byte for byte; what lies between is
  * the program. Variables come back named by their address (`v24`) unless the names are supplied; the
@@ -34,7 +37,9 @@ export function disassemble(b) {
   let i = 0
   while (i < b.length) {
     const at = i, op = b[i++]
-    if (at === 0 && op === JF_RESERVED0) throw new Error('a DEFS header: stdForth functions, which this reader does not read')
+    // a DEFS header opens the script, or follows the lock's declaration
+    if (op === JF_RESERVED0 && (at === 0 || (at === 5 && out[0]?.name === 'VER')))
+      throw new Error('a DEFS header: stdForth functions, which this reader does not read')
     if (op <= JF_PUSH_MAX) {
       if (i + op > b.length) throw new Error(`a push past the end, at ${at}`)
       out.push({ at, size: 1 + op, name: 'PUSH', data: b.slice(i, i + op) }); i += op; continue
@@ -64,6 +69,8 @@ export function disassemble(b) {
       out.push({ at, size: 3, name, arg: at + 3 + off }); i += 2; continue
     }
     if (name === 'CALL') { out.push({ at, size: 3, name, arg: Number(u(i, 2)) }); i += 2; continue }
+    // the lock's declaration: arg is the version it declares, an nVersion
+    if (name === 'VER') { out.push({ at, size: 5, name, arg: Number(u(i, 4)) }); i += 4; continue }
     if (U8.has(name)) { out.push({ at, size: 2, name, arg: Number(u(i, 1)) }); i++; continue }
     if (name === '(ABORT")') {
       const n = Number(u(i, 1)); i++
@@ -74,11 +81,18 @@ export function disassemble(b) {
   return out
 }
 
+/** A declared version as the assembler writes it, `JF 3`; one whose family is not two of A to Z and 0 to 9, as its four bytes. */
+const versionText = v => {
+  const c0 = (v >>> 16) & 0xff, c1 = v >>> 24, legal = c => (c >= 0x41 && c <= 0x5a) || (c >= 0x30 && c <= 0x39)
+  return legal(c0) && legal(c1) ? `${String.fromCharCode(c0, c1)} ${v & 0xffff}` : `&H${HEX([v & 0xff, (v >>> 8) & 0xff, c0, c1])}`
+}
+
 /** The instructions as text, one per line, with their offsets — the layer beneath the BASIC. */
 export function jfListing(b) {
   return disassemble(b).map(x => {
     const arg = x.data ? (x.name === '(ABORT")' ? JSON.stringify(new TextDecoder().decode(x.data)) : `&H${HEX(x.data)}`)
-      : x.value !== undefined ? String(x.value) : x.arg !== undefined ? (REL16.has(x.name) ? `→ ${x.arg}` : String(x.arg)) : ''
+      : x.value !== undefined ? String(x.value) : x.name === 'VER' ? versionText(x.arg)
+      : x.arg !== undefined ? (REL16.has(x.name) ? `→ ${x.arg}` : String(x.arg)) : ''
     return `${String(x.at).padStart(5)}  ${x.name === 'NUM' ? '' : x.name}${x.name === 'NUM' || !arg ? arg : ' ' + arg}`
   }).join('\n')
 }
@@ -320,9 +334,10 @@ const fieldValue = (f, data) => f.bytes ? [...data] : [...data].reverse().reduce
 
 /**
  * The covenant in a script, if there is one: its head pushes, the binding that follows them, and a frame
- * and rebuild that are byte for byte what the compiler lays down for that layout.
+ * and rebuild that are byte for byte what the compiler lays down for that layout. `ins` is the instructions
+ * after the declaration; `version` is the VERSION line read from it.
  */
-function readCovenant(bytes, ins, opts) {
+function readCovenant(bytes, ins, opts, version) {
   let n = 0
   while (ins[n]?.name === 'PUSH' && ins[n].data.length >= 1 && ins[n].data.length <= JF_PUSH_MAX) n++
   if (n === 0) return null
@@ -370,7 +385,7 @@ function readCovenant(bytes, ins, opts) {
       return {
         covenant: true, layout, stoppedAt,
         state: Object.fromEntries(layout.map((f, i) => [f.name, fieldValue(f, ins[i].data)])),
-        lines: [`VERSION JF ${JF_REVISION}`, ...layout.map(f => `DIM ${f.name}${f.bytes ? '$' : '%'}${f.width}`),
+        lines: [version, ...layout.map(f => `DIM ${f.name}${f.bytes ? '$' : '%'}${f.width}`),
           "REM  rules 1 to 4 are the frame: the owner's signature, value + 1 and nSequence, the script rebuilt", ...m.lines],
       }
     }
@@ -388,14 +403,24 @@ function readCovenant(bytes, ins, opts) {
  * @returns {{ lines: string[], covenant: boolean, leave: string[], stack: string[], state?: object, stoppedAt?: string }}
  */
 export function unbasic(bytes, opts = {}) {
-  const lines = [`VERSION JF ${JF_REVISION}`]
   if (opts.nVersion !== undefined && opts.nVersion >>> 0 !== JF_NVERSION) {
     return { lines: [], covenant: false, leave: [], stack: [],
       stoppedAt: `the entry names version 0x${(opts.nVersion >>> 0).toString(16)}, and this reader reads JF revision ${JF_REVISION} (0x${JF_NVERSION.toString(16)})` }
   }
+  // the lock's declaration, VER and the four bytes of the version its code is written for, is the VERSION line
+  const declared = bytes.length >= 5 && bytes[0] === JF_WORD.VER ? (bytes[1] | (bytes[2] << 8) | (bytes[3] << 16) | (bytes[4] << 24)) >>> 0 : null
+  if (declared === null) {
+    return { lines: [], covenant: false, leave: [], stack: [],
+      stoppedAt: 'the script declares no version: a lock starts with VER and the version its code is written for' }
+  }
+  if (declared !== JF_NVERSION) {
+    return { lines: [], covenant: false, leave: [], stack: [],
+      stoppedAt: `the script declares ${versionText(declared)} (0x${declared.toString(16)}), and this reader reads JF revision ${JF_REVISION} (0x${JF_NVERSION.toString(16)})` }
+  }
+  const lines = [`VERSION ${versionText(declared)}`]
   let ins
-  try { ins = disassemble(bytes) } catch (e) { return { lines, covenant: false, leave: [], stack: [], stoppedAt: e.message } }
-  const cov = readCovenant(bytes, ins, opts)
+  try { ins = disassemble(bytes).slice(1) } catch (e) { return { lines, covenant: false, leave: [], stack: [], stoppedAt: e.message } }
+  const cov = readCovenant(bytes, ins, opts, lines[0])
   if (cov) return { ...cov, leave: [], stack: [] }
 
   // a program: what is on the stack is bound to variables first, then the program, then what it leaves

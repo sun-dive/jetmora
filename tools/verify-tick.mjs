@@ -49,6 +49,9 @@ const sig0F = [...HERE_W, S(0), ...HERE_W, S(0), ...HERE_W, S(0), W('CHECKSIG'),
 const sig0 = [S(0), S(0), S(0), S(0), S(0), S(0), W('CHECKSIG'), W('DROP')]   // an empty-span CHECKSIG: counted, no maths
 const many = (n, b) => Array.from({ length: n }, () => b).flat()
 const pushes = n => Array.from({ length: n }, () => push([7])).flat()
+/** The lock's declaration, VER JF 3: every lock judged here starts with it, as the host requires (CovenantThread::judge) */
+const DECLARATION = [W('VER'), 3, 0, 0x4a, 0x46]
+const declared = lock => [...DECLARATION, ...lock]
 
 // a secp256k1 signature over a digest whose first byte is 0, so the 31 bytes after it are the same number
 const D = BigInt('0x' + Buffer.from(sha256(Buffer.from('a test key'))).toString('hex')), PUB = ecdsa?.publicKey(D)
@@ -78,9 +81,16 @@ const CASES = [
   ['a push cut short', [5, 1, 2], [W('TRUE')], false],
   ['STR8 cut short', [JF_LIT.STR8, 9, 1], [W('TRUE')], false],
   /* ★ Rule 2 alone. The unlocking script pushes two bytes that happen to be TRUE EXIT. The lock drops the
-     push and branches back 6 bytes. Joined as one script, that lands on those bytes, runs them, and leaves
-     one TRUE. As a separate run, there is nothing before the lock to land on. */
-  ['★ the lock jumps back into the unlocking script\'s bytes', [2, W('TRUE'), W('EXIT')], [W('2DROP'), W('BRANCH'), ...le16(-6 & 0xffff)], false],
+     push and branches back 11 bytes, past its own declaration. Joined as one script, that lands on those bytes,
+     runs them, and leaves one TRUE. As a separate run, there is nothing before the lock to land on. */
+  ['★ the lock jumps back into the unlocking script\'s bytes', [2, W('TRUE'), W('EXIT')], [W('2DROP'), W('BRANCH'), ...le16(-11 & 0xffff)], false],
+  /* ★ The lock's declaration: stepped over at the start of the lock and on a branch back to it, refused anywhere
+     else. This lock branches back to offset 0 until three items are held, then adds them. */
+  ['a branch back to the declaration steps over it: a loop of three, then 3', [],
+    [S(1), W('DEPTH'), S(3), W('<'), W('0BRANCH'), ...le16(3), W('BRANCH'), ...le16(-15 & 0xffff), W('+'), W('+')], true],
+  ['VER a second time, after the declaration: refused', [], [...DECLARATION, W('TRUE')], false],
+  ['VER in a function: refused', [], [...defs([[0, [...DECLARATION, W('TRUE')], 0, 1]]), W('INVOKE'), 0], false],
+  ['...the same function without it: accepted', [], [...defs([[0, [W('TRUE')], 0, 1]]), W('INVOKE'), 0], true],
   ['the limit: a loop within 500,000 instructions', [], loop(400000), true],
   ['the limit: a loop past 500,000 instructions', [], loop(600000), false],
   ['the limit: a lock longer than 500,000 bytes', [], [...new Array(166667).fill([2, 0, 0]).flat(), W('TRUE')], false],
@@ -220,13 +230,15 @@ const SLOW = [
   ['ROT, 2SWAP and TUCK NIP, 80,000 times each on a 997-item stack', [], [S(1), ...doLoop(996, [W('DUP')]), ...doLoop(80000, [W('ROT')]), ...doLoop(80000, [W('2SWAP')]), ...doLoop(40000, [W('TUCK'), W('NIP')]), ...doLoop(996, [W('DROP')])], true],
 ]
 
-const runPhp = cases => execFileSync('php', [join(HERE, 'jf-run.php'), '0'], {
-  input: JSON.stringify(cases.map(([, u, l]) => ({ unlocking: hex(u), script: hex(l), preimage: null }))), maxBuffer: 1 << 28,
+/** Each case's lock is judged with the declaration at its head; a compiled lock carries its own, and is judged as it is */
+const asCompiled = lock => lock
+const runPhp = (cases, lay = declared) => execFileSync('php', [join(HERE, 'jf-run.php'), '0'], {
+  input: JSON.stringify(cases.map(([, u, l]) => ({ unlocking: hex(u), script: hex(lay(l)), preimage: null }))), maxBuffer: 1 << 28,
 }).toString().trim().split('\n').map(l => JSON.parse(l))
-const judge = async cases => {
-  const php = runPhp(cases)
+const judge = async (cases, lay = declared) => {
+  const php = runPhp(cases, lay)
   for (const [k, [what, u, l, want]] of cases.entries()) {
-    const v = await verifyTick({ unlocking: Uint8Array.from(u), lock: Uint8Array.from(l), preimage: null, crypto })
+    const v = await verifyTick({ unlocking: Uint8Array.from(u), lock: Uint8Array.from(lay(l)), preimage: null, crypto })
     const js = v.stack ? { accepted: v.accepted, stack: v.stack.map(String) } : { accepted: false, error: hex(v.errorBytes) }
     const same = JSON.stringify(js) === JSON.stringify(php[k])
     ok(same && js.accepted === want, `${what} — ${js.accepted ? 'accepted' : 'refused'}${same ? '' : ` · PHP ${JSON.stringify(php[k]).slice(0, 80)} · JS ${JSON.stringify(js).slice(0, 80)}`}`)
@@ -243,7 +255,7 @@ console.log('\n── a compiled hash-lock, against pushes of every length aroun
   const lock = [...compileBasic(`VERSION JF 3\nVERIFY SAMEBYTES(SHA256(k), &H${H})\nx = 1`, { stack: ['k$'], leave: ['x'] }).bytes]
   const lens = [0, 1, 32, 4640, ...Array.from({ length: 201 }, (_, k) => 60796 + k), 65500, 65535, 65536]
   const sweep = lens.map(n => [`${n} zero bytes`, push(new Array(n).fill(0)), lock, false])
-  const php = runPhp(sweep)
+  const php = runPhp(sweep, asCompiled)
   let agree = 0, accepted = 0
   for (const [k, [, u]] of sweep.entries()) {
     const v = await verifyTick({ unlocking: Uint8Array.from(u), lock: Uint8Array.from(lock), preimage: null, crypto })
@@ -252,13 +264,13 @@ console.log('\n── a compiled hash-lock, against pushes of every length aroun
   }
   ok(agree === sweep.length && accepted === 0, `${sweep.length} lengths from 0 to 65,536, 60,796 to 60,996 among them: none accepted, PHP and JS agree (${agree})`)
   await judge([['the secret itself: accepted', push([...Buffer.from('the secret')]), lock, true],
-               ['one wrong byte: refused', push([...Buffer.from('the secreT')]), lock, false]])
+               ['one wrong byte: refused', push([...Buffer.from('the secreT')]), lock, false]], asCompiled)
 }
 
 console.log('\n── one instruction, about one instruction\'s time ──')
 for (const c of SLOW) {
   let t = performance.now(); runPhp([c]); const tp = performance.now() - t
-  t = performance.now(); await verifyTick({ unlocking: Uint8Array.from(c[1]), lock: Uint8Array.from(c[2]), preimage: null, crypto }); const tj = performance.now() - t
+  t = performance.now(); await verifyTick({ unlocking: Uint8Array.from(c[1]), lock: Uint8Array.from(declared(c[2])), preimage: null, crypto }); const tj = performance.now() - t
   ok(tp < 3000 && tj < 3000, `${c[0]} — PHP ${tp.toFixed(0)} ms, JS ${tj.toFixed(0)} ms (under 3,000 each)`)
 }
 await judge(SLOW)
@@ -271,17 +283,20 @@ for (const [what, lock, without] of [
 ]) {
   const { [without]: _, ...less } = crypto
   let thrown = null
-  try { await verifyTick({ unlocking: new Uint8Array(0), lock: Uint8Array.from(lock), preimage: null, crypto: less }) } catch (e) { thrown = e }
+  try { await verifyTick({ unlocking: new Uint8Array(0), lock: Uint8Array.from(declared(lock)), preimage: null, crypto: less }) } catch (e) { thrown = e }
   ok(thrown instanceof JfHostError, `${what} — ${thrown ? thrown.constructor.name : 'a verdict'}`)
 }
 
-// ★ the same two attacks run as one joined script, to show what each rule stops
+// ★ the same two attacks run as one joined script, to show what each rule stops. VER is valid only as a lock's first
+//   instruction, and a joined script's first is the unlocking script's, so the declaration stands as five CHARS, a word
+//   that does nothing: the bytes are the ones judged above, each where it was
 console.log('\n── the two attacks, run as one joined script ──')
+const joined = (u, l) => [...u, ...DECLARATION.map(() => W('CHARS')), ...l]
 for (const name of ['★ the attack: TRUE EXIT as the unlocking script', '★ the lock jumps back into the unlocking script\'s bytes']) {
   const [what, u, l] = CASES.find(c => c[0] === name)
   const vm = new InterpreterJF()
   let accepted
-  try { const st = await vm.run(Uint8Array.from([...u, ...l])); accepted = st.length === 1 && st[0] !== 0n } catch { accepted = false }
+  try { const st = await vm.run(Uint8Array.from(joined(u, l))); accepted = st.length === 1 && st[0] !== 0n } catch { accepted = false }
   ok(accepted, `joined, "${what.replace('★ ', '')}" is ACCEPTED — verifyTick refuses it`)
 }
 ok(TICK_LIMITS.maxOps === 500000 && TICK_LIMITS.memSize === 65536 && TICK_MAX_SCRIPT === 500000 && TICK_LIMITS.maxItems === 1000

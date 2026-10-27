@@ -53,6 +53,12 @@ throws(fn() => interpreter_for(0),        'and legacy 0 dispatches nowhere');
 
 echo "\n── dispatch ──\n";
 throws(fn() => interpreter_for(103), 'legacy 103 has no interpreter and says why');
+// in words about the version it was given: the registry knows nothing of what handed it the version
+$said = null;
+try { interpreter_for(103); } catch (VersionError $e) { $said = $e->getMessage(); }
+ok($said === 'legacy version 103: no interpreter is registered for legacy versions. ⚠ Legacy versions predate the family '
+   . 'scheme and keep their own semantics (§6b): they are not reinterpretable as a family.',
+   "the words name the version and nothing that handed it over: $said");
 $bt = interpreter_for(version_build('BT', 1));
 ok($bt instanceof InterpreterBT, 'BT rev 1 dispatches to InterpreterBT');
 $jf = interpreter_for(version_build('JF', 3));
@@ -101,6 +107,7 @@ $what = function (callable $f): string {
   try { $v = $f(); return is_array($v) ? json_encode($v) : get_class($v); } catch (Throwable $e) { return get_class($e); }
 };
 $push = fn(string $b): string => chr(strlen($b)) . $b;
+$ver = "\xd1\x03\x00\x4a\x46";                          // the lock's declaration, VER JF 3, which every lock starts with
 $der = "\x30\x06\x02\x01\x01\x02\x01\x01";              // r = 1, s = 1: strict DER, so the check goes on to the curve
 // verify-jf.php's pinned vector, minted with openssl as an oracle: a signature, its key and its digest
 [$sig, $pub, $dig] = array_map('hex2bin', [
@@ -111,17 +118,17 @@ echo json_encode([
   'gmp'      => extension_loaded('gmp'),
   'sodium'   => extension_loaded('sodium'),
   'dispatch' => $what(fn() => interpreter_for(version_build('JF', 3))),
-  'tick'     => $what(fn() => InterpreterJF::verifyTick('', "\x51", null)),
-  'nocurve'  => $what(fn() => InterpreterJF::verifyTick('', str_repeat("\x49", 6) . chr(JF_WORD['CHECKSIG']), null)),
-  'checksig' => $what(fn() => InterpreterJF::verifyTick('', $push($der) . $push(str_repeat("\x02", 33))
+  'tick'     => $what(fn() => InterpreterJF::verifyTick('', $ver . "\x51", null)),
+  'nocurve'  => $what(fn() => InterpreterJF::verifyTick('', $ver . str_repeat("\x49", 6) . chr(JF_WORD['CHECKSIG']), null)),
+  'checksig' => $what(fn() => InterpreterJF::verifyTick('', $ver . $push($der) . $push(str_repeat("\x02", 33))
                                                        . $push(str_repeat("\x01", 32)) . chr(JF_WORD['CHECKSIG']), null)),
-  'signed'   => $what(fn() => InterpreterJF::verifyTick($push($sig), $push($pub) . $push($dig) . chr(JF_WORD['CHECKSIG']), null)),
-  'ed25519'  => $what(fn() => InterpreterJF::verifyTick('', $push(str_repeat("\x00", 64)) . $push(str_repeat("\x00", 32))
+  'signed'   => $what(fn() => InterpreterJF::verifyTick($push($sig), $ver . $push($pub) . $push($dig) . chr(JF_WORD['CHECKSIG']), null)),
+  'ed25519'  => $what(fn() => InterpreterJF::verifyTick('', $ver . $push(str_repeat("\x00", 64)) . $push(str_repeat("\x00", 32))
                                                        . $push("\x01") . chr(JF_WORD['ED25519-CHECKSIG']), null)),
   // RFC 8032 section 7.1, TEST 2: its signature, key and one-byte message
   'edsigned' => $what(fn() => InterpreterJF::verifyTick($push(hex2bin('92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da'
                                                        . '085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00')),
-                                                       $push(hex2bin('3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c'))
+                                                       $ver . $push(hex2bin('3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c'))
                                                        . $push("\x72") . chr(JF_WORD['ED25519-CHECKSIG']), null)),
 ]);
 PHP;

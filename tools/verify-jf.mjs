@@ -142,6 +142,8 @@ const token = depthOk => {
 }
 const program = () => {
   const out = []
+  // sometimes the lock's declaration first, VER JF 3, which the engine steps over; a DEFS header follows it
+  if (rnd() < 0.15) out.push(W.VER, 3, 0, 0x4a, 0x46)
   // sometimes a DEFS header with functions, called by INVOKE
   if (rnd() < 0.25) {
     const defs = Array.from({ length: int(1, 2) }, () => {

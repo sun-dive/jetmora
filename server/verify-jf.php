@@ -328,6 +328,29 @@ foreach ([0xd0, 0xd2, 0xd3] as $b) {
           null, sprintf('unknown opcode 0x%02x', $b)];
 }
 
+// ── the lock's declaration: VER and its version ──────────────────────────────────────────────────────
+// Every lock starts with `VER JF 3`, D1 03 00 4A 46, before its DEFS header. The host reads it and runs that version's
+// engine (CovenantThread::judge, graded by tools/verify-judge.mjs); the engine steps over it, at the start and on a
+// branch back to it, and refuses VER anywhere else.
+const VER_ELSEWHERE = 'VER declares the version a lock is written for, and is valid only as its first instruction';
+$T[] = ['ver.bytes', '', null, null, null, fn() => jf_asm('VER JF 3') === "\xd1\x03\x00\x4a\x46"];
+t('ver.first',          'VER JF 3 7',                    [7]);
+t('ver.onlyAStatement', 'VER ZZ 9 7',                    [7]);      // which engine runs is the host's: this one reads no version from it
+$T[] = ['ver.beforeDefs', jf_asm('VER JF 3') . $D1 . jf_asm('10 20 INVOKE#0'), [30], null];
+// a branch back to offset 0 steps over it again: the loop runs three times
+t('ver.branchBack',     'top: VER JF 3 1 DEPTH 3 < 0BRANCH>end BRANCH>top end:', [1, 1, 1]);
+t('ver.executeZero',    'VER JF 3 1 DEPTH 3 < 0BRANCH>end 0 EXECUTE end:',      [1, 1, 1]);
+// ...and lands on the DEFS header after it, which is refused as it is today when a branch reaches it
+$p = jf_asm('VER JF 3') . $D1;
+$T[] = ['ver.branchBackToDefs', $p . chr(JF_WORD['BRANCH']) . pack('v', -(strlen($p) + 3) & 0xffff), null, 'is reserved and must not appear'];
+tf('ver.notFirst',      '7 VER JF 3',                    VER_ELSEWHERE);
+tf('ver.twice',         'VER JF 3 VER JF 3 7',           VER_ELSEWHERE);
+$T[] = ['ver.afterDefs', $D1 . jf_asm('VER JF 3 10 20 INVOKE#0'), null, VER_ELSEWHERE];
+tf('ver.inFunction',    'INVOKE#0',                      VER_ELSEWHERE, jf_defs([[0, 1, 'VER JF 3 7']]));
+tf('ver.laterInFunction','INVOKE#0',                     VER_ELSEWHERE, jf_defs([[0, 1, '7 VER JF 3']]));
+$T[] = ['ver.alone',     "\xd1",                         null, 'truncated operand'];
+$T[] = ['ver.short',     "\xd1\x03\x00\x4a",             null, 'truncated operand'];
+
 // ── ★★★ THE ORDERING IS DERIVABLE, AND THAT IS A PROPERTY WORTH PINNING ─────────────────────────────
 // §10.5e: *"the initial fill is alphabetical."* ⚠ That was true of the BANKS and was NOT true of the
 // single-byte set until 7 Sept — nine of fifteen groups were in "natural" order (DUP DROP SWAP OVER

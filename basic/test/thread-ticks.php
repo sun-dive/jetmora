@@ -12,7 +12,8 @@
 //     version?: n,   the entry's nVersion, JF revision 3 when absent
 //     tamper?: bool  the successor's value changed after the tick was signed }
 // and writes, per case, the preimage, the unlocking script, the verdict of CovenantThread::judge, and asSigned:
-// verifyTick's verdict on the preimage that was signed. A host that cannot judge the version gives cannotJudge.
+// verifyTick's verdict on the preimage that was signed. A tick this host cannot judge (its lock declares no version, or
+// one this host does not serve) gives cannotJudge.
 // It writes the tick as judged too: entry (its bytes), lock (the tip's script) and value (its 8 bytes), for a judge
 // that is given only those (tools/thread.mjs).
 // A script given as "hand" is the 7 Sept counter, assembled from verify-wired.php itself.
