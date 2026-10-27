@@ -540,11 +540,11 @@ export class InterpreterJF {
       case 'PREIMAGE': { this.covenantOnly('PREIMAGE', covenant); const d = this.popInt()
         if (this.preimage === null) throw new JfScriptError('PREIMAGE: no transaction context')
         this.write(d, this.preimage); this.push(d); this.pushI(this.preimage.length); return i }
-      case 'TXVERSION': case 'PREVOUTS-HASH': case 'SEQUENCES-HASH': case 'OUTPOINT':
+      case 'PREVOUTS-HASH': case 'SEQUENCES-HASH': case 'OUTPOINT':
       case 'SCRIPTCODE': case 'TXVALUE': case 'NSEQUENCE': case 'OUTPUTS-HASH': case 'LOCKTIME':
         this.covenantOnly(jf_op_name(op), covenant)
         throw new JfScriptError(`${jf_op_name(op)}: not built yet — derive it from PREIMAGE with SUBSTR`)
-      case 'VER': case 'VERIF': case 'VERNOTIF':
+      case 'VER':
         throw new JfScriptError(`${jf_op_name(op)}: version words are §6b and not built yet`)
 
       // ── INVOKE: the tier boundary ──

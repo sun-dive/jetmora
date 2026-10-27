@@ -74,10 +74,9 @@ const JF_WORD = [
   // byte strings (9)
   'BIN2NUM'=>0xbe, 'BYTES='=>0xbf, 'CAT'=>0xc0, 'LEFT'=>0xc1, 'NUM2BIN'=>0xc2, 'RIGHT'=>0xc3,
   'SIZE'=>0xc4, 'SPLIT'=>0xc5, 'SUBSTR'=>0xc6,
-  // transaction (13)
+  // transaction (10; 0xd0 0xd2 0xd3 unassigned)
   'LOCKTIME'=>0xc7, 'NSEQUENCE'=>0xc8, 'OUTPOINT'=>0xc9, 'OUTPUTS-HASH'=>0xca, 'PREIMAGE'=>0xcb,
-  'PREVOUTS-HASH'=>0xcc, 'SCRIPTCODE'=>0xcd, 'SEQUENCES-HASH'=>0xce, 'TXVALUE'=>0xcf,
-  'TXVERSION'=>0xd0, 'VER'=>0xd1, 'VERIF'=>0xd2, 'VERNOTIF'=>0xd3,
+  'PREVOUTS-HASH'=>0xcc, 'SCRIPTCODE'=>0xcd, 'SEQUENCES-HASH'=>0xce, 'TXVALUE'=>0xcf, 'VER'=>0xd1,
   // crypto (11)
   'CHECKMULTISIG'=>0xd4, 'CHECKMULTISIGVERIFY'=>0xd5, 'CHECKSIG'=>0xd6, 'CHECKSIGVERIFY'=>0xd7,
   'ED25519-CHECKSIG'=>0xd8, 'ED25519-CHECKSIGVERIFY'=>0xd9, 'HASH160'=>0xda, 'HASH256'=>0xdb,
@@ -99,9 +98,12 @@ const JF_SECTION = [
   'locals runtime' => ['(FRAME)', '(LOCAL!)', '(LOCAL@)', '(UNFRAME)'],
   'abort runtime' => ['(ABORT")'],
   'byte strings' => ['BIN2NUM', 'BYTES=', 'CAT', 'LEFT', 'NUM2BIN', 'RIGHT', 'SIZE', 'SPLIT', 'SUBSTR'],
-  'transaction' => ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE', 'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'TXVERSION', 'VER', 'VERIF', 'VERNOTIF'],
+  'transaction' => ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE', 'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'VER'],
   'crypto' => ['CHECKMULTISIG', 'CHECKMULTISIGVERIFY', 'CHECKSIG', 'CHECKSIGVERIFY', 'ED25519-CHECKSIG', 'ED25519-CHECKSIGVERIFY', 'HASH160', 'HASH256', 'RIPEMD160', 'SHA1', 'SHA256'],
 ];
+
+/** bytes inside the word fill that no word holds: each is refused as an unknown opcode. */
+const JF_UNASSIGNED = [0xd0, 0xd2, 0xd3];
 
 /** first escape byte; 0xff is the PLANE escape and is never a wordset. */
 const JF_ESC0 = 0xf0;
@@ -378,4 +380,4 @@ function jf_op_name(int $n): string {
 /** bank escape => wordset, or null when the byte is not an escape. */
 function jf_bank_name(int $esc): ?string { return JF_BANK[$esc] ?? null; }
 
-// generated 2026-10-20
+// generated 2026-10-26

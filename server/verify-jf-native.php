@@ -11,8 +11,11 @@
 //     --engine   grade this copy of the engine instead of the one beside this file. Its ops-jf.php, secp256k1.php
 //                and ed25519.php must be this directory's: a link to each will do.
 //
-// The old engine is read from git and loaded beside the new one, its classes renamed; ops-jf.php and secp256k1.php
-// are shared, so the signatures part grades the engine's signature words, and verify-secp256k1-native.php the curve.
+// The old engine is read from git and loaded beside the new one, its classes renamed, with its own opcode table, the
+// one at f4f05d1, under renamed names. The table has changed since only as DROPPED declares, and the two engines'
+// results differ only as DECLARED says.
+// secp256k1.php is shared, so the signatures part grades the engine's signature words, and verify-secp256k1-native.php
+// the curve.
 // The old engine checks Ed25519 with ext/sodium, so its ED25519-CHECKSIG verdicts are sodium's, and the new engine's
 // come from ed25519.php, which verify-ed25519.php grades. The old engine computes with ext/gmp, so it is the oracle only
 // where gmp is loaded and the revision is in this repository's history. Without it the case-by-case comparison is
@@ -29,8 +32,21 @@ declare(strict_types=1);
 
 const REV = 'f4f05d192bbd44e47f22447c9b4b51a1f8215abb';
 const DEFAULT_PROGRAMS = 60000, DEFAULT_SEED = 20261024;
-/** sha256 over the cells part at the default programs and seed, as the old engine ran it: each case, then its result. */
-const CELLS_DIGEST = 'bbd0171fdff59380f54641f06e3f5725243f99ed85dbe294d4c86302f29c8203';
+/** sha256 over the cells part at the default programs and seed: each case, then the old engine's result with DECLARED
+ *  applied. */
+const CELLS_DIGEST = '36c050244dfa9dbf2e518c85a547d6215148322d81fc3711d63864422e3bd2df';
+/** What the opcode table has changed since REV: these words were dropped from revision 3, their bytes left unassigned,
+ *  and nothing else moved. */
+const DROPPED = ['TXVERSION' => 0xd0, 'VERIF' => 0xd2, 'VERNOTIF' => 0xd3];
+/** What that changes in a result: the old engine's refusal on a dropped word's byte, and revision 3's on the same byte,
+ *  the unknown-opcode refusal. Nothing else may differ. */
+const DECLARED = [
+  'TXVERSION: not built yet — derive it from PREIMAGE with SUBSTR' => 'unknown opcode 0xd0',
+  'TXVERSION is covenant-tier only: a stdForth function computes from what it was given, and reaches for nothing else'
+    => 'unknown opcode 0xd0',
+  'VERIF: version words are §6b and not built yet' => 'unknown opcode 0xd2',
+  'VERNOTIF: version words are §6b and not built yet' => 'unknown opcode 0xd3',
+];
 
 $plain = array_values(array_filter(array_slice($argv, 1), fn($a) => !str_starts_with($a, '--')));
 $opt = function (string $name) use ($argv): ?string {
@@ -68,15 +84,42 @@ $noOracle = null;                                                  // why the ol
 if (!extension_loaded('gmp')) $noOracle = 'the old engine computes with ext/gmp, which this PHP has not loaded';
 elseif (($old = git_show('server/interpreter-jf.php')) === null) $noOracle = 'revision ' . substr(REV, 0, 7) . ' is not in this repository';
 else {
-  // the opcode table is shared, so it must be the one the old engine was written against
-  ok(git_show('server/ops-jf.php') === file_get_contents(__DIR__ . '/ops-jf.php'),
-     'ops-jf.php is the same as at ' . substr(REV, 0, 7) . ': both engines read one opcode table');
+  // the old engine reads the opcode table it was written against, f4f05d1's, its names renamed beside this one's
+  $tableNames = '/\b(JF_PUSH_MAX|JF_SMALL0|JF_SMALL_NEG1|JF_LIT|JF_WORD|JF_SECTION|JF_ESC0|JF_PLANE|JF_RESERVED0|JF_BANK|JF_BANK_WORD'
+              . '|JF_CORE_KIND|JF_PROMOTED|jf_op_name|jf_bank_name)\b/';
+  $oldTable = preg_replace('/^<\?php\s*/', '', (string)git_show('server/ops-jf.php'));
+  $oldTable = preg_replace_callback($tableNames, fn($m) => ($m[1][0] === 'J' ? 'OLD_' : 'old_') . $m[1], $oldTable, -1, $tableN);
+  eval($oldTable);
+  ok(oldTableIsDeclared(), 'ops-jf.php is ' . substr(REV, 0, 7) . "'s but for DROPPED: " . implode(', ', array_keys(DROPPED))
+     . ' gone, their bytes unassigned, every other name keeping its byte');
   $old = preg_replace('/^<\?php\s*/', '', $old);
   $old = str_replace('__DIR__', var_export(dirname(realpath($engine)), true), $old, $dirs);
   $old = preg_replace('/\b(InterpreterJF|JfScriptError|JfHostError|JfBankUnsupported)\b/', 'Old$1', $old, -1, $names);
   $old = preg_replace('/\bjf_stack_hash\b/', 'old_jf_stack_hash', $old);
-  ok($dirs === 2 && $names > 20, "the old engine loads beside the new one: its 2 requires shared, $names names renamed");
+  $old = preg_replace_callback($tableNames, fn($m) => ($m[1][0] === 'J' ? 'OLD_' : 'old_') . $m[1], $old, -1, $oldReads);
+  ok($dirs === 2 && $names > 20 && $tableN > 20 && $oldReads > 20,
+     "the old engine loads beside the new one: its 2 requires pointed here, $names names renamed, and it reads its own table ($oldReads uses)");
   eval($old);
+}
+
+/** The opcode table now is the old one with DROPPED taken out and their bytes declared unassigned, and nothing else. */
+function oldTableIsDeclared(): bool {
+  $words = array_diff_key(OLD_JF_WORD, DROPPED);
+  $sections = array_map(fn($ws) => array_values(array_diff($ws, array_keys(DROPPED))), OLD_JF_SECTION);
+  foreach (range(0, 255) as $b) if (!in_array($b, DROPPED, true) && old_jf_op_name($b) !== jf_op_name($b)) return false;
+  foreach (DROPPED as $b) if (jf_op_name($b) !== sprintf('JF_UNKNOWN_%02x', $b)) return false;
+  return array_intersect_key(OLD_JF_WORD, DROPPED) === DROPPED && JF_WORD === $words && JF_SECTION === $sections
+      && JF_UNASSIGNED === array_values(DROPPED)
+      && [JF_PUSH_MAX, JF_SMALL0, JF_SMALL_NEG1, JF_LIT, JF_ESC0, JF_PLANE, JF_RESERVED0, JF_BANK, JF_BANK_WORD, JF_CORE_KIND, JF_PROMOTED]
+     === [OLD_JF_PUSH_MAX, OLD_JF_SMALL0, OLD_JF_SMALL_NEG1, OLD_JF_LIT, OLD_JF_ESC0, OLD_JF_PLANE, OLD_JF_RESERVED0, OLD_JF_BANK,
+          OLD_JF_BANK_WORD, OLD_JF_CORE_KIND, OLD_JF_PROMOTED];
+}
+/** The old engine's result as revision 3 gives it: a refusal DECLARED names becomes revision 3's, anything else is kept. */
+function declared(string $outcome): string {
+  foreach (DECLARED as $was => $now)
+    foreach (['JfScriptError: ', 'refused | '] as $form)
+      if ($outcome === $form . $was) return $form . $now;
+  return $outcome;
 }
 if ($noOracle !== null) echo "  - no oracle: $noOracle. The case-by-case comparison is skipped, never counted as passed.\n";
 
@@ -115,12 +158,16 @@ function caseKey(array $c): string {
 $shown = fn(string $s): string => strlen($s) > 160 ? substr($s, 0, 160) . '...' : $s;
 
 /** Run every case of a part through both engines, or the new one alone with no oracle, and report. Returns the sha256
- *  over each case and the old engine's result: with no oracle, the new engine's. */
+ *  over each case and the old engine's result with DECLARED applied: with no oracle, the new engine's. */
 function grade(string $part, iterable $cases, ?string $noOracle, callable $shown): string {
-  $h = hash_init('sha256'); $n = $same = $faults = 0; $diffs = []; $kinds = ['stack' => 0, 'accepted' => 0, 'refused' => 0, 'error' => 0];
+  $h = hash_init('sha256'); $n = $same = $faults = $changed = 0; $diffs = []; $kinds = ['stack' => 0, 'accepted' => 0, 'refused' => 0, 'error' => 0];
   foreach ($cases as $c) {
     $new = outcome('InterpreterJF', $c);
-    $old = $noOracle === null ? outcome('OldInterpreterJF', $c) : $new;
+    if ($noOracle === null) {
+      $raw = outcome('OldInterpreterJF', $c); $old = declared($raw);
+      if ($old !== $raw) $changed++;
+    }
+    else $old = $new;
     $n++;
     hash_update($h, caseKey($c) . "\0" . $old . "\n");
     $kind = strtok($old, ' ');
@@ -132,7 +179,8 @@ function grade(string $part, iterable $cases, ?string $noOracle, callable $shown
   foreach ($diffs as [$c, $old, $new])
     printf("  ✗ differ  %s %s\n      old: %s\n      new: %s\n", $c[0], $shown(bin2hex($c[0] === 'tick' ? $c[1] . '|' . $c[2] : $c[1])),
            $shown(addcslashes($old, "\0..\37\177..\377")), $shown(addcslashes($new, "\0..\37\177..\377")));
-  if ($noOracle === null) ok($same === $n, "$part: $same of $n cases give the same verdict, stack and error text in both engines");
+  if ($noOracle === null) ok($same === $n, "$part: $same of $n cases give the same verdict, stack and error text in both engines, "
+                                          . "$changed of them through DECLARED");
   printf("    %d programs ended with a stack and %d with an error; %d ticks accepted and %d refused\n",
          $kinds['stack'], $kinds['error'], $kinds['accepted'], $kinds['refused']);
   if ($faults) echo "  ⚠ $part: the new engine faulted outside its own errors on $faults cases, a defect even where the old one did too\n";
@@ -437,9 +485,9 @@ echo "── cells: " . ($noOracle === null ? 'both engines, case by case' : 'th
 $digest = grade('cells', $counted(cellCases($programs, $seed), $nCells), $noOracle, $shown);
 $atDefault = $programs === DEFAULT_PROGRAMS && $seed === DEFAULT_SEED;
 if ($atDefault && $noOracle === null)
-  ok($digest === CELLS_DIGEST, "the old engine's results on the cells part are the ones recorded in CELLS_DIGEST (sha256 $digest)");
+  ok($digest === CELLS_DIGEST, "the old engine's results on the cells part, DECLARED applied, are the ones recorded in CELLS_DIGEST (sha256 $digest)");
 elseif ($atDefault)
-  ok($digest === CELLS_DIGEST, "$nCells cases: the new engine's results are the old engine's, by the recorded digest (sha256 $digest)");
+  ok($digest === CELLS_DIGEST, "$nCells cases: the new engine's results are the old engine's, DECLARED applied, by the recorded digest (sha256 $digest)");
 else echo "  - programs or seed differ from the defaults, so the recorded digest does not apply\n";
 printf("  %d cases, %.1f s\n", $nCells, (hrtime(true) - $t0) / 1e9);
 

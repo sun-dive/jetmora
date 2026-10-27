@@ -27,6 +27,17 @@ def table(pairs, indent='  ', width=100):
     return '\n'.join(out)
 
 
+def sections_with_holes(m):
+    """(section, words, unassigned bytes) in byte order: a hole belongs to the section whose run it falls in,
+    from the section's first byte up to the next section's first byte."""
+    code, secs = m['code'], m['sections']
+    out = []
+    for k, (name, ws) in enumerate(secs):
+        end = code[secs[k + 1][1][0]] if k + 1 < len(secs) else m['resv_at']
+        out.append((name, ws, [h for h in m['unassigned'] if code[ws[0]] < h < end]))
+    return out
+
+
 def main():
     m = jfmap.assign()
     code, banks = m['code'], m['banks']
@@ -72,8 +83,8 @@ def main():
     A('/** jetForth words: name => single byte. */')
     A('const JF_WORD = [')
     # ★ Emitted in byte order: the sections ARE the numbering (sections by category, alphabetical within).
-    for name, ws in m['sections']:
-        A(f'  // {name} ({len(ws)})')
+    for name, ws, holes in sections_with_holes(m):
+        A(f'  // {name} ({len(ws)}' + (f'; {" ".join(f"0x{h:02x}" for h in holes)} unassigned' if holes else '') + ')')
         A(table([(w, code[w]) for w in ws]))
     A('];')
     A('')
@@ -82,6 +93,9 @@ def main():
     for name, ws in m['sections']:
         A(f'  {q(name)} => [' + ', '.join(q(w) for w in ws) + '],')
     A('];')
+    A('')
+    A('/** bytes inside the word fill that no word holds: each is refused as an unknown opcode. */')
+    A('const JF_UNASSIGNED = [' + ', '.join(f'0x{h:02x}' for h in m['unassigned']) + '];')
     A('')
     A(f'/** first escape byte; 0x{m["plane"]:02x} is the PLANE escape and is never a wordset. */')
     A(f'const JF_ESC0 = 0x{m["esc0"]:02x};')
@@ -143,7 +157,7 @@ def main():
     open(OUT, 'w').write('\n'.join(L) + '\n')
     print(f'  ✅ {os.path.normpath(OUT)}')
     print(f'  {len(m["words"])} jetForth words · {len(m["allnames"])} stdForth words in '
-          f'{len(banks)} banks · {m["reserve"]} reserved')
+          f'{len(banks)} banks · {len(m["unassigned"])} unassigned · {m["reserve"]} reserved')
 
 
 def main_js():
@@ -167,6 +181,7 @@ def main_js():
     A('export const JF_LIT = ' + J({w: code[w] for w, _ in jfmap.LITFORMS}))
     A('export const JF_WORD = ' + J({w: code[w] for name, ws in m['sections'] for w in ws}))
     A('export const JF_SECTION = ' + J({name: ws for name, ws in m['sections']}))
+    A('export const JF_UNASSIGNED = ' + J(m['unassigned']))
     A(f'export const JF_ESC0 = 0x{m["esc0"]:02x}')
     A(f'export const JF_PLANE = 0x{m["plane"]:02x}')
     A(f'export const JF_RESERVED0 = 0x{m["resv_at"]:02x}')

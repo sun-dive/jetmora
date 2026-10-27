@@ -1,14 +1,15 @@
 // © 2026 sun-dive. Business Source License 1.1 — see LICENSE.
 //
 // Grade the JavaScript `JF` interpreter (tools/interpreter-jf.mjs) against the PHP one (server/interpreter-jf.php):
-//   1. the opcode table: tools/ops-jf.mjs must equal server/ops-jf.php, entry for entry
+//   1. the opcode table: tools/ops-jf.mjs must equal server/ops-jf.php, entry for entry, and both must be what
+//      tools/gen-ops-jf.py writes from tools/jfmap.py
 //   2. the PHP interpreter's own test cases (server/verify-jf.php --export), run here
 //   3. side by side: generated programs run through BOTH, and every stack and every refusal must be identical
 // A difference is a bug in one of them; a refusal PHP raises from outside the interpreter is a PHP fault, reported.
 //   node tools/verify-jf.mjs [programs=3000] [seed]
 import { execFileSync } from 'node:child_process'
 import { createHash, generateKeyPairSync, sign as nodeSign } from 'node:crypto'
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, mkdtempSync, rmSync, mkdirSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -56,11 +57,39 @@ const runPhp = cases => {
 
 // ── 1. the opcode table ──
 console.log('── 1. the opcode table: tools/ops-jf.mjs against server/ops-jf.php')
-const php = JSON.parse(execFileSync('php', ['-r', `require '${join(ROOT, 'server/ops-jf.php')}'; echo json_encode(['PUSH_MAX' => JF_PUSH_MAX, 'SMALL0' => JF_SMALL0, 'SMALL_NEG1' => JF_SMALL_NEG1, 'LIT' => JF_LIT, 'WORD' => JF_WORD, 'SECTION' => JF_SECTION, 'ESC0' => JF_ESC0, 'PLANE' => JF_PLANE, 'RESERVED0' => JF_RESERVED0, 'BANK' => (object)JF_BANK, 'BANK_WORD' => JF_BANK_WORD, 'CORE_KIND' => JF_CORE_KIND, 'PROMOTED' => JF_PROMOTED, 'NAMES' => array_map('jf_op_name', range(0, 255))]);`]).toString())
+const php = JSON.parse(execFileSync('php', ['-r', `require '${join(ROOT, 'server/ops-jf.php')}'; echo json_encode(['PUSH_MAX' => JF_PUSH_MAX, 'SMALL0' => JF_SMALL0, 'SMALL_NEG1' => JF_SMALL_NEG1, 'LIT' => JF_LIT, 'WORD' => JF_WORD, 'SECTION' => JF_SECTION, 'UNASSIGNED' => JF_UNASSIGNED, 'ESC0' => JF_ESC0, 'PLANE' => JF_PLANE, 'RESERVED0' => JF_RESERVED0, 'BANK' => (object)JF_BANK, 'BANK_WORD' => JF_BANK_WORD, 'CORE_KIND' => JF_CORE_KIND, 'PROMOTED' => JF_PROMOTED, 'NAMES' => array_map('jf_op_name', range(0, 255))]);`]).toString())
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
-for (const k of ['PUSH_MAX', 'SMALL0', 'SMALL_NEG1', 'LIT', 'WORD', 'SECTION', 'ESC0', 'PLANE', 'RESERVED0', 'BANK', 'BANK_WORD', 'CORE_KIND', 'PROMOTED'])
+for (const k of ['PUSH_MAX', 'SMALL0', 'SMALL_NEG1', 'LIT', 'WORD', 'SECTION', 'UNASSIGNED', 'ESC0', 'PLANE', 'RESERVED0', 'BANK', 'BANK_WORD', 'CORE_KIND', 'PROMOTED'])
   ok(same(OPS[`JF_${k}`], php[k]), `JF_${k} is the same in both`)
 ok(same(Array.from({ length: 256 }, (_, n) => OPS.jf_op_name(n)), php.NAMES), 'every byte has the same name in both')
+// ...and both are the generator's: run again from the map, in a copy of the three files it reads, it writes them
+// as they are, but for the date it stamps the PHP with. The map refuses an unassigned byte declared twice, or one
+// lying outside the word fill
+let python = true
+try { execFileSync('python3', ['--version'], { stdio: 'ignore' }) } catch { python = false }
+if (!python) console.log('  ⚠ python3 not found: the generator was not run, and the tables were not compared with what it writes')
+else {
+  const gen = mkdtempSync(join(tmpdir(), 'jf-gen-'))
+  try {
+    mkdirSync(join(gen, 'tools')); mkdirSync(join(gen, 'server'))
+    for (const f of ['gen-ops-jf.py', 'jfmap.py', 'forth2012.tsv']) copyFileSync(join(HERE, f), join(gen, 'tools', f))
+    const py = args => execFileSync('python3', ['-B', ...args], { cwd: gen, stdio: ['ignore', 'pipe', 'pipe'] })
+    py(['tools/gen-ops-jf.py']); py(['tools/gen-ops-jf.py', '--js'])
+    const undated = f => readFileSync(f, 'utf8').replace(/^\/\/ generated \d{4}-\d\d-\d\d$/m, '')
+    ok(undated(join(gen, 'server/ops-jf.php')) === undated(join(ROOT, 'server/ops-jf.php'))
+       && readFileSync(join(gen, 'tools/ops-jf.mjs'), 'utf8') === readFileSync(join(HERE, 'ops-jf.mjs'), 'utf8'),
+       'tools/gen-ops-jf.py, run again from tools/jfmap.py, writes server/ops-jf.php and tools/ops-jf.mjs as they are')
+    const refusal = holes => {
+      try { py(['-c', `import sys; sys.path.insert(0, 'tools'); import jfmap; jfmap.UNASSIGNED = ${JSON.stringify(holes)}; jfmap.assign()`]); return null }
+      catch (e) { return e.stderr?.toString() ?? String(e) }
+    }
+    for (const [holes, words] of [[[0xd0, 0xd0, 0xd2, 0xd3], 'declared twice'], [[0x10, 0xd0, 0xd2, 0xd3], 'outside the word fill'],
+                                  [[0x5b, 0xd0, 0xd2, 0xd3], 'outside the word fill'], [[0xd0, 0xd2, 0xd3, 0xdf], 'outside the word fill']]) {
+      const said = refusal(holes)
+      ok(said?.includes(words), `UNASSIGNED = [${holes.map(h => `0x${h.toString(16)}`).join(', ')}]: the map refuses it, ${words} (${said?.trim() ?? 'accepted'})`)
+    }
+  } finally { rmSync(gen, { recursive: true, force: true }) }
+}
 
 // ── 2. the PHP interpreter's own cases ──
 console.log('── 2. the PHP interpreter\'s own test cases, run in JavaScript')

@@ -319,6 +319,15 @@ tf('core.text',         'INVOKE#0', 'parses source text', $D11);
 $D12 = jf_defs([[0, 1, '[CORE:74]']]);            // `EVALUATE`
 tf('core.evaluateIsOpEval', 'INVOKE#0', 'this is OP_EVAL', $D12);
 
+// ── bytes no word holds ──────────────────────────────────────────────────────────────────────────────
+// 0xD0, 0xD2 and 0xD3 are unassigned in revision 3: each is refused as any unknown opcode is, in the
+// covenant tier and inside a stdForth function alike.
+foreach ([0xd0, 0xd2, 0xd3] as $b) {
+  $T[] = [sprintf('unassigned.0x%02x', $b), chr($b), null, sprintf('unknown opcode 0x%02x', $b)];
+  $T[] = [sprintf('unassigned.0x%02xInFunction', $b), chr(JF_RESERVED0) . "\x01\x00\x00\x00\x00\x01" . chr($b) . jf_asm('INVOKE#0'),
+          null, sprintf('unknown opcode 0x%02x', $b)];
+}
+
 // ── ★★★ THE ORDERING IS DERIVABLE, AND THAT IS A PROPERTY WORTH PINNING ─────────────────────────────
 // §10.5e: *"the initial fill is alphabetical."* ⚠ That was true of the BANKS and was NOT true of the
 // single-byte set until 7 Sept — nine of fifteen groups were in "natural" order (DUP DROP SWAP OVER
@@ -329,7 +338,8 @@ tf('core.evaluateIsOpEval', 'INVOKE#0', 'this is OP_EVAL', $D12);
 //   ASSIGNING alphabetically. Testing the key order tests the comment layout, not the protocol.
 // ⇒ 15 Sept, his rule: SECTIONS BY CATEGORY in the declared order, ALPHABETICAL WITHIN each section —
 //   a single alphabetical run puts the word a reader wants between unrelated ones. JF_SECTION carries
-//   the declared order; the bytes must follow it exactly, section after section, with no gaps.
+//   the declared order; the bytes must follow it exactly, section after section, with no gaps but the
+//   bytes JF_UNASSIGNED declares.
 $byCode = JF_WORD; asort($byCode);
 $W = array_keys($byCode);
 $promoted = array_values(array_filter($W, fn($w) => isset(JF_PROMOTED[$w])));
@@ -350,9 +360,18 @@ $T[] = ['order.ed25519InCrypto', '', null, null, null,
 $T[] = ['order.sectionsInDeclaredOrder', '', null, null, null,
         function () { $expect = []; foreach (JF_SECTION as $ws) foreach ($ws as $w) $expect[] = $w;
                       global $W; return $expect === $W; }];
+// ★ a run is contiguous once the unassigned bytes inside it are counted in: a declared hole, never a stray gap
+$filled = function (array $codes): array {
+  $c = array_merge($codes, array_filter(JF_UNASSIGNED, fn($b) => $b > $codes[0] && $b < $codes[count($codes) - 1]));
+  sort($c); return $c;
+};
 $T[] = ['order.runsAreContiguous', '', null, null, null,
-        fn() => $codesP === range($codesP[0], $codesP[0] + count($codesP) - 1)
-             && $codesO === range($codesO[0], $codesO[0] + count($codesO) - 1)];
+        fn() => ($p = $filled($codesP)) === range($p[0], $p[0] + count($p) - 1)
+             && ($o = $filled($codesO)) === range($o[0], $o[0] + count($o) - 1)];
+// ...and every unassigned byte lies inside a run, held by no word
+$T[] = ['order.unassignedInsideTheFill', '', null, null, null,
+        fn() => !array_intersect(JF_UNASSIGNED, JF_WORD)
+             && count(array_diff(JF_UNASSIGNED, $filled($codesP), $filled($codesO))) === 0];
 // ★ the two runs are SEPARATE because a promoted word has a bank slot that is reserved-illegal, and a
 //   jetmora word has no bank at all. The numbering shows that difference rather than hiding it.
 $T[] = ['order.promotedBeforeOwn', '', null, null, null,

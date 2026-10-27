@@ -171,7 +171,7 @@ signed heads, and inclusion and consistency proofs over HTTP.
 | `wallet/jetmora/thread.php` | `CovenantThread::judge`: builds the preimage from the tick and runs the interpreter its nVersion names |
 | `dispatch.php` | the nVersion → interpreter registry (§6b) |
 | `preimage.php` | the BIP143 preimage over an entry |
-| `interpreter-jf.php`, `ops-jf.php` | the JF interpreter that judges a tick (spec §3.3), and its opcode table |
+| `interpreter-jf.php`, `ops-jf.php` | the JF interpreter that judges a tick (spec §3.3), and its opcode table. 0xD0, 0xD2 and 0xD3 hold no word |
 | `ed25519.php` | Ed25519 verification by libsodium 1.0.22's rules, on every host: ED25519-CHECKSIG and 32-byte append keys never depend on the host's sodium |
 | `ed25519-sign.php` | Ed25519 keys and signatures for the signed heads and the jetmora wallet: byte for byte libsodium 1.0.22's, with no PHP extension. The secret path has the shape of ref10's constant-time code; the file says what PHP can and cannot promise |
 | `head.php` | 90-byte signed head. ⚠ Re-signing a size is impossible, not merely forbidden |

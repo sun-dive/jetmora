@@ -63,8 +63,12 @@ CRYPTO = ['CHECKMULTISIG', 'CHECKMULTISIGVERIFY', 'CHECKSIG', 'CHECKSIGVERIFY',
 #   other length is a failed check, never an error. CHECKSIG itself stays secp256k1: a word that
 #   mirrors a Bitcoin opcode keeps Bitcoin's meaning, and another scheme is another word.
 TX = ['LOCKTIME', 'NSEQUENCE', 'OUTPOINT', 'OUTPUTS-HASH', 'PREIMAGE',
-      'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'TXVERSION',
-      'VER', 'VERIF', 'VERNOTIF']
+      'PREVOUTS-HASH', 'SCRIPTCODE', 'SEQUENCES-HASH', 'TXVALUE', 'VER']
+# ★ UNASSIGNED: bytes inside the sectioned fill that no word holds. The fill steps over each one, so the words
+#   around it keep their numbers, and the interpreter refuses it as it refuses any unknown opcode.
+#   0xD0 TXVERSION, 0xD2 VERIF and 0xD3 VERNOTIF were dropped from revision 3 before it was completed (his call,
+#   26 Oct); their bytes were left empty so that nothing else moved.
+UNASSIGNED = [0xD0, 0xD2, 0xD3]
 # ⚠⚠ `BYTES=` WAS MISSING UNTIL 7 SEPT, and only writing a REAL COVENANT found it.
 #   A covenant's core operation is comparing a computed hash against one taken from the preimage.
 #   `=` compares CELLS; `BIN2NUM` on a 32-byte hash truncates to 64 bits. ⇒ There was NO WAY TO
@@ -201,9 +205,12 @@ def assign(src=SRC):
         ('crypto', sorted(CRYPTO))] + ([('appended', list(APPENDED))] if APPENDED else [])
     words = [w for _, ws in SECTIONS for w in ws]
     n_lit = len(SMALL_INTS) + len(LITFORMS)
+    holes = sorted(UNASSIGNED)
+    if len(set(holes)) != len(holes):
+        raise SystemExit(f'⛔ an unassigned byte is declared twice: {holes}')
     # ⚠⚠ THE RESERVE IS THE REMAINDER, NEVER A RANGE. Letting the push range absorb
     #    the slack is exactly how 0.1.3 ended up with no room to append.
-    reserve = 256 - (256 - ESC0) - N_PUSH - n_lit - len(words)
+    reserve = 256 - (256 - ESC0) - N_PUSH - n_lit - len(words) - len(holes)
     if reserve < 16:
         raise SystemExit(f'⛔ only {reserve} single-byte slots left in reserve')
 
@@ -213,7 +220,14 @@ def assign(src=SRC):
     for w, _ in LITFORMS:
         code[w] = at; at += 1
     for w in words:
+        while at in holes:
+            at += 1
         code[w] = at; at += 1
+    # a hole must lie BETWEEN two words: anywhere else it would leave no byte empty, and would only shift the words or
+    # the reserve
+    outside = [h for h in holes if not code[words[0]] < h < at]
+    if outside:
+        raise SystemExit(f'⛔ unassigned bytes outside the word fill: {[hex(h) for h in outside]}')
     assert at + reserve == ESC0, (at, reserve)
 
     banks = {}                                # escape byte -> (wordset, [words in slot order])
@@ -226,7 +240,7 @@ def assign(src=SRC):
     return {
         'code': code, 'words': words, 'sections': SECTIONS, 'promoted': set(hot), 'banks': banks,
         'sets': sets, 'dups': dups, 'allnames': allnames,
-        'n_push': N_PUSH, 'n_lit': n_lit, 'reserve': reserve,
+        'n_push': N_PUSH, 'n_lit': n_lit, 'reserve': reserve, 'unassigned': holes,
         'resv_at': at, 'esc0': ESC0, 'plane': PLANE,
     }
 
@@ -234,7 +248,7 @@ def assign(src=SRC):
 if __name__ == '__main__':
     m = assign()
     print(f"single byte : {m['n_push']} pushes + {m['n_lit']} literals + {len(m['words'])} words "
-          f"+ {m['reserve']} reserved + {256 - ESC0} escapes = 256")
+          f"+ {len(m['unassigned'])} unassigned + {m['reserve']} reserved + {256 - ESC0} escapes = 256")
     print(f"banks       : {len(m['banks'])} Forth ({len(m['allnames'])} words, largest "
           f"{max((len(w), n) for n, w in m['banks'].values())[1]} "
           f"{max(len(w) for _, w in m['banks'].values())}/256)")

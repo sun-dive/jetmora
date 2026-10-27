@@ -862,14 +862,14 @@ final class InterpreterJF
         $this->write($d, $this->preimage);
         $this->push($d); $this->push(strlen($this->preimage)); return $i; }
       // ⏭ The field accessors are slices of the preimage and are not built yet — see verify-jf.php.
-      case $W['TXVERSION']: case $W['PREVOUTS-HASH']: case $W['SEQUENCES-HASH']: case $W['OUTPOINT']:
+      case $W['PREVOUTS-HASH']: case $W['SEQUENCES-HASH']: case $W['OUTPOINT']:
       case $W['SCRIPTCODE']: case $W['TXVALUE']: case $W['NSEQUENCE']: case $W['OUTPUTS-HASH']:
       case $W['LOCKTIME']:
         // ⚠ The guard goes on FIRST, so it is already in place the day these are built rather than
         //   being something to remember later.
         $this->covenantOnly(jf_op_name($op), $covenant);
         throw new JfScriptError(jf_op_name($op) . ': not built yet — derive it from PREIMAGE with SUBSTR');
-      case $W['VER']: case $W['VERIF']: case $W['VERNOTIF']:
+      case $W['VER']:
         throw new JfScriptError(jf_op_name($op) . ': version words are §6b and not built yet');
 
       // ── INVOKE: the tier boundary ─────────────────────────────────────────────────────────────────
