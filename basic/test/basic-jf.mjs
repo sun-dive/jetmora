@@ -6,7 +6,8 @@
 // comparison is -1, the words on bytes and numbers are typed, and loops are loops. Every program runs in
 // the JavaScript interpreter here and the PHP one (tools/jf-run.php), and the two must leave the same
 // stack or raise the same refusal. Then every program is read back, and the reading compiles to the
-// same bytes. Last, this compiler is proved against the one before it, 0.3 as it was released, read from git.
+// same bytes; its listing's offsets are where the engine lets a jump land, and every branch lands on one.
+// Last, this compiler is proved against the one before it, 0.3 as it was released, read from git.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
@@ -331,6 +332,28 @@ ok(round === progs.length, `★★ and every reading compiles back to the SAME B
   const none = unbasic(b.slice(5)), other = unbasic(Uint8Array.from([JF_WORD.VER, 2, 0, 0x4a, 0x46, ...b.slice(5)]))
   ok(none.lines.length === 0 && /declares no version/.test(none.stoppedAt ?? ''), `a script that declares no version is not read: ${none.stoppedAt}`)
   ok(other.lines.length === 0 && /declares JF 2/.test(other.stoppedAt ?? ''), `nor one that declares another: ${other.stoppedAt}`)
+}
+
+// ── where a jump lands ───────────────────────────────────────────────────────────────────────────────
+/* A jump lands on the start of an instruction, as GOTO lands on a line (his call, 27 Oct). The listing and the engine
+   take each instruction at the same length, and every branch this compiler writes lands on a start, or on the end. */
+console.log('\n── where a jump lands: on the start of an instruction, in every program and covenant ──')
+{
+  const own = new Array(20).fill(0xab)
+  const covenants = [['DIM owner$20', { owner: own }], ['DIM owner$20\nDIM n%4\nn = n + 1', { owner: own, n: 7 }],
+    ['DIM owner$20\nDIM n%4\nDIM tag$3\nIF n > 3 THEN\n tag = &H010203\nELSE\n IF n = 0 THEN n = 9\nEND IF\nn = n + 2 ^ 3', { owner: own, n: 9, tag: [7, 8, 9] }],
+    ['DIM owner$20\nDIM h$32\nh = HASH256(CAT(h, owner))', { owner: own, h: new Array(32).fill(1) }]]
+  const all = [...progs.flatMap(p => [p.c.bytes, p.script]), ...covenants.map(([text, state]) => compileCovenant(V + text, { state }).bytes)]
+  const JUMPS = new Set(['BRANCH', '0BRANCH', '(?DO)', '(LOOP)', '(+LOOP)', 'LEAVE', 'CALL'])
+  let same = 0, jumps = 0, landed = 0
+  for (const b of all) {
+    const ins = disassemble(b), starts = InterpreterJF.instructionStarts(b), listed = new Uint8Array(b.length)
+    for (const x of ins) listed[x.at] = 1
+    if (hex(listed) === hex(starts)) same++
+    for (const x of ins.filter(x => JUMPS.has(x.name))) { jumps++; if (x.arg === b.length || starts[x.arg] === 1) landed++ }
+  }
+  ok(same === all.length, `★ the listing's offsets are the engine's instruction starts, in ${same}/${all.length} programs and covenants`)
+  ok(landed === jumps && jumps > 0, `★ and every branch the compiler writes lands on one, or on the end: ${landed}/${jumps}`)
 }
 
 // ── against 0.3 ──────────────────────────────────────────────────────────────────────────────────────

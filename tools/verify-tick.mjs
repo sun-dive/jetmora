@@ -80,10 +80,12 @@ const CASES = [
   ['not a byte push: a small number', [S(1)], [W('TRUE')], false],
   ['a push cut short', [5, 1, 2], [W('TRUE')], false],
   ['STR8 cut short', [JF_LIT.STR8, 9, 1], [W('TRUE')], false],
-  /* ★ Rule 2 alone. The unlocking script pushes two bytes that happen to be TRUE EXIT. The lock drops the
-     push and branches back 11 bytes, past its own declaration. Joined as one script, that lands on those bytes,
-     runs them, and leaves one TRUE. As a separate run, there is nothing before the lock to land on. */
-  ['★ the lock jumps back into the unlocking script\'s bytes', [2, W('TRUE'), W('EXIT')], [W('2DROP'), W('BRANCH'), ...le16(-11 & 0xffff)], false],
+  /* ★ Rule 2 alone. The unlocking script pushes an empty span. The lock counts what it holds and, until that is
+     4, branches back 12 bytes, past its own declaration. Joined as one script, that lands on the unlocking script's
+     push, the start of an instruction, which runs again until the count is met, and the lock leaves one TRUE. As a
+     separate run, there is nothing before the lock to land on. */
+  ['★ the lock jumps back into the unlocking script\'s bytes', [0],
+    [W('DEPTH'), S(4), W('='), W('0BRANCH'), ...le16(-12 & 0xffff), W('2DROP'), W('2DROP'), W('TRUE')], false],
   /* ★ The lock's declaration: stepped over at the start of the lock and on a branch back to it, refused anywhere
      else. This lock branches back to offset 0 until three items are held, then adds them. */
   ['a branch back to the declaration steps over it: a loop of three, then 3', [],
@@ -312,6 +314,14 @@ for (const name of ['★ the attack: TRUE EXIT as the unlocking script', '★ th
   let accepted
   try { const st = await vm.run(Uint8Array.from(joined(u, l))); accepted = st.length === 1 && st[0] !== 0n } catch { accepted = false }
   ok(accepted, `joined, "${what.replace('★ ', '')}" is ACCEPTED — verifyTick refuses it`)
+}
+// ...and bytes pushed as data that would run as code, TRUE EXIT, which the lock branches back into: joined, they are
+// inside the push, and a jump lands only on the start of an instruction, so the joined script is refused as well
+{
+  let said = null
+  try { await new InterpreterJF().run(Uint8Array.from(joined([2, W('TRUE'), W('EXIT')], [W('2DROP'), W('BRANCH'), ...le16(-11 & 0xffff)]))) }
+  catch (e) { said = e.message }
+  ok(said === 'BRANCH: the target is not the start of an instruction', `joined, a lock that branches into a push's bytes, TRUE EXIT, is refused: "${said}"`)
 }
 ok(TICK_LIMITS.maxOps === 500000 && TICK_LIMITS.memSize === 65536 && TICK_MAX_SCRIPT === 500000 && TICK_LIMITS.maxItems === 1000
    && TICK_LIMITS.pushSize === 65536 && TICK_LIMITS.maxSigOps === 100,

@@ -13,7 +13,10 @@
 //
 // The old engine is read from git and loaded beside the new one, its classes renamed, with its own opcode table, the
 // one at f4f05d1, under renamed names. The table has changed since only as DROPPED declares, and the two engines'
-// results differ only as DECLARED says, and on a script that starts with the lock's declaration, as forOld says.
+// results differ only as DECLARED says, on a script that starts with the lock's declaration, as forOld says, and where
+// a jump lands inside an instruction, as old_landed says. Where an instruction starts is revision 3's decode on both
+// sides, so a wrong length would agree with itself here, and only CELLS_DIGEST would see it: verify-jf.php pins each
+// kind of instruction's length, and tools/verify-jf.mjs holds the decode to JavaScript's and the disassembler's.
 // secp256k1.php is shared, so the signatures part grades the engine's signature words, and verify-secp256k1-native.php
 // the curve. A case that reaches a word BUILT names has no old answer to grade: the old engine had not built it.
 // Revision 3's result on it is recorded instead, and verify-jf.php grades the words.
@@ -33,9 +36,9 @@ declare(strict_types=1);
 
 const REV = 'f4f05d192bbd44e47f22447c9b4b51a1f8215abb';
 const DEFAULT_PROGRAMS = 60000, DEFAULT_SEED = 20261024;
-/** sha256 over the cells part at the default programs and seed: each case, then the old engine's result with forOld and
- *  DECLARED applied, or revision 3's on a case that reaches a word BUILT names. */
-const CELLS_DIGEST = '318a1ed7f87939e7130b69523afa0c848fe713f3ce9aefbe5f9f5bf1642ac21d';
+/** sha256 over the cells part at the default programs and seed: each case, then the old engine's result with forOld,
+ *  old_landed and DECLARED applied, or revision 3's on a case that reaches a word BUILT names. */
+const CELLS_DIGEST = 'f1d6a8b7145c8a9d340e181d9004d7c2b0bad998a6500108e937c356cd5a328f';
 /** What the opcode table has changed since REV: these words were dropped from revision 3, their bytes left unassigned,
  *  and nothing else moved. */
 const DROPPED = ['TXVERSION' => 0xd0, 'VERIF' => 0xd2, 'VERNOTIF' => 0xd3];
@@ -100,6 +103,13 @@ else {
   ok(oldTableIsDeclared(), 'ops-jf.php is ' . substr(REV, 0, 7) . "'s but for DROPPED: " . implode(', ', array_keys(DROPPED))
      . ' gone, their bytes unassigned, every other name keeping its byte');
   $old = preg_replace('/^<\?php\s*/', '', $old);
+  // ...and given the rule a jump lands by, as old_landed below: the word that jumps passed to jump and call, and its target
+  // checked after the range
+  $old = preg_replace('/\$this->(jump|call)\((\$code, [^()]*)\)/', '$this->$1($2, $op)', $old, -1, $sites);
+  $old = preg_replace('/(private function (?:jump|call)\(string \$code, [^()]*)\)/', '$1, int $op)', $old, -1, $signatures);
+  $old = preg_replace("/(throw new JfScriptError\\('(?:branch|call) out of range'\\);)/", '$1 old_landed($code, $op, $to);', $old, -1, $checks);
+  ok($sites === 7 && $signatures === 2 && $checks === 2,
+     "the old engine checks where its jumps land, as revision 3 does: its $sites jumps and calls name their word, and its $checks range checks are followed by old_landed's");
   $old = str_replace('__DIR__', var_export(dirname(realpath($engine)), true), $old, $dirs);
   $old = preg_replace('/\b(InterpreterJF|JfScriptError|JfHostError|JfBankUnsupported)\b/', 'Old$1', $old, -1, $names);
   $old = preg_replace('/\bjf_stack_hash\b/', 'old_jf_stack_hash', $old);
@@ -143,6 +153,23 @@ function declared(string $outcome, array $c): string {
     foreach (['JfScriptError: ', 'refused | '] as $form)
       if ($outcome === $form . $was) return $form . $now;
   return $outcome;
+}
+/**
+ * The rule built since REV: a jump or a call lands on the start of an instruction, or on the end of its code (his call,
+ * 27 Oct). The old engine checked the range alone, so it is loaded with this check after that one, where revision 3 makes
+ * it: a case where it landed inside an instruction is refused there, in revision 3's words, naming the word that jumped.
+ * The starts are revision 3's, InterpreterJF::instructionStarts, which verify-jf.php pins for each kind of instruction
+ * and tools/verify-jf.mjs holds to the disassembler's offsets, and they are those of the code revision 3 is given: a
+ * script forOld changed is read as the one it stands for.
+ * $landing holds the case's script both ways, the starts found, and whether this check refused it.
+ */
+function old_landed(string $code, int $op, int $to): void {
+  global $landing;
+  if ($to === strlen($code)) return;
+  $starts = $landing['starts'][$code] ??= InterpreterJF::instructionStarts($code === $landing['given'] ? $landing['as'] : $code);
+  if ($starts[$to] === "\x01") return;
+  $landing['refused'] = true;
+  throw new OldJfScriptError(jf_op_name($op) . ': the target is not the start of an instruction');
 }
 /** The word BUILT names that the old engine's result refuses as not built, or null when it is no such refusal. */
 function reachedBuilt(string $outcome): ?string {
@@ -188,17 +215,20 @@ function caseKey(array $c): string {
 $shown = fn(string $s): string => strlen($s) > 160 ? substr($s, 0, 160) . '...' : $s;
 
 /** Run every case of a part through both engines, or the new one alone with no oracle, and report. Returns the sha256
- *  over each case and the old engine's result with DECLARED applied, or on a case that reaches a word BUILT names, the new
- *  engine's: with no oracle, the new engine's on every case. */
+ *  over each case and the old engine's result with old_landed and DECLARED applied, or on a case that reaches a word BUILT
+ *  names, the new engine's: with no oracle, the new engine's on every case. */
 function grade(string $part, iterable $cases, ?string $noOracle, callable $shown): string {
-  $h = hash_init('sha256'); $n = $same = $faults = $changed = 0; $diffs = []; $kinds = ['stack' => 0, 'accepted' => 0, 'refused' => 0, 'error' => 0];
+  global $landing;
+  $h = hash_init('sha256'); $n = $same = $faults = $changed = $landed = 0; $diffs = []; $kinds = ['stack' => 0, 'accepted' => 0, 'refused' => 0, 'error' => 0];
   $built = [];                                                     // the cases that reached a word BUILT names, by word
   foreach ($cases as $c) {
     $new = outcome('InterpreterJF', $c);
     if ($noOracle === null) {
       $given = forOld($c);
+      $landing = ['given' => covenantScript($given), 'as' => covenantScript($c), 'starts' => [], 'refused' => false];
       $raw = outcome('OldInterpreterJF', $given); $old = declared($raw, $c);
       if ($old !== $raw || $given !== $c) $changed++;
+      if ($landing['refused']) $landed++;
       if (($word = reachedBuilt($raw)) !== null) { $old = $new; $built[$word] = ($built[$word] ?? 0) + 1; }
     }
     else $old = $new;
@@ -215,7 +245,7 @@ function grade(string $part, iterable $cases, ?string $noOracle, callable $shown
            $shown(addcslashes($old, "\0..\37\177..\377")), $shown(addcslashes($new, "\0..\37\177..\377")));
   $nb = array_sum($built);                                         // on these the two results are the same by construction
   if ($noOracle === null) ok($same === $n, "$part: " . ($same - $nb) . ' of ' . ($n - $nb) . ' cases give the same verdict, stack and '
-                                          . "error text in both engines, $changed of them through DECLARED");
+                                          . "error text in both engines, $changed of them through DECLARED, $landed refused by old_landed");
   if ($nb) printf("    %d cases reach a word BUILT names, which %s had not built, and are recorded as revision 3 gives them: %s\n",
                   $nb, substr(REV, 0, 7), implode(', ', array_map(fn($w, $k) => "$w $k", array_keys($built), $built)));
   printf("    %d programs ended with a stack and %d with an error; %d ticks accepted and %d refused\n",
@@ -522,9 +552,9 @@ echo "── cells: " . ($noOracle === null ? 'both engines, case by case' : 'th
 $digest = grade('cells', $counted(cellCases($programs, $seed), $nCells), $noOracle, $shown);
 $atDefault = $programs === DEFAULT_PROGRAMS && $seed === DEFAULT_SEED;
 if ($atDefault && $noOracle === null)
-  ok($digest === CELLS_DIGEST, "the old engine's results on the cells part, DECLARED applied and BUILT recorded, are the ones recorded in CELLS_DIGEST (sha256 $digest)");
+  ok($digest === CELLS_DIGEST, "the old engine's results on the cells part, old_landed and DECLARED applied and BUILT recorded, are the ones recorded in CELLS_DIGEST (sha256 $digest)");
 elseif ($atDefault)
-  ok($digest === CELLS_DIGEST, "$nCells cases: the new engine's results are the old engine's, DECLARED applied and BUILT recorded, by the recorded digest (sha256 $digest)");
+  ok($digest === CELLS_DIGEST, "$nCells cases: the new engine's results are the old engine's, old_landed and DECLARED applied and BUILT recorded, by the recorded digest (sha256 $digest)");
 else echo "  - programs or seed differ from the defaults, so the recorded digest does not apply\n";
 printf("  %d cases, %.1f s\n", $nCells, (hrtime(true) - $t0) / 1e9);
 

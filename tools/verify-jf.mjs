@@ -5,6 +5,8 @@
 //      tools/gen-ops-jf.py writes from tools/jfmap.py
 //   2. the PHP interpreter's own test cases (server/verify-jf.php --export), run here
 //   3. side by side: generated programs run through BOTH, and every stack and every refusal must be identical
+//   4. where a jump may land: each interpreter's instruction starts, on those programs and the cases, and the
+//      disassembler's offsets (basic/unbasic-jf.mjs) wherever it reads them
 // A difference is a bug in one of them; a refusal PHP raises from outside the interpreter is a PHP fault, reported.
 //   node tools/verify-jf.mjs [programs=3000] [seed]
 import { execFileSync } from 'node:child_process'
@@ -14,8 +16,9 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as OPS from './ops-jf.mjs'
-import { InterpreterJF } from './interpreter-jf.mjs'
+import { InterpreterJF, JfScriptError } from './interpreter-jf.mjs'
 import { verify as ed25519 } from './ed25519.mjs'
+import { disassemble } from '../basic/unbasic-jf.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url)), ROOT = join(HERE, '..')
 const N_PROGRAMS = Number(process.argv[2] ?? 3000), SEED = Number(process.argv[3] ?? 20261003)
@@ -141,6 +144,7 @@ const token = depthOk => {
   if (r < 0.45) return [int(0xf0, 0xff), int(0, 140)]                                   // bank escape (illegal here)
   if (r < 0.46) return [int(0, 255)]                                                      // any byte at all
   if (r < 0.48) return rnd() < 0.6 ? [L.LIT32, ...le(pick([2000, 3000, 65500, -1]), 4), W[pick(BYTE_FIELDS)]] : [W[pick(NUMBER_FIELDS)]]
+  if (r < 0.49) return rnd() < 0.5 ? [W.CALL, ...le(int(0, 40), 2)] : [L.LIT8, int(0, 40), W.EXECUTE]   // to anywhere near
   return [W[pick(plain)]]
 }
 const program = () => {
@@ -190,6 +194,48 @@ if (phpFaults) {
   for (const f of faults) console.log(`      ${f.script}\n        php: ${f.php}\n        js:  ${f.js}`)
 }
 ok(phpFaults === 0, `no program made PHP fail outside the interpreter (${phpFaults})`)
+const NOT_A_START = 'the target is not the start of an instruction'
+const landed = phpOut.filter(p => p.error !== undefined && latin1(unhex(p.error)).includes(NOT_A_START)).length
+ok(landed > 0, `among them, ${landed} refused for a jump that lands inside an instruction`)
+
+// ── 4. where a jump may land ──
+console.log('── 4. where a jump may land: PHP\'s instruction starts against JavaScript\'s, and both against the disassembler\'s offsets')
+// every script here, and the functions in their DEFS headers, each its own code string. A script whose layout codeStart
+// refuses never runs, so it has no starts: null in both
+const strings = []
+for (const s of [...cases.map(c => unhex(c.script)), ...progs.map(p => p.script)]) {
+  strings.push(s)
+  try { const vm = new InterpreterJF(); vm.codeStart(s); for (const d of vm.defs) strings.push(d.body) } catch (e) { if (!(e instanceof JfScriptError)) throw e }
+}
+const startsJs = s => { try { return hex(InterpreterJF.instructionStarts(s)) } catch (e) { if (e instanceof JfScriptError) return null; throw e } }
+const startsPhp = JSON.parse(execFileSync('php', ['-r', `require '${join(ROOT, 'server/interpreter-jf.php')}';
+  $f = function (string $h): ?string { try { return bin2hex(InterpreterJF::instructionStarts(hex2bin($h))); } catch (JfScriptError) { return null; } };
+  echo json_encode(array_map($f, json_decode(stream_get_contents(STDIN), true)));`], { input: JSON.stringify(strings.map(hex)), maxBuffer: 1 << 28 }).toString())
+let startsDiffer = 0
+for (const [k, s] of strings.entries()) if (startsJs(s) !== startsPhp[k]) { if (startsDiffer++ < 4) console.log(`  ✗ ${hex(s)}\n      php: ${startsPhp[k]}\n      js:  ${startsJs(s)}`) }
+ok(startsDiffer === 0, `${strings.length - startsDiffer} of ${strings.length} code strings have the same instruction starts in both (${strings.length - cases.length - progs.length} of them functions)`)
+/** The disassembler's offsets as starts, the code after a DEFS header listed from where the run starts, and the
+ *  declaration before it at 0; null where the disassembler does not read the bytes: a DEFS header, LITBIG, a cut. */
+const listed = s => {
+  let at
+  try { at = new InterpreterJF().codeStart(s) } catch (e) { if (e instanceof JfScriptError) return null; throw e }
+  const declared = s.length >= 5 && s[0] === W.VER, from = at > (declared ? 5 : 0) ? at : 0
+  let ins
+  try { ins = disassemble(s.subarray(from)) } catch { return null }
+  const out = new Uint8Array(s.length)
+  if (from > 0 && declared) out[0] = 1
+  for (const x of ins) out[from + x.at] = 1
+  return hex(out)
+}
+let read = 0, unlike = 0
+for (const s of strings) {
+  const l = listed(s)
+  if (l === null) continue
+  read++
+  if (l !== startsJs(s) && unlike++ < 4) console.log(`  ✗ ${hex(s)}\n      listed: ${l}\n      starts: ${startsJs(s)}`)
+}
+ok(unlike === 0 && read > strings.length / 2, `on the ${read} the disassembler reads, its offsets are the instruction starts, each of them (${unlike} differ)`)
+
 if (!ecdsa) console.log('  ⚠ secp256k1 (PharLap2) not found beside this repo: CHECKSIG cases ran without a verifier')
 
 console.log(`\n${fail ? '⚠' : '✅'}  ${pass} passed · ${fail} failed   [JF in JavaScript · against the PHP interpreter]`)

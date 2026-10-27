@@ -71,6 +71,14 @@ for (const [k, v] of Object.entries(JF_WORD)) OP.set(v, k)
 for (const [k, v] of Object.entries(JF_LIT)) OP.set(v, k)
 const DEFS_MARK = JF_RESERVED0                               // the reserved slot the compiler emits for the header
 const VER_ELSEWHERE = 'VER declares the version a lock is written for, and is valid only as its first instruction'
+const NOT_A_START = 'the target is not the start of an instruction'
+/** The bytes of operand an instruction reads after its opcode, where that is a fixed number. */
+const OPERAND = { [JF_LIT.LIT8]: 1, [JF_LIT.LIT16]: 2, [JF_LIT.LIT32]: 4, [JF_LIT.LIT64]: 8,
+                  [JF_WORD.BRANCH]: 2, [JF_WORD['0BRANCH']]: 2, [JF_WORD['(?DO)']]: 2, [JF_WORD['(LOOP)']]: 2,
+                  [JF_WORD['(+LOOP)']]: 2, [JF_WORD.LEAVE]: 2, [JF_WORD.CALL]: 2, [JF_WORD.VER]: 4,
+                  [JF_WORD.INVOKE]: 1, [JF_WORD['(FRAME)']]: 1, [JF_WORD['(LOCAL@)']]: 1, [JF_WORD['(LOCAL!)']]: 1 }
+/** The instructions whose operand is a length, of this many bytes little-endian, and then that many bytes. */
+const COUNTED = { [JF_LIT.STR8]: 1, [JF_LIT.STR16]: 2, [JF_LIT.STR32]: 4, [JF_WORD['(ABORT")']]: 1 }
 /** Where each field word cuts the preimage, [from, to), in BIP143's layout; a negative offset counts from the end. See
  *  InterpreterJF::FIELDS in server/interpreter-jf.php. */
 const FIELDS = { 'PREVOUTS-HASH': [4, 36], 'SEQUENCES-HASH': [36, 68], 'OUTPOINT': [68, 104], 'SCRIPTCODE': [104, -52],
@@ -98,6 +106,8 @@ export class InterpreterJF {
     this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE; this.mbase = 0
     // cells in the locals frames, and cells an active INVOKE has set aside: both count as items held
     this.frameCells = 0; this.held = 0
+    // each code string's instruction starts, by the code: decoded at its first jump, kept for the run
+    this.starts = new Map()
   }
   setPreimage(p) { this.preimage = p }
 
@@ -200,6 +210,7 @@ export class InterpreterJF {
     this.opCount = 0; this.depth = 0; this.frameCells = 0; this.held = 0; this.sigOps = 0
     this.mem = null
     this.pmem = new Uint8Array(0); this.plen = 0; this.pbase = PUSH_BASE; this.mbase = 0
+    this.starts = new Map()
     await this.exec(script, this.codeStart(script), /* covenant tier */ true)
     if (this.frames.length) throw new JfScriptError('unbalanced locals frame')
     return this.ds
@@ -427,17 +438,17 @@ export class InterpreterJF {
       case 'LEAVE': { const off = InterpreterJF.i16(code, i)
         if (this.rs.length < 2) throw new JfScriptError('LEAVE outside a loop')
         this.rs.pop(); this.rs.pop()
-        return this.jump(code, i + 2, off) }
+        return this.jump(code, i + 2, off, op) }
       case 'EXIT': return code.length
-      case 'EXECUTE': { const xt = this.popInt(); await this.call(code, xt, covenant); return i }
+      case 'EXECUTE': { const xt = this.popInt(); await this.call(code, xt, covenant, op); return i }
 
       // ── branch primitives ──
-      case 'BRANCH': { const off = InterpreterJF.i16(code, i); return this.jump(code, i + 2, off) }
-      case '0BRANCH': { const off = InterpreterJF.i16(code, i); i += 2; return this.pop() === 0n ? this.jump(code, i, off) : i }
+      case 'BRANCH': { const off = InterpreterJF.i16(code, i); return this.jump(code, i + 2, off, op) }
+      case '0BRANCH': { const off = InterpreterJF.i16(code, i); i += 2; return this.pop() === 0n ? this.jump(code, i, off, op) : i }
       case '(DO)': { const ix = this.pop(); const lim = this.pop(); this.rs.push(lim); this.rs.push(ix); return i }
       case '(?DO)': { const off = InterpreterJF.i16(code, i); i += 2
         const ix = this.pop(); const lim = this.pop()
-        if (ix === lim) return this.jump(code, i, off)
+        if (ix === lim) return this.jump(code, i, off, op)
         this.rs.push(lim); this.rs.push(ix); return i }
       case '(LOOP)': case '(+LOOP)': {
         const off = InterpreterJF.i16(code, i); i += 2
@@ -450,8 +461,8 @@ export class InterpreterJF {
                                 : (ix > lim && nx <= lim) || ix <= lim
         if (done) { this.rs.pop(); return i }
         this.rs.push(nx)
-        return this.jump(code, i, off) }
-      case 'CALL': { const to = InterpreterJF.u16(code, i); i += 2; await this.call(code, BigInt(to), covenant); return i }
+        return this.jump(code, i, off, op) }
+      case 'CALL': { const to = InterpreterJF.u16(code, i); i += 2; await this.call(code, BigInt(to), covenant, op); return i }
       case 'RET': return code.length
 
       // ── locals ──
@@ -645,13 +656,54 @@ export class InterpreterJF {
     return this.preimage.slice(from, to)
   }
   frame() { if (!this.frames.length) throw new JfScriptError('local access with no frame'); return this.frames[this.frames.length - 1] }
-  jump(code, from, off) { const to = from + off; if (to < 0 || to > code.length) throw new JfScriptError('branch out of range'); return to }
-  async call(code, to, covenant) {
+  jump(code, from, off, op) {
+    const to = from + off
+    if (to < 0 || to > code.length) throw new JfScriptError('branch out of range')
+    this.landing(code, to, op)
+    return to
+  }
+  async call(code, to, covenant, op) {
     if (++this.depth > this.maxDepth) { this.depth--; throw new JfScriptError('call depth exceeded') }
     try {
       if (to < 0n || to > BigInt(code.length)) throw new JfScriptError('call out of range')
+      this.landing(code, Number(to), op)
       await this.exec(code, Number(to), covenant)
     } finally { this.depth-- }
+  }
+
+  // ── where a jump lands ── as BASIC's GOTO lands on a line, on the start of an instruction, never inside another
+  //   instruction's bytes (his call, 27 Oct): see "where a jump lands" in server/interpreter-jf.php.
+  /** op's target to, in range: refused unless an instruction starts there or it is the end of code. */
+  landing(code, to, op) {
+    if (to === code.length) return
+    let starts = this.starts.get(code)
+    if (starts === undefined) { starts = InterpreterJF.instructionStarts(code); this.starts.set(code, starts) }
+    if (starts[to] !== 1) throw new JfScriptError(`${jf_op_name(op)}: ${NOT_A_START}`)
+  }
+  /** Where each instruction in code starts: a byte for each offset, 1 where one starts. See InterpreterJF::instructionStarts. */
+  static instructionStarts(code) {
+    const n = code.length
+    const starts = new Uint8Array(n)
+    const vm = new InterpreterJF()                            // reads the layout and the varints: no run's DEFS are touched
+    let p = vm.codeStart(code)
+    if (p > 0 && code[0] === JF_WORD.VER) starts[0] = 1
+    while (p < n) {
+      starts[p] = 1
+      const op = code[p++]
+      if (op <= JF_PUSH_MAX) p += op                          // a direct push: the opcode is the length
+      else if (op >= JF_ESC0) p += 1
+      else if (OPERAND[op] !== undefined) p += OPERAND[op]
+      else if (COUNTED[op] !== undefined) {
+        const w = COUNTED[op]
+        if (p + w > n) break
+        let len = 0; for (let k = 0; k < w; k++) len += code[p + k] * 2 ** (8 * k)
+        p += w + len
+      } else if (op === JF_LIT.LITBIG) {                      // a varint, then that many bytes
+        let r; try { r = vm.varint(code, p) } catch (e) { if (e instanceof JfScriptError) break; throw e }
+        p = r[1] + r[0]
+      }
+    }
+    return starts
   }
   hashTo(i, h) { const d = this.popInt(); const s = this.popSpan(); this.write(d, h(s)); return i }
   hash(kind, b) {

@@ -14,14 +14,16 @@
 //   judge      tools/thread.mjs's judge against CovenantThread::judge, tick for tick: the ticks server/verify-tip.php sends
 //              (its --export; an answer the service gave from its judge must be the PHP judge's), server/verify-wired.php's
 //              counter, and random ticks of several inputs, each version, locks that read the preimage, read its fields by
-//              their words, hash it, sign it (secp256k1 and Ed25519) or abort, each lock declaring its version, now and then
+//              their words, hash it, sign it (secp256k1 and Ed25519), abort, or branch forward onto an instruction or into
+//              one, each lock declaring its version, now and then
 //              another or none. The same verdict, the same refusal bytes, the same stack, and no verdict in the same cases in
 //              the same words. Then crypto missing or broken: no verdict, never a refusal. Then the lock's declaration case
 //              by case: a tick naming another version, a lock with none or one this host does not serve, VER later in a
 //              lock or in a function, and a branch back to it. Then the preimage's fields: each word on ticks of locks of
 //              100 and 300 bytes, against its cut from PREIMAGE, in a function, and at a destination out of program memory
 //   mutants    tools/preimage.mjs altered in a copy (field order, value width, the scriptCode length varint, and more), the
-//              judge, the dispatcher and two field cuts altered: each copy must disagree with PHP somewhere
+//              judge, the dispatcher, two field cuts and the check on where a jump lands altered: each copy must disagree
+//              with PHP somewhere
 //   browser    what a page loads names nothing of node's; with --browser, headless Chromium runs the judge on the same
 //              ticks, from the files in tools/, and must give PHP's verdicts
 // basic/test/thread.mjs judges every tick of the BASIC thread's corpus (basic/test/thread-ticks.php) with this judge too.
@@ -372,7 +374,7 @@ const RANDOM = []
 const edKeys = Array.from({ length: 3 }, () => { const k = generateKeyPairSync('ed25519'); return { priv: k.privateKey, pub: Uint8Array.from(k.publicKey.export({ format: 'der', type: 'spki' }).subarray(12)) } })
 const VERSIONS = [() => versionBuild('JF', 2), () => versionBuild('JF', 1), () => versionBuild('JF', 4), () => versionBuild('SV', 1), () => versionBuild('BT', 1),
                   () => 103, () => 0, () => versionBuild('ZZ', 1), () => 0x00610000, () => 0x41000000, () => (versionBuild('JF', 3) | 0x80) >>> 0]
-const KINDS = ['hash256', 'slice', 'field', 'hashes', 'ecdsa', 'ed25519', 'abort', 'random', 'true']
+const KINDS = ['hash256', 'slice', 'field', 'hashes', 'ecdsa', 'ed25519', 'abort', 'random', 'true', 'branch']
 /** The preimage's fields: a byte word writes to a destination it is given, a number word takes nothing */
 const BYTE_FIELDS = ['PREVOUTS-HASH', 'SEQUENCES-HASH', 'OUTPOINT', 'SCRIPTCODE', 'OUTPUTS-HASH'], NUMBER_FIELDS = ['TXVALUE', 'NSEQUENCE', 'LOCKTIME']
 const FIELD_WORDS = [...BYTE_FIELDS, ...NUMBER_FIELDS]
@@ -469,6 +471,14 @@ for (let t = 0; t < N_TICKS; t++) {
     const like = FIELD_WORDS.filter(w => w !== field && NUMBER_FIELDS.includes(w) === NUMBER_FIELDS.includes(field))
     cut = chance(0.15) ? pick(like) : field
     lock = Uint8Array.from([...decl, ...pad, ...dropsFor(unlock), ...fieldCheck(field, cut)])
+  } else if (kind === 'branch') {
+    // a BRANCH forward into numbers and pushes of each length, each dropped again, then TRUE: landing on the start of
+    // one, the lock runs on from there; inside one, it is refused there
+    unlock = randomPushes()
+    const area = []
+    for (let n = int(1, 4); n > 0; n--) area.push(...(chance(0.5) ? [...num(int(0, 70000)), W.DROP] : [...pushAny(rbytes(pick([0, 1, 2, 8, 100]))), W['2DROP']]))
+    const off = int(0, area.length)
+    lock = Uint8Array.from([...decl, ...pad, ...dropsFor(unlock), W.BRANCH, off & 0xff, off >> 8, ...area, W.TRUE])
   } else {
     unlock = randomPushes()
     if (chance(0.05)) unlock.push(...num(5))                  // not byte pushes only
@@ -500,7 +510,7 @@ function countPushes(s) {
   ok(same === RANDOM.length, `the PHP judge's answer on every one of ${RANDOM.length} random ticks (seed ${SEED}): ${tally(RANDOM.map(c => kindOf(c.php)))}`)
   const accepted = KINDS.filter(k => RANDOM.some(c => c.kind === k && c.php.accepted))
   const algs = ['SHA256', 'SHA1', 'RIPEMD160', 'HASH160', 'HASH256'].filter(a => RANDOM.some(c => c.alg === a && c.php.accepted))
-  ok(['hash256', 'slice', 'field', 'hashes', 'ecdsa', 'ed25519', 'true'].every(k => accepted.includes(k)) && algs.length === 5
+  ok(['hash256', 'slice', 'field', 'hashes', 'ecdsa', 'ed25519', 'true', 'branch'].every(k => accepted.includes(k)) && algs.length === 5
      && RANDOM.some(c => c.php.accepted && parseEntry(unhex(c.entry)).inputs.length > 1 && c.input > 0)
      && RANDOM.some(c => c.php.accepted && unhex(c.lock).length >= 253),
      `accepted among them: every kind of lock (${accepted.join(', ')}), each hash (${algs.join(', ')}), a tick judged past its first input, and locks of 253 bytes and more`)
@@ -510,6 +520,8 @@ function countPushes(s) {
      `and each field word read against its cut, accepted (${fields.join(', ')}), on locks of 253 bytes and more, and refused against another field's cut`)
   const reasons = new Set(RANDOM.filter(c => c.php.error).map(c => Buffer.from(c.php.error, 'hex').toString('latin1').replace(/: .*$|[0-9]+/g, '').slice(0, 40)))
   console.log(`  - ${reasons.size} kinds of refusal among them, e.g. ${[...reasons].slice(0, 6).map(r => JSON.stringify(r)).join(', ')}`)
+  const landed = RANDOM.filter(c => c.php.error && /^0?BRANCH: the target is not the start of an instruction$/.test(Buffer.from(c.php.error, 'hex').toString('latin1'))).length
+  ok(landed > 0, `and ${landed} of them refused for a branch that lands inside an instruction`)
 }
 
 // 4d. crypto missing or broken: no verdict, never a refusal
@@ -722,6 +734,7 @@ const GRAPH = importGraph(HERE, 'thread.mjs')
     ['thread.mjs', 'judge: a lock that does not start with VER read as declaring a version', '  if (lock.length < 5 || lock[0] !== VER) throw', '  if (false) throw'],
     ['interpreter-jf.mjs', 'SCRIPTCODE: the field without its length prefix', "'SCRIPTCODE': [104, -52]", "'SCRIPTCODE': [105, -52]"],
     ['interpreter-jf.mjs', 'TXVALUE: 4 bytes, not 8', "'TXVALUE': [-52, -44]", "'TXVALUE': [-52, -48]"],
+    ['interpreter-jf.mjs', 'a jump that lands inside an instruction, run', 'if (starts[to] !== 1) throw', 'if (false) throw'],
     ['dispatch.mjs', 'dispatch: every JF revision judged', "registerSet('JF', { name: 'InterpreterJF', verifyTick }, [3])", "registerSet('JF', { name: 'InterpreterJF', verifyTick }, [1, 2, 3, 4])"],
     ['sha1.mjs', 'SHA-1: a round constant', 'k = 0x6ed9eba1', 'k = 0x6ed9eba2'],
     ['sha1.mjs', 'SHA-1: the padding one byte short', 'len - whole + 9 <= 64', 'len - whole + 8 <= 64'],

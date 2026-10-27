@@ -92,6 +92,8 @@ final class InterpreterJF
    *  returns is out of range in its caller too (his call, 23 Oct). A function finds its memory with HERE. */
   public const MEM_OFFSET = 8388608;
   private int $mbase = 0;
+  /** @var array<string,string> each code string's instruction starts, by the code: decoded at its first jump, kept for the run */
+  private array $starts = [];
 
   /** Signature/preimage context. ⚠ Optional: a bare script has no transaction. */
   private ?string $preimage = null;
@@ -421,6 +423,7 @@ final class InterpreterJF
     $this->opCount = 0; $this->depth = 0; $this->frameCells = 0; $this->held = 0; $this->sigOps = 0;
     $this->mem = '';
     $this->pmem = ''; $this->pbase = self::PUSH_BASE; $this->mbase = 0;
+    $this->starts = [];
     $this->exec($script, $this->codeStart($script), /* covenant tier */ true);
     if ($this->frames) throw new JfScriptError('unbalanced locals frame');
     return $this->ds;
@@ -723,20 +726,20 @@ final class InterpreterJF
       case $W['LEAVE']: { $off = self::i16($code, $i);
                     if (count($this->rs) < 2) throw new JfScriptError('LEAVE outside a loop');
                     array_pop($this->rs); array_pop($this->rs);
-                    return $this->jump($code, $i + 2, $off); }
+                    return $this->jump($code, $i + 2, $off, $op); }
       case $W['EXIT']: return strlen($code);
       case $W['EXECUTE']: { $xt = $this->pop();
-                    $this->call($code, $xt, $covenant); return $i; }
+                    $this->call($code, $xt, $covenant, $op); return $i; }
 
       // ── branch primitives (jetmora) ───────────────────────────────────────────────────────────────
-      case $W['BRANCH']:  { $off = self::i16($code, $i); return $this->jump($code, $i + 2, $off); }
+      case $W['BRANCH']:  { $off = self::i16($code, $i); return $this->jump($code, $i + 2, $off, $op); }
       case $W['0BRANCH']: { $off = self::i16($code, $i); $i += 2;
-                    return $this->pop() === 0 ? $this->jump($code, $i, $off) : $i; }
+                    return $this->pop() === 0 ? $this->jump($code, $i, $off, $op) : $i; }
       case $W['(DO)']:  { $ix = $this->pop(); $lim = $this->pop();
                     $this->rs[] = $lim; $this->rs[] = $ix; return $i; }
       case $W['(?DO)']: { $off = self::i16($code, $i); $i += 2;
                     $ix = $this->pop(); $lim = $this->pop();
-                    if ($ix === $lim) return $this->jump($code, $i, $off);
+                    if ($ix === $lim) return $this->jump($code, $i, $off, $op);
                     $this->rs[] = $lim; $this->rs[] = $ix; return $i; }
       case $W['(LOOP)']: case $W['(+LOOP)']: {
                     $off = self::i16($code, $i); $i += 2;
@@ -751,9 +754,9 @@ final class InterpreterJF
                           : ($ix > $lim && $nx <= $lim) || $ix <= $lim;
                     if ($done) { array_pop($this->rs); return $i; }
                     $this->rs[] = $nx;
-                    return $this->jump($code, $i, $off); }
+                    return $this->jump($code, $i, $off, $op); }
       case $W['CALL']: { $to = self::u16($code, $i); $i += 2;
-                    $this->call($code, $to, $covenant); return $i; }
+                    $this->call($code, $to, $covenant, $op); return $i; }
       case $W['RET']: return strlen($code);
 
       // ── locals (jetmora runtime for `{:` and `LOCALS|`) ───────────────────────────────────────────
@@ -1034,18 +1037,79 @@ final class InterpreterJF
     return $this->frames[count($this->frames) - 1];
   }
 
-  private function jump(string $code, int $from, int $off): int {
+  private function jump(string $code, int $from, int $off, int $op): int {
     $to = $from + $off;
     if ($to < 0 || $to > strlen($code)) throw new JfScriptError('branch out of range');
+    $this->landing($code, $to, $op);
     return $to;
   }
 
-  private function call(string $code, int $to, bool $covenant): void {
+  private function call(string $code, int $to, bool $covenant, int $op): void {
     if (++$this->depth > $this->maxDepth) { $this->depth--; throw new JfScriptError('call depth exceeded'); }
     try {
       if ($to < 0 || $to > strlen($code)) throw new JfScriptError('call out of range');
+      $this->landing($code, $to, $op);
       $this->exec($code, $to, $covenant);
     } finally { $this->depth--; }
+  }
+
+  // ── where a jump lands ─────────────────────────────────────────────────────────────────────────────
+  // As BASIC's GOTO lands on a line, a jump lands on the start of an instruction, never inside another instruction's
+  // bytes (his call, 27 Oct). Bytes inside one, a push's data, an operand, the DEFS header, would run as code the
+  // read-back (basic/unbasic-jf.mjs) never shows, and a script can be checked by reading it only if what runs is what
+  // it shows. Every word that moves to a place it computes is held to it: BRANCH, 0BRANCH, (?DO), (LOOP), (+LOOP) and
+  // LEAVE, CALL and EXECUTE. The end of the code is a place too: landing there ends the run, as EXIT does.
+  private const NOT_A_START = 'the target is not the start of an instruction';
+
+  /** $op's target $to, in range: refused unless an instruction starts there or it is the end of $code. */
+  private function landing(string $code, int $to, int $op): void {
+    if ($to === strlen($code)) return;
+    $starts = $this->starts[$code] ??= self::instructionStarts($code);
+    if ($starts[$to] !== "\x01") throw new JfScriptError(jf_op_name($op) . ': ' . self::NOT_A_START);
+  }
+
+  /** The bytes of operand an instruction reads after its opcode, where that is a fixed number. */
+  private const OPERAND = [JF_LIT['LIT8'] => 1, JF_LIT['LIT16'] => 2, JF_LIT['LIT32'] => 4, JF_LIT['LIT64'] => 8,
+                           JF_WORD['BRANCH'] => 2, JF_WORD['0BRANCH'] => 2, JF_WORD['(?DO)'] => 2, JF_WORD['(LOOP)'] => 2,
+                           JF_WORD['(+LOOP)'] => 2, JF_WORD['LEAVE'] => 2, JF_WORD['CALL'] => 2, JF_WORD['VER'] => 4,
+                           JF_WORD['INVOKE'] => 1, JF_WORD['(FRAME)'] => 1, JF_WORD['(LOCAL@)'] => 1, JF_WORD['(LOCAL!)'] => 1];
+  /** The instructions whose operand is a length, of this many bytes little-endian, and then that many bytes. */
+  private const COUNTED = [JF_LIT['STR8'] => 1, JF_LIT['STR16'] => 2, JF_LIT['STR32'] => 4, JF_WORD['(ABORT")'] => 1];
+
+  /**
+   * Where each instruction in $code starts: a byte for each offset, 1 where one starts. The code is laid out as codeStart
+   * reads a lock: when it starts with VER, its declaration is the instruction at 0, and its DEFS header is not code, so
+   * nothing starts inside it. (A function's body that starts with either is refused at its first instruction, before it
+   * can jump; any other body is code from its first byte.) From there each instruction is taken at its full length, as
+   * exec and step read it: a direct push and its bytes, every literal and string form, every inline operand and
+   * (ABORT")'s message, a bank escape and its selector, and the plane escape and the byte after it. A byte no word holds
+   * is one byte long, and is refused when it runs. An instruction whose operand runs past the end is the last.
+   * Host work, as the DEFS parse is: it counts as no instruction, and it is bounded by the code's length.
+   */
+  public static function instructionStarts(string $code): string
+  {
+    $n = strlen($code);
+    $starts = str_repeat("\x00", $n);
+    $vm = new self();                                         // reads the layout and the varints: no run's DEFS are touched
+    $p = $vm->codeStart($code);
+    if ($p > 0 && ord($code[0]) === JF_WORD['VER']) $starts[0] = "\x01";
+    while ($p < $n) {
+      $starts[$p] = "\x01";
+      $op = ord($code[$p++]);
+      if ($op <= JF_PUSH_MAX) $p += $op;                      // a direct push: the opcode is the length
+      elseif ($op >= JF_ESC0) $p += 1;
+      elseif (isset(self::OPERAND[$op])) $p += self::OPERAND[$op];
+      elseif (isset(self::COUNTED[$op])) {
+        $w = self::COUNTED[$op];
+        if ($p + $w > $n) break;
+        $len = 0; for ($k = 0; $k < $w; $k++) $len |= ord($code[$p + $k]) << (8 * $k);
+        $p += $w + $len;
+      } elseif ($op === JF_LIT['LITBIG']) {                   // a varint, then that many bytes
+        try { $len = $vm->varint($code, $p); } catch (JfScriptError) { break; }
+        $p += $len;
+      }
+    }
+    return $starts;
   }
 
   private function hashTo(string $code, int $i, callable $h): int {

@@ -352,6 +352,144 @@ tf('ver.laterInFunction','INVOKE#0',                     VER_ELSEWHERE, jf_defs(
 $T[] = ['ver.alone',     "\xd1",                         null, 'truncated operand'];
 $T[] = ['ver.short',     "\xd1\x03\x00\x4a",             null, 'truncated operand'];
 
+// ── a jump lands on the start of an instruction ─────────────────────────────────────────────────────
+// His call, 27 Oct: as BASIC's GOTO lands on a line, a jump lands on the start of an instruction, never inside another
+// instruction's bytes, which the read-back never shows as code. Each word that jumps, set up to take its jump, into each
+// kind of instruction longer than a byte, in a lock and in a stdForth function: at every byte after its first it is
+// refused, naming the word; on its first byte the instruction runs, and then 7.
+const NOT_A_START = 'the target is not the start of an instruction';
+const JUMP_WORDS = ['BRANCH', '0BRANCH', '(?DO)', '(LOOP)', '(+LOOP)', 'LEAVE', 'CALL', 'EXECUTE'];
+/** $word, set up to take its jump to the offset $to, as bytes that start at offset $at: what it needs on the stack, the
+ *  jump, and a word the jump never reaches. A call comes back, so after one it is EXIT, which ends the run. */
+function jumpTo(string $word, int $at, int $to): string {
+  $setup = jf_asm(['BRANCH' => '', '0BRANCH' => '0', '(?DO)' => '5 5', '(LOOP)' => '2 0 (DO)', '(+LOOP)' => '2 0 (DO) 1',
+                   'LEAVE' => '2 0 (DO)', 'CALL' => '', 'EXECUTE' => ''][$word]);
+  $from = $at + strlen($setup) + 3;
+  return $setup . match ($word) {
+    'CALL'    => chr(JF_WORD['CALL']) . pack('v', $to) . chr(JF_WORD['EXIT']),
+    'EXECUTE' => chr(JF_LIT['LIT16']) . pack('v', $to) . chr(JF_WORD['EXECUTE']) . chr(JF_WORD['EXIT']),
+    default   => chr(JF_WORD[$word]) . pack('v', ($to - $from) & 0xffff) . chr(JF_WORD['ABORT']),
+  };
+}
+/** Each kind of instruction longer than a byte: [what goes on the stack before the jump, the instruction given where its
+ *  code ends, what undoes it, and what landing on its first byte gives in a lock and in a function: 7, or a refusal]. */
+$INSTRUCTIONS = [
+  'a direct push'       => ['', fn($end) => "\x02\xaa\xbb", '2DROP'],
+  'LIT8'                => ['', fn($end) => chr(JF_LIT['LIT8']) . "\x9c", 'DROP'],
+  'LIT16'               => ['', fn($end) => chr(JF_LIT['LIT16']) . pack('v', 30000), 'DROP'],
+  'LIT32'               => ['', fn($end) => chr(JF_LIT['LIT32']) . pack('V', 1000000), 'DROP'],
+  'LIT64'               => ['', fn($end) => chr(JF_LIT['LIT64']) . pack('P', PHP_INT_MIN), 'DROP'],
+  'LITBIG'              => ['', fn($end) => chr(JF_LIT['LITBIG']) . "\x03\xaa\xbb\xcc", '2DROP'],
+  'LITBIG, a 3-byte length' => ['', fn($end) => chr(JF_LIT['LITBIG']) . "\xfd\x02\x00\xaa\xbb", '2DROP'],
+  'LITBIG, a 5-byte length' => ['', fn($end) => chr(JF_LIT['LITBIG']) . "\xfe\x02\x00\x00\x00\xaa\xbb", '2DROP'],
+  'STR8'                => ['', fn($end) => chr(JF_LIT['STR8']) . "\x02\xaa\xbb", '2DROP'],
+  'STR16'               => ['', fn($end) => chr(JF_LIT['STR16']) . "\x02\x00\xaa\xbb", '2DROP'],
+  'STR32'               => ['', fn($end) => chr(JF_LIT['STR32']) . "\x02\x00\x00\x00\xaa\xbb", '2DROP'],
+  'BRANCH, its offset'  => ['', fn($end) => chr(JF_WORD['BRANCH']) . "\x00\x00", ''],
+  // each word below is set up to run on: 0BRANCH falls through, (?DO) skips an empty loop, and (LOOP), (+LOOP) and LEAVE
+  // end a loop of one; a taken offset of 0 lands on the next instruction
+  '0BRANCH, its offset' => ['1', fn($end) => chr(JF_WORD['0BRANCH']) . "\x00\x00", ''],
+  '(?DO), its offset'   => ['5 5', fn($end) => chr(JF_WORD['(?DO)']) . "\x00\x00", ''],
+  '(LOOP), its offset'  => ['1 0 (DO)', fn($end) => chr(JF_WORD['(LOOP)']) . "\x00\x00", ''],
+  '(+LOOP), its offset' => ['1 0 (DO) 1', fn($end) => chr(JF_WORD['(+LOOP)']) . "\x00\x00", ''],
+  'LEAVE, its offset'   => ['1 0 (DO)', fn($end) => chr(JF_WORD['LEAVE']) . "\x00\x00", ''],
+  'CALL, its address'   => ['', fn($end) => chr(JF_WORD['CALL']) . pack('v', $end), ''],
+  'VER, its version'    => ['', fn($end) => jf_asm('VER JF 3'), '', VER_ELSEWHERE, VER_ELSEWHERE],
+  '(FRAME), its count'  => ['', fn($end) => jf_asm('(FRAME)#0'), '(UNFRAME)'],
+  '(LOCAL@), its index' => ['7 (FRAME)#1', fn($end) => jf_asm('(LOCAL@)#0'), 'DROP (UNFRAME)'],
+  '(LOCAL!), its index' => ['7 (FRAME)#1 3', fn($end) => jf_asm('(LOCAL!)#0'), '(UNFRAME)'],
+  'INVOKE, its index'   => ['', fn($end) => jf_asm('INVOKE#1'), ''],
+  '(ABORT"), its message' => ['0', fn($end) => jf_asm('(ABORT")$6869'), ''],
+  'a bank escape, its selector' => ['', fn($end) => jf_asm('[CORE:80]'), 'DROP', 'is illegal in jetForth'],
+  'the plane escape, the byte after it' => ['', fn($end) => "\xff\x00", '', 'is illegal in jetForth', 'plane escape 0xff is unassigned'],
+];
+/** A DEFS header: the function under test, its body given as bytes, ( -- x ); then an empty one ( -- ), which INVOKE#1 calls. */
+function defsOf(string $body): string {
+  return chr(JF_RESERVED0) . "\x02" . "\x00\x01\x00\x00" . chr(strlen($body)) . $body . "\x00\x00\x00\x00\x00";
+}
+foreach (['lock' => false, 'function' => true] as $where => $inFunction)
+  foreach ($INSTRUCTIONS as $kind => $spec) {
+    [$before, $instruction, $after] = $spec;
+    $atStart = $spec[$inFunction ? 4 : 3] ?? null;
+    // in a lock, the function INVOKE#1 calls is in a DEFS header before the code; in a function, the code is its body
+    $head = !$inFunction && str_starts_with($kind, 'INVOKE') ? defsOf('') : '';
+    $pre = $head . jf_asm($before); $undo = jf_asm($after);
+    foreach (JUMP_WORDS as $word) {
+      $at = strlen($pre . jumpTo($word, 0, 0)); $width = strlen($instruction(0));
+      $end = $at + $width + strlen($undo) + 1;
+      $script = function (int $to) use ($pre, $word, $instruction, $end, $undo, $inFunction): string {
+        $code = $pre . jumpTo($word, strlen($pre), $to) . $instruction($end) . $undo . jf_asm('7');
+        return $inFunction ? defsOf($code) . jf_asm('INVOKE#0') : $code;
+      };
+      for ($k = 1; $k < $width; $k++) $T[] = ["land.$where.$word.$kind.$k", $script($at + $k), null, "$word: " . NOT_A_START];
+      $T[] = ["land.$where.$word.$kind.start", $script($at), $atStart === null ? [7] : null, $atStart];
+    }
+  }
+// the end of the code is a place to land, and ends the run: the 7 after the jump never runs
+foreach (JUMP_WORDS as $word) {
+  $n = strlen(jumpTo($word, 0, 0)) + 1;
+  $T[] = ["land.end.$word", jumpTo($word, 0, $n) . jf_asm('7'), [], null];
+}
+// a target out of range is refused as it was, in its own words, before where it lands is asked: before 0 and past the
+// end, the code ending inside a push. CALL's address and EXECUTE's LIT16 have no sign, so theirs are past the end only
+foreach (JUMP_WORDS as $word) {
+  $n = strlen(jumpTo($word, 0, 0)) + 2;
+  $range = in_array($word, ['CALL', 'EXECUTE'], true) ? 'call out of range' : 'branch out of range';
+  foreach (in_array($word, ['CALL', 'EXECUTE'], true) ? ['past' => $n + 1] : ['before' => -1, 'past' => $n + 1] as $where => $to)
+    $T[] = ["land.range.$word.$where", jumpTo($word, 0, $to) . jf_asm('$aa'), null, $range];
+}
+// ...and EXECUTE's target is a whole cell: negative, the ends of the cell, and 2^32 + 2 and 2 - 2^32, each of them 2
+// if it were cut to 32 bits
+foreach (['negative' => -1, 'min' => PHP_INT_MIN, 'max' => PHP_INT_MAX, '2^32+2' => (1 << 32) + 2, '-2^32+2' => -(1 << 32) + 2] as $what => $to)
+  $T[] = ["land.range.EXECUTE.$what", chr(JF_LIT['LIT64']) . pack('P', $to) . jf_asm('EXECUTE $aa'), null, 'call out of range'];
+// ...and so is offset 0, in a lock that does not declare a version: each loops back to it until three items are held
+$T[] = ['land.zero.BRANCH',  jf_asm('top: 1 DEPTH 3 < 0BRANCH>end BRANCH>top end:'), [1, 1, 1], null];
+$T[] = ['land.zero.0BRANCH', jf_asm('top: 1 DEPTH 2 > 0BRANCH>top'), [1, 1, 1], null];
+$T[] = ['land.zero.CALL',    jf_asm('1 DEPTH 3 <') . chr(JF_WORD['0BRANCH']) . pack('v', 3) . chr(JF_WORD['CALL']) . "\x00\x00", [1, 1, 1], null];
+$T[] = ['land.zero.EXECUTE', jf_asm('1 DEPTH 3 < 0BRANCH>end 0 EXECUTE end:'), [1, 1, 1], null];
+// a lock's declaration is one instruction at 0: a jump into its version's four bytes is refused, from each word
+foreach (JUMP_WORDS as $word) for ($k = 1; $k <= 4; $k++)
+  $T[] = ["land.ver.$word.$k", jf_asm('VER JF 3') . jumpTo($word, 5, $k), null, "$word: " . NOT_A_START];
+// the DEFS header is not code: nothing starts inside it, after a declaration or with none, and its first byte is no
+// exception. The code after it is where a run starts, and a jump may land there.
+$p = jf_asm('VER JF 3') . $D1;
+for ($t = 5; $t < strlen($p); $t++) {
+  $T[] = ["land.defs.CALL.$t",    $p . chr(JF_WORD['CALL']) . pack('v', $t), null, 'CALL: ' . NOT_A_START];
+  $T[] = ["land.defs.EXECUTE.$t", $p . jf_asm("$t EXECUTE"), null, 'EXECUTE: ' . NOT_A_START];
+  $T[] = ["land.defs.BRANCH.$t",  $p . jumpTo('BRANCH', strlen($p), $t), null, 'BRANCH: ' . NOT_A_START];
+}
+$T[] = ['land.defs.noDeclaration', $D1 . chr(JF_WORD['CALL']) . "\x00\x00", null, 'CALL: ' . NOT_A_START];
+$T[] = ['land.defs.codeStart', $p . jf_asm('top: 1 DEPTH 3 < 0BRANCH>end BRANCH>top end:'), [1, 1, 1], null];
+// EXECUTE's target is worked out as the script runs: 4 3 + is 7, inside the push that starts at 4; 2 2 + is 4, the 7
+tf('land.executeComputed',      '4 3 + EXECUTE $aabbcc',  'EXECUTE: ' . NOT_A_START);
+t('land.executeComputedStart',  '2 2 + EXECUTE 7',        [7, 7]);
+// a function's body is its own code, with its own starts: it loops back to its offset 0, which in the lock is the DEFS
+// header; and a jump into a push inside it is refused there, the refusal coming out of INVOKE
+$T[] = ['land.function.ownZero', jf_defs([[0, 3, 'top: 7 DEPTH 3 < 0BRANCH>end BRANCH>top end:']]) . jf_asm('INVOKE#0'), [7, 7, 7], null];
+$T[] = ['land.function.intoAPush', defsOf("\x02\xaa\xbb" . jumpTo('BRANCH', 3, 1)) . jf_asm('INVOKE#0'), null, 'BRANCH: ' . NOT_A_START];
+// ...and the lock's are its own, in the same run: the lock jumps and then its function, and the other way round, each
+// to a start of its own code that is no start of the other's
+$T[] = ['land.function.lockThenBody', jf_defs([[0, 3, 'top: 7 DEPTH 3 < 0BRANCH>end BRANCH>top end:']]) . jf_asm('BRANCH>go go: INVOKE#0'), [7, 7, 7], null];
+$T[] = ['land.function.bodyThenLock', jf_defs([[0, 3, 'top: 7 DEPTH 3 < 0BRANCH>end BRANCH>top end:']]) . jf_asm('INVOKE#0 BRANCH>go go: 8'), [7, 7, 7, 8], null];
+// a byte no word holds is one byte long: the 7 after it is a start, and landing on it is refused only when it runs
+$T[] = ['land.afterUnknown', jumpTo('BRANCH', 0, 5) . "\xd0" . jf_asm('7'), [7], null];
+$T[] = ['land.onUnknown',    jumpTo('BRANCH', 0, 4) . "\xd0" . jf_asm('7'), null, 'unknown opcode 0xd0'];
+// an instruction whose operand runs past the end is the last: landing on it is refused when it runs, inside it as no start
+$T[] = ['land.onTruncated',     jumpTo('BRANCH', 0, 4) . chr(JF_LIT['LIT16']) . "\x05", null, 'truncated literal'];
+$T[] = ['land.inTruncated',     jumpTo('BRANCH', 0, 5) . chr(JF_LIT['LIT16']) . "\x05", null, 'BRANCH: ' . NOT_A_START];
+// ...and so is a LITBIG whose varint is 8 bytes, which is no script length: nothing after it starts an instruction
+$T[] = ['land.onLitbig8',    jumpTo('BRANCH', 0, 4) . chr(JF_LIT['LITBIG']) . "\xff" . str_repeat("\x00", 8) . jf_asm('7'), null, '8-byte varint is not a script length'];
+$T[] = ['land.pastLitbig8',  jumpTo('BRANCH', 0, 14) . chr(JF_LIT['LITBIG']) . "\xff" . str_repeat("\x00", 8) . jf_asm('7'), null, 'BRANCH: ' . NOT_A_START];
+// ★ the starts, as the engine decodes them, for one instruction of each kind and the 7 after it
+$T[] = ['land.startsOfEachKind', '', null, null, null, function () use ($INSTRUCTIONS) {
+  foreach ($INSTRUCTIONS as [, $instruction]) {
+    $b = $instruction(0);
+    if (InterpreterJF::instructionStarts($b . jf_asm('7')) !== "\x01" . str_repeat("\x00", strlen($b) - 1) . "\x01") return false;
+  }
+  return InterpreterJF::instructionStarts(jf_asm('VER JF 3') . $GLOBALS['D1'] . jf_asm('7'))
+     === "\x01" . str_repeat("\x00", 4 + strlen($GLOBALS['D1'])) . "\x01";
+}];
+
 // ── the preimage's fields ────────────────────────────────────────────────────────────────────────────
 // Each word on the preimages of real ticks: locks of 100 and 300 bytes, so the scriptCode's length prefix is 1 byte and
 // then 3, each run over the preimage of a tick that spends it. A word is pinned against the cut that works today, the
