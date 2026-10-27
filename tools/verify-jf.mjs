@@ -98,7 +98,7 @@ execFileSync('php', [join(ROOT, 'server/verify-jf.php'), `--export=${join(tmp, '
 const cases = JSON.parse(readFileSync(join(tmp, 'cases.json'), 'utf8')); rmSync(tmp, { recursive: true })
 let caseFails = 0
 for (const c of cases) {
-  const r = await runJs(unhex(c.script))
+  const r = await runJs(unhex(c.script), c.preimage === null ? null : unhex(c.preimage))
   const good = c.diag !== null ? r.diag === c.diag
              : c.err !== null ? r.error !== undefined && latin1(unhex(r.error)).includes(c.err)
              : same(r.stack, c.want)
@@ -116,6 +116,8 @@ const bytes = n => Uint8Array.from({ length: n }, () => int(0, 255))
 const W = OPS.JF_WORD, L = OPS.JF_LIT
 const le = (v, w) => { let x = BigInt.asUintN(8 * w, BigInt(v)); const o = []; for (let k = 0; k < w; k++) { o.push(Number(x & 0xffn)); x >>= 8n } return o }
 const plain = Object.keys(W).filter(w => !['BRANCH', '0BRANCH', '(?DO)', '(LOOP)', '(+LOOP)', 'LEAVE', 'CALL', 'EXECUTE', '(FRAME)', '(LOCAL@)', '(LOCAL!)', 'INVOKE', '(ABORT")'].includes(w))
+// the preimage's fields: a byte word writes to a destination it is given, a number word takes nothing
+const BYTE_FIELDS = ['PREVOUTS-HASH', 'SEQUENCES-HASH', 'OUTPOINT', 'SCRIPTCODE', 'OUTPUTS-HASH'], NUMBER_FIELDS = ['TXVALUE', 'NSEQUENCE', 'LOCKTIME']
 const edKeys = Array.from({ length: 3 }, () => generateKeyPairSync('ed25519'))
 const edPub = k => Uint8Array.from(k.publicKey.export({ format: 'der', type: 'spki' }).subarray(12))
 const token = depthOk => {
@@ -138,6 +140,7 @@ const token = depthOk => {
                   return [64, ...sig, 32, ...edPub(k), msg.length, ...msg, W['ED25519-CHECKSIG']] }
   if (r < 0.45) return [int(0xf0, 0xff), int(0, 140)]                                   // bank escape (illegal here)
   if (r < 0.46) return [int(0, 255)]                                                      // any byte at all
+  if (r < 0.48) return rnd() < 0.6 ? [L.LIT32, ...le(pick([2000, 3000, 65500, -1]), 4), W[pick(BYTE_FIELDS)]] : [W[pick(NUMBER_FIELDS)]]
   return [W[pick(plain)]]
 }
 const program = () => {
@@ -162,6 +165,15 @@ const program = () => {
 const progs = Array.from({ length: N_PROGRAMS }, () => ({ script: program(), preimage: rnd() < 0.3 ? bytes(int(0, 200)) : null }))
 // ★ and the shape a real covenant has: PREIMAGE, hashed, its words checked
 for (let k = 0; k < 50; k++) progs.push({ script: Uint8Array.from([L.LIT16, ...le(1000, 2), W.PREIMAGE, L.LIT16, ...le(3000, 2), W.HASH256, L.LIT16, ...le(3000, 2), 32, ...(rnd() < 0.5 ? [] : [W['2DUP']]), W.DROP]), preimage: bytes(int(0, 300)) })
+// ★ and each field word against its cut from PREIMAGE, on preimages too short for it and long enough
+const n16 = v => [L.LIT16, ...le(v, 2)]
+const CUTS = { 'PREVOUTS-HASH': [W.DROP, ...n16(4), W['+'], ...n16(32)], 'SEQUENCES-HASH': [W.DROP, ...n16(36), W['+'], ...n16(32)],
+               'OUTPOINT': [W.DROP, ...n16(68), W['+'], ...n16(36)], 'SCRIPTCODE': [...n16(156), W['-'], W.SWAP, ...n16(104), W['+'], W.SWAP],
+               'OUTPUTS-HASH': [W['+'], ...n16(40), W['-'], ...n16(32)], 'TXVALUE': [W['+'], ...n16(52), W['-'], ...n16(8), W.BIN2NUM],
+               'NSEQUENCE': [W['+'], ...n16(44), W['-'], ...n16(4), W.BIN2NUM], 'LOCKTIME': [W['+'], ...n16(8), W['-'], ...n16(4), W.BIN2NUM] }
+for (const [word, cut] of Object.entries(CUTS)) for (let k = 0; k < 12; k++)
+  progs.push({ script: Uint8Array.from([...n16(1000), W.PREIMAGE, ...cut, ...(NUMBER_FIELDS.includes(word) ? [W[word], W['=']] : [...n16(3000), W[word], W['BYTES=']])]),
+               preimage: bytes(k < 2 ? int(0, 160) : int(157, 460)) })
 const phpOut = runPhp(progs.map(p => ({ script: hex(p.script), preimage: p.preimage ? hex(p.preimage) : null })))
 let agree = 0, differ = 0, phpFaults = 0, stacks = 0, refusals = 0
 const firstDiffs = [], faults = []

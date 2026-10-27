@@ -15,7 +15,8 @@
 // one at f4f05d1, under renamed names. The table has changed since only as DROPPED declares, and the two engines'
 // results differ only as DECLARED says, and on a script that starts with the lock's declaration, as forOld says.
 // secp256k1.php is shared, so the signatures part grades the engine's signature words, and verify-secp256k1-native.php
-// the curve.
+// the curve. A case that reaches a word BUILT names has no old answer to grade: the old engine had not built it.
+// Revision 3's result on it is recorded instead, and verify-jf.php grades the words.
 // The old engine checks Ed25519 with ext/sodium, so its ED25519-CHECKSIG verdicts are sodium's, and the new engine's
 // come from ed25519.php, which verify-ed25519.php grades. The old engine computes with ext/gmp, so it is the oracle only
 // where gmp is loaded and the revision is in this repository's history. Without it the case-by-case comparison is
@@ -33,8 +34,8 @@ declare(strict_types=1);
 const REV = 'f4f05d192bbd44e47f22447c9b4b51a1f8215abb';
 const DEFAULT_PROGRAMS = 60000, DEFAULT_SEED = 20261024;
 /** sha256 over the cells part at the default programs and seed: each case, then the old engine's result with forOld and
- *  DECLARED applied. */
-const CELLS_DIGEST = 'c917d8fd87cbfd70883faa1fc4f10ba25363087c1fc573723e88dd7241614753';
+ *  DECLARED applied, or revision 3's on a case that reaches a word BUILT names. */
+const CELLS_DIGEST = '318a1ed7f87939e7130b69523afa0c848fe713f3ce9aefbe5f9f5bf1642ac21d';
 /** What the opcode table has changed since REV: these words were dropped from revision 3, their bytes left unassigned,
  *  and nothing else moved. */
 const DROPPED = ['TXVERSION' => 0xd0, 'VERIF' => 0xd2, 'VERNOTIF' => 0xd3];
@@ -50,6 +51,9 @@ const DECLARED = [
   'VER: version words are §6b and not built yet'
     => 'VER declares the version a lock is written for, and is valid only as its first instruction',
 ];
+/** The words built since REV, the preimage's fields. The old engine refused each, in the covenant tier, as not built yet:
+ *  a case where that is its answer reached the word, and from there the old engine has nothing to compare. */
+const BUILT = ['PREVOUTS-HASH', 'SEQUENCES-HASH', 'OUTPOINT', 'SCRIPTCODE', 'TXVALUE', 'NSEQUENCE', 'OUTPUTS-HASH', 'LOCKTIME'];
 
 $plain = array_values(array_filter(array_slice($argv, 1), fn($a) => !str_starts_with($a, '--')));
 $opt = function (string $name) use ($argv): ?string {
@@ -140,6 +144,13 @@ function declared(string $outcome, array $c): string {
       if ($outcome === $form . $was) return $form . $now;
   return $outcome;
 }
+/** The word BUILT names that the old engine's result refuses as not built, or null when it is no such refusal. */
+function reachedBuilt(string $outcome): ?string {
+  foreach (BUILT as $word)
+    foreach (['JfScriptError: ', 'refused | '] as $form)
+      if ($outcome === $form . "$word: not built yet — derive it from PREIMAGE with SUBSTR") return $word;
+  return null;
+}
 if ($noOracle !== null) echo "  - no oracle: $noOracle. The case-by-case comparison is skipped, never counted as passed.\n";
 
 // ── what an engine did with a case, as one string ────────────────────────────────────────────────────
@@ -177,15 +188,18 @@ function caseKey(array $c): string {
 $shown = fn(string $s): string => strlen($s) > 160 ? substr($s, 0, 160) . '...' : $s;
 
 /** Run every case of a part through both engines, or the new one alone with no oracle, and report. Returns the sha256
- *  over each case and the old engine's result with DECLARED applied: with no oracle, the new engine's. */
+ *  over each case and the old engine's result with DECLARED applied, or on a case that reaches a word BUILT names, the new
+ *  engine's: with no oracle, the new engine's on every case. */
 function grade(string $part, iterable $cases, ?string $noOracle, callable $shown): string {
   $h = hash_init('sha256'); $n = $same = $faults = $changed = 0; $diffs = []; $kinds = ['stack' => 0, 'accepted' => 0, 'refused' => 0, 'error' => 0];
+  $built = [];                                                     // the cases that reached a word BUILT names, by word
   foreach ($cases as $c) {
     $new = outcome('InterpreterJF', $c);
     if ($noOracle === null) {
       $given = forOld($c);
       $raw = outcome('OldInterpreterJF', $given); $old = declared($raw, $c);
       if ($old !== $raw || $given !== $c) $changed++;
+      if (($word = reachedBuilt($raw)) !== null) { $old = $new; $built[$word] = ($built[$word] ?? 0) + 1; }
     }
     else $old = $new;
     $n++;
@@ -199,8 +213,11 @@ function grade(string $part, iterable $cases, ?string $noOracle, callable $shown
   foreach ($diffs as [$c, $old, $new])
     printf("  ✗ differ  %s %s\n      old: %s\n      new: %s\n", $c[0], $shown(bin2hex($c[0] === 'tick' ? $c[1] . '|' . $c[2] : $c[1])),
            $shown(addcslashes($old, "\0..\37\177..\377")), $shown(addcslashes($new, "\0..\37\177..\377")));
-  if ($noOracle === null) ok($same === $n, "$part: $same of $n cases give the same verdict, stack and error text in both engines, "
-                                          . "$changed of them through DECLARED");
+  $nb = array_sum($built);                                         // on these the two results are the same by construction
+  if ($noOracle === null) ok($same === $n, "$part: " . ($same - $nb) . ' of ' . ($n - $nb) . ' cases give the same verdict, stack and '
+                                          . "error text in both engines, $changed of them through DECLARED");
+  if ($nb) printf("    %d cases reach a word BUILT names, which %s had not built, and are recorded as revision 3 gives them: %s\n",
+                  $nb, substr(REV, 0, 7), implode(', ', array_map(fn($w, $k) => "$w $k", array_keys($built), $built)));
   printf("    %d programs ended with a stack and %d with an error; %d ticks accepted and %d refused\n",
          $kinds['stack'], $kinds['error'], $kinds['accepted'], $kinds['refused']);
   if ($faults) echo "  ⚠ $part: the new engine faulted outside its own errors on $faults cases, a defect even where the old one did too\n";
@@ -505,9 +522,9 @@ echo "── cells: " . ($noOracle === null ? 'both engines, case by case' : 'th
 $digest = grade('cells', $counted(cellCases($programs, $seed), $nCells), $noOracle, $shown);
 $atDefault = $programs === DEFAULT_PROGRAMS && $seed === DEFAULT_SEED;
 if ($atDefault && $noOracle === null)
-  ok($digest === CELLS_DIGEST, "the old engine's results on the cells part, DECLARED applied, are the ones recorded in CELLS_DIGEST (sha256 $digest)");
+  ok($digest === CELLS_DIGEST, "the old engine's results on the cells part, DECLARED applied and BUILT recorded, are the ones recorded in CELLS_DIGEST (sha256 $digest)");
 elseif ($atDefault)
-  ok($digest === CELLS_DIGEST, "$nCells cases: the new engine's results are the old engine's, DECLARED applied, by the recorded digest (sha256 $digest)");
+  ok($digest === CELLS_DIGEST, "$nCells cases: the new engine's results are the old engine's, DECLARED applied and BUILT recorded, by the recorded digest (sha256 $digest)");
 else echo "  - programs or seed differ from the defaults, so the recorded digest does not apply\n";
 printf("  %d cases, %.1f s\n", $nCells, (hrtime(true) - $t0) / 1e9);
 

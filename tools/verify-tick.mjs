@@ -287,6 +287,20 @@ for (const [what, lock, without] of [
   ok(thrown instanceof JfHostError, `${what} — ${thrown ? thrown.constructor.name : 'a verdict'}`)
 }
 
+// a judge given no preimage at all has no transaction context, as PHP's null: each word that reads one refuses so
+console.log('\n── no preimage given: each word that reads one refuses as PHP refuses with none ──')
+{
+  const NUMBER_FIELDS = ['TXVALUE', 'NSEQUENCE', 'LOCKTIME']
+  const cases = ['PREIMAGE', 'PREVOUTS-HASH', 'SEQUENCES-HASH', 'OUTPOINT', 'SCRIPTCODE', 'OUTPUTS-HASH', ...NUMBER_FIELDS]
+    .map(w => [w, [], [...(NUMBER_FIELDS.includes(w) ? [] : lit32(2000)), W(w), W('TRUE')]])
+  const php = runPhp(cases)
+  for (const [k, [w, u, l]] of cases.entries()) {
+    const v = await verifyTick({ unlocking: Uint8Array.from(u), lock: Uint8Array.from(declared(l)), crypto })
+    ok(v.accepted === false && v.error === `${w}: no transaction context` && php[k].error === hex(v.errorBytes ?? []),
+       `${w}, the judge given no preimage: "${v.error}"`)
+  }
+}
+
 // ★ the same two attacks run as one joined script, to show what each rule stops. VER is valid only as a lock's first
 //   instruction, and a joined script's first is the unlocking script's, so the declaration stands as five CHARS, a word
 //   that does nothing: the bytes are the ones judged above, each where it was

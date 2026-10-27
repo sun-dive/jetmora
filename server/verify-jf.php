@@ -19,6 +19,7 @@ require_once __DIR__ . '/interpreter-jf.php';
 
 // ⚠ the assembler now lives in jf-asm.php — the wallet needs it too
 require_once __DIR__ . '/jf-asm.php';
+require_once __DIR__ . '/preimage.php';
 
 // ── the tests ────────────────────────────────────────────────────────────────────────────────────────
 $T = [];
@@ -351,6 +352,83 @@ tf('ver.laterInFunction','INVOKE#0',                     VER_ELSEWHERE, jf_defs(
 $T[] = ['ver.alone',     "\xd1",                         null, 'truncated operand'];
 $T[] = ['ver.short',     "\xd1\x03\x00\x4a",             null, 'truncated operand'];
 
+// ── the preimage's fields ────────────────────────────────────────────────────────────────────────────
+// Each word on the preimages of real ticks: locks of 100 and 300 bytes, so the scriptCode's length prefix is 1 byte and
+// then 3, each run over the preimage of a tick that spends it. A word is pinned against the cut that works today, the
+// same bytes taken from PREIMAGE where the layout puts them: `100 PREIMAGE DROP 4 + 32` is PREVOUTS-HASH's field.
+/** expect this stack or this refusal, the script run with $pre as its transaction context: [$script, $pre] */
+function tx(string $id, array $run, ?array $want, ?string $err = null): void {
+  global $T; $T[] = [$id, $run[0], $want, $err, null, null, $run[1]];
+}
+/** $code as a lock of exactly $size bytes: its declaration, its DEFS header if it has one, a push of filler it drops, the code */
+function lockOf(string $code, int $size, string $defs = ''): string {
+  $head = jf_asm('VER JF 3') . $defs; $n = $size - strlen($head) - strlen($code) - 4;
+  if ($n < 0) throw new RuntimeException("no lock of $size bytes holds this code");
+  return $head . chr(JF_LIT['STR16']) . pack('v', $n) . str_repeat("\xee", $n) . chr(JF_WORD['2DROP']) . $code;
+}
+/** The preimage of a tick that spends $lock at input 1 of two, with the value $value: Preimage::build's bytes. */
+function fieldTick(string $lock, string $value, int $locktime): string {
+  return Preimage::build(['version' => 0x464a0003, 'locktime' => $locktime,
+    'inputs'  => [['prevEntry' => hash('sha256', 'another tick', true), 'index' => 3, 'unlocking' => '', 'sequence' => 9],
+                  ['prevEntry' => hash('sha256', 'the tip', true), 'index' => 1, 'unlocking' => '', 'sequence' => 0xfffffffe]],
+    'outputs' => [['value' => 42, 'locking' => $lock], ['value' => 1, 'locking' => "\x51"]]], 1, $lock, $value);
+}
+/** Each word's cut from `( c-addr u )` of PREIMAGE: a span for the byte words, a number for the others. */
+const FIELD_CUTS = ['PREVOUTS-HASH' => 'DROP 4 + 32', 'SEQUENCES-HASH' => 'DROP 36 + 32', 'OUTPOINT' => 'DROP 68 + 36',
+                    'SCRIPTCODE' => '156 - SWAP 104 + SWAP', 'OUTPUTS-HASH' => '+ 40 - 32',
+                    'TXVALUE' => '+ 52 - 8 BIN2NUM', 'NSEQUENCE' => '+ 44 - 4 BIN2NUM', 'LOCKTIME' => '+ 8 - 4 BIN2NUM'];
+const FIELD_NUMBERS = ['TXVALUE', 'NSEQUENCE', 'LOCKTIME'];
+// locktime 0, as every entry's; and once not, so that LOCKTIME is seen unsigned. The value once has its top bit set.
+foreach ([100 => [pack('P', 41), 0, 41], 300 => [pack('P', PHP_INT_MIN + 9), 0x89abcdef, PHP_INT_MIN + 9]] as $size => [$value, $locktime, $cell]) {
+  $over = function (string $src, string $defs = '') use ($size, $value, $locktime): array {
+    $lock = lockOf(jf_asm($src), $size, $defs);
+    return [$lock, fieldTick($lock, $value, $locktime)];
+  };
+  $fieldLength = ['PREVOUTS-HASH' => 32, 'SEQUENCES-HASH' => 32, 'OUTPOINT' => 36, 'OUTPUTS-HASH' => 32,
+                  'SCRIPTCODE' => Preimage::scriptCodeVarintSize($size) + $size];
+  foreach (FIELD_CUTS as $word => $cut) {
+    $number = in_array($word, FIELD_NUMBERS, true);
+    tx("field.$word.lock$size", $over("100 PREIMAGE $cut " . ($number ? "$word =" : "2000 $word BYTES=")), [-1]);
+    // its shape: ( dest -- dest u ) for bytes, ( -- n ) for a number, the number the tick's entry holds
+    tx("field.$word.lock$size.shape", $over($number ? $word : "2000 $word"),
+       $number ? [['TXVALUE' => $cell, 'NSEQUENCE' => 0xfffffffe, 'LOCKTIME' => $locktime][$word]] : [2000, $fieldLength[$word]]);
+    // ⛔ inside a function it is refused before anything else, though the tick has a preimage
+    tx("field.$word.lock$size.inFunction", $over('INVOKE#0', jf_defs([[0, 2, $number ? $word : "100 $word"]])), null, 'covenant-tier only');
+  }
+  // SCRIPTCODE is the field as the preimage carries it: its length prefix first, then the lock that is running
+  tx("field.SCRIPTCODE.lock$size.prefix", $over($size < 253 ? '2000 SCRIPTCODE DROP C@' : '2000 SCRIPTCODE DROP C@ 2001 2 BIN2NUM'),
+     $size < 253 ? [$size] : [0xfd, $size]);
+  // ⛔ a destination out of program memory is refused as every write is: past its end, below it, in the push space
+  tx("field.OUTPOINT.lock$size.past",     $over('65536 OUTPOINT'),      null, 'memory out of range: addr=65536 len=36 size=65536');
+  tx("field.PREVOUTS-HASH.lock$size.below", $over('-1 PREVOUTS-HASH'),  null, 'memory out of range: addr=-1 len=32 size=65536');
+  tx("field.OUTPUTS-HASH.lock$size.pushSpace", $over('16777216 OUTPUTS-HASH'), null, 'memory out of range: addr=16777216 len=32');
+  tx("field.SCRIPTCODE.lock$size.past",   $over('65500 SCRIPTCODE'),    null, 'memory out of range: addr=65500 len=' . $fieldLength['SCRIPTCODE']);
+}
+// TXVALUE converts its 8 bytes as BIN2NUM does: with the top bit set, a negative cell
+tx('field.TXVALUE.topBit', [jf_asm('TXVALUE $ffffffffffffffff BIN2NUM'), fieldTick("\x51", str_repeat("\xff", 8), 0)], [-1, -1]);
+tx('field.TXVALUE.topBitOnly', [jf_asm('TXVALUE'), fieldTick("\x51", pack('P', PHP_INT_MIN), 0)], [PHP_INT_MIN]);
+// ⛔ no transaction context: a bare run has none. A byte word pops its destination first, as PREIMAGE does.
+foreach (FIELD_CUTS as $word => $cut) {
+  $number = in_array($word, FIELD_NUMBERS, true);
+  tf("field.$word.noContext", $number ? $word : "100 $word", "$word: no transaction context");
+  if (!$number) tf("field.$word.noDestination", $word, 'stack underflow');
+  // ⛔ the tier guard comes before the destination is popped: a function holding nothing is refused for its tier
+  if (!$number) tf("field.$word.inFunctionNoDestination", 'INVOKE#0', 'covenant-tier only', jf_defs([[0, 2, $word]]));
+}
+// ⛔ a preimage too short to hold the field: a host never builds one, so it is refused rather than cut past its ends
+$short = fn(int $n) => str_repeat("\x07", $n);
+tx('field.SCRIPTCODE.short',      [jf_asm('2000 SCRIPTCODE'), $short(155)], null, 'SCRIPTCODE: the preimage is too short');
+tx('field.SCRIPTCODE.emptyField', [jf_asm('2000 SCRIPTCODE'), $short(156)], [2000, 0]);
+tx('field.OUTPOINT.short',        [jf_asm('2000 OUTPOINT'), $short(103)], null, 'OUTPOINT: the preimage is too short');
+tx('field.TXVALUE.short',         [jf_asm('TXVALUE'), $short(51)], null, 'TXVALUE: the preimage is too short');
+tx('field.TXVALUE.justLongEnough',[jf_asm('TXVALUE'), $short(52)], [0x0707070707070707]);
+tx('field.LOCKTIME.empty',        [jf_asm('LOCKTIME'), ''], null, 'LOCKTIME: the preimage is too short');
+// a byte word's write is charged as every write is, one instruction more for each whole 64 bytes: SCRIPTCODE of a
+// 64,000-byte field costs 1,001, so a loop of 199 trips, 1,004 instructions each, fits run()'s 200,000; 200 do not
+$loopOf = fn(int $n) => jf_asm("$n 0 (DO) top: 0 SCRIPTCODE 2DROP (LOOP)>top TRUE");
+tx('field.SCRIPTCODE.charged',      [$loopOf(199), $short(64156)], [-1]);
+tx('field.SCRIPTCODE.chargedPast',  [$loopOf(200), $short(64156)], null, 'op budget exhausted');
+
 // ── ★★★ THE ORDERING IS DERIVABLE, AND THAT IS A PROPERTY WORTH PINNING ─────────────────────────────
 // §10.5e: *"the initial fill is alphabetical."* ⚠ That was true of the BANKS and was NOT true of the
 // single-byte set until 7 Sept — nine of fifteen groups were in "natural" order (DUP DROP SWAP OVER
@@ -408,7 +486,8 @@ foreach ($argv as $arg) if (str_starts_with($arg, '--export=')) {
     if (isset($case[5])) continue;                        // a property of the PHP map; verify-jf.mjs pins the JS map itself
     $out[] = ['id' => $case[0], 'script' => bin2hex($case[1]),
               'want' => $case[2] === null ? null : array_map('strval', $case[2]),
-              'err' => $case[3], 'diag' => isset($case[4]) ? bin2hex($case[4]) : null];
+              'err' => $case[3], 'diag' => isset($case[4]) ? bin2hex($case[4]) : null,
+              'preimage' => isset($case[6]) ? bin2hex($case[6]) : null];
   }
   file_put_contents(substr($arg, 9), json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
   printf("exported %d cases\n", count($out));
@@ -429,6 +508,7 @@ foreach ($T as $case) {
     continue;
   }
   $vm = new InterpreterJF();
+  $vm->setPreimage($case[6] ?? null);                    // a case with a transaction context carries its preimage
   try {
     $stack = $vm->run($script);
     $got = array_map('strval', $stack);

@@ -880,14 +880,23 @@ final class InterpreterJF
         if ($this->preimage === null) throw new JfScriptError('PREIMAGE: no transaction context');
         $this->write($d, $this->preimage);
         $this->push($d); $this->push(strlen($this->preimage)); return $i; }
-      // ⏭ The field accessors are slices of the preimage and are not built yet — see verify-jf.php.
+      // The preimage's fields, each cut where FIELDS says, in PREIMAGE's order of checks: a number is pushed as a
+      // number, and bytes are written to a destination the caller gives, as PREIMAGE writes the whole.
+      //   PREVOUTS-HASH SEQUENCES-HASH OUTPOINT SCRIPTCODE OUTPUTS-HASH  ( dest -- dest u )
       case $W['PREVOUTS-HASH']: case $W['SEQUENCES-HASH']: case $W['OUTPOINT']:
-      case $W['SCRIPTCODE']: case $W['TXVALUE']: case $W['NSEQUENCE']: case $W['OUTPUTS-HASH']:
-      case $W['LOCKTIME']:
-        // ⚠ The guard goes on FIRST, so it is already in place the day these are built rather than
-        //   being something to remember later.
-        $this->covenantOnly(jf_op_name($op), $covenant);
-        throw new JfScriptError(jf_op_name($op) . ': not built yet — derive it from PREIMAGE with SUBSTR');
+      case $W['SCRIPTCODE']: case $W['OUTPUTS-HASH']: {
+        $word = jf_op_name($op); $this->covenantOnly($word, $covenant); $d = $this->pop();
+        if ($this->preimage === null) throw new JfScriptError("$word: no transaction context");
+        $f = $this->field($word);
+        $this->write($d, $f);
+        $this->push($d); $this->push(strlen($f)); return $i; }
+      //   TXVALUE             ( -- n )  8 bytes as a cell, converted as BIN2NUM converts them
+      //   NSEQUENCE LOCKTIME  ( -- n )  4 bytes, unsigned
+      case $W['TXVALUE']: case $W['NSEQUENCE']: case $W['LOCKTIME']: {
+        $word = jf_op_name($op); $this->covenantOnly($word, $covenant);
+        if ($this->preimage === null) throw new JfScriptError("$word: no transaction context");
+        $f = $this->field($word);
+        $this->push(strlen($f) === 8 ? unpack('P', $f)[1] : unpack('V', $f)[1]); return $i; }
       // the lock's declaration (codeStart): a lock's first instruction, reached here only by a branch back to it
       case $W['VER']:
         if (!$covenant || $i !== 1) throw new JfScriptError(self::VER_ELSEWHERE);
@@ -998,6 +1007,26 @@ final class InterpreterJF
     if (!$covenant)
       throw new JfScriptError("$word is covenant-tier only: a stdForth function computes from what it "
                             . 'was given, and reaches for nothing else');
+  }
+
+  /**
+   * Where each field word cuts the preimage, [from, to), in BIP143's layout (preimage.php); a negative offset counts
+   * from the end. Everything after the scriptCode field is 52 bytes, so the fields there are counted from the end,
+   * whatever the script's length. SCRIPTCODE is that field as the preimage carries it, its length prefix first.
+   */
+  private const FIELDS = ['PREVOUTS-HASH' => [4, 36], 'SEQUENCES-HASH' => [36, 68], 'OUTPOINT' => [68, 104],
+                          'SCRIPTCODE' => [104, -52], 'TXVALUE' => [-52, -44], 'NSEQUENCE' => [-44, -40],
+                          'OUTPUTS-HASH' => [-40, -8], 'LOCKTIME' => [-8, -4]];
+
+  /** A field's bytes, refused when the preimage is too short to hold them. */
+  private function field(string $word): string
+  {
+    $n = strlen($this->preimage);
+    [$from, $to] = self::FIELDS[$word];
+    if ($from < 0) $from += $n;
+    if ($to < 0) $to += $n;
+    if ($from < 0 || $to > $n || $from > $to) throw new JfScriptError("$word: the preimage is too short");
+    return substr($this->preimage, $from, $to - $from);
   }
 
   private function frame(): array {

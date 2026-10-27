@@ -13,14 +13,15 @@
 //              of each varint size, values of 0 and 2^64 - 1, every input, and an input that is not there
 //   judge      tools/thread.mjs's judge against CovenantThread::judge, tick for tick: the ticks server/verify-tip.php sends
 //              (its --export; an answer the service gave from its judge must be the PHP judge's), server/verify-wired.php's
-//              counter, and random ticks of several inputs, each version, locks that read the preimage, hash it, sign it
-//              (secp256k1 and Ed25519) or abort, each lock declaring its version, now and then another or none. The same
-//              verdict, the same refusal bytes, the same stack, and no verdict in the same cases in the same words. Then
-//              crypto missing or broken: no verdict, never a refusal. Then the lock's declaration case by case: a tick
-//              naming another version, a lock with none or one this host does not serve, VER later in a lock or in a
-//              function, and a branch back to it
-//   mutants    tools/preimage.mjs altered in a copy (field order, value width, the scriptCode length varint, and more), and
-//              the judge and the dispatcher altered: each copy must disagree with PHP somewhere
+//              counter, and random ticks of several inputs, each version, locks that read the preimage, read its fields by
+//              their words, hash it, sign it (secp256k1 and Ed25519) or abort, each lock declaring its version, now and then
+//              another or none. The same verdict, the same refusal bytes, the same stack, and no verdict in the same cases in
+//              the same words. Then crypto missing or broken: no verdict, never a refusal. Then the lock's declaration case
+//              by case: a tick naming another version, a lock with none or one this host does not serve, VER later in a
+//              lock or in a function, and a branch back to it. Then the preimage's fields: each word on ticks of locks of
+//              100 and 300 bytes, against its cut from PREIMAGE, in a function, and at a destination out of program memory
+//   mutants    tools/preimage.mjs altered in a copy (field order, value width, the scriptCode length varint, and more), the
+//              judge, the dispatcher and two field cuts altered: each copy must disagree with PHP somewhere
 //   browser    what a page loads names nothing of node's; with --browser, headless Chromium runs the judge on the same
 //              ticks, from the files in tools/, and must give PHP's verdicts
 // basic/test/thread.mjs judges every tick of the BASIC thread's corpus (basic/test/thread-ticks.php) with this judge too.
@@ -371,7 +372,18 @@ const RANDOM = []
 const edKeys = Array.from({ length: 3 }, () => { const k = generateKeyPairSync('ed25519'); return { priv: k.privateKey, pub: Uint8Array.from(k.publicKey.export({ format: 'der', type: 'spki' }).subarray(12)) } })
 const VERSIONS = [() => versionBuild('JF', 2), () => versionBuild('JF', 1), () => versionBuild('JF', 4), () => versionBuild('SV', 1), () => versionBuild('BT', 1),
                   () => 103, () => 0, () => versionBuild('ZZ', 1), () => 0x00610000, () => 0x41000000, () => (versionBuild('JF', 3) | 0x80) >>> 0]
-const KINDS = ['hash256', 'slice', 'hashes', 'ecdsa', 'ed25519', 'abort', 'random', 'true']
+const KINDS = ['hash256', 'slice', 'field', 'hashes', 'ecdsa', 'ed25519', 'abort', 'random', 'true']
+/** The preimage's fields: a byte word writes to a destination it is given, a number word takes nothing */
+const BYTE_FIELDS = ['PREVOUTS-HASH', 'SEQUENCES-HASH', 'OUTPOINT', 'SCRIPTCODE', 'OUTPUTS-HASH'], NUMBER_FIELDS = ['TXVALUE', 'NSEQUENCE', 'LOCKTIME']
+const FIELD_WORDS = [...BYTE_FIELDS, ...NUMBER_FIELDS]
+/** Each word's field cut by hand from `( c-addr u )` of PREIMAGE, where the layout puts it: the cut that works without the word */
+const CUTS = { 'PREVOUTS-HASH': [W.DROP, ...num(4), W['+'], ...num(32)], 'SEQUENCES-HASH': [W.DROP, ...num(36), W['+'], ...num(32)],
+               'OUTPOINT': [W.DROP, ...num(68), W['+'], ...num(36)], 'SCRIPTCODE': [...num(156), W['-'], W.SWAP, ...num(104), W['+'], W.SWAP],
+               'OUTPUTS-HASH': [W['+'], ...num(40), W['-'], ...num(32)], 'TXVALUE': [W['+'], ...num(52), W['-'], ...num(8), W.BIN2NUM],
+               'NSEQUENCE': [W['+'], ...num(44), W['-'], ...num(4), W.BIN2NUM], 'LOCKTIME': [W['+'], ...num(8), W['-'], ...num(4), W.BIN2NUM] }
+/** A field read by its word and cut from PREIMAGE as `cut` says, the two compared: true when they are the same */
+const fieldCheck = (word, cut = word) => [...num(1000), W.PREIMAGE, ...CUTS[cut],
+  ...(NUMBER_FIELDS.includes(word) ? [W[word], W['=']] : [...num(3000), W[word], W['BYTES=']])]
 const plainWords = Object.keys(W).filter(w => !['BRANCH', '0BRANCH', '(?DO)', '(LOOP)', '(+LOOP)', 'LEAVE', 'CALL', 'EXECUTE', '(FRAME)', '(LOCAL@)', '(LOCAL!)', 'INVOKE', '(ABORT")', 'LIT8', 'LIT16', 'LIT32', 'LIT64', 'LITBIG', 'STR8', 'STR16', 'STR32'].includes(w) && W[w] !== undefined)
 /** A random token for the 'random' locks, as verify-jf.mjs makes them: no loops, so every one ends */
 const token = () => {
@@ -381,6 +393,7 @@ const token = () => {
   if (r < 0.36) return push(rbytes(pick([0, 1, 8, 20, 32])))
   if (r < 0.40) return [W['0BRANCH'], int(0, 6), 0]
   if (r < 0.43) return [...num(1000), W.PREIMAGE]
+  if (r < 0.44) return chance(0.6) ? [...num(int(2000, 3000)), W[pick(BYTE_FIELDS)]] : [W[pick(NUMBER_FIELDS)]]
   if (r < 0.45) return [W['(ABORT")'], 2, 0x6f, 0xff]
   if (r < 0.46) return [int(0, 255)]
   return [W[pick(plainWords)]]
@@ -415,7 +428,7 @@ for (let t = 0; t < N_TICKS; t++) {
   /** 2DROP for each push of the unlocking script; now and then one too few, so two items are left */
   const dropsFor = u => Array(Math.max(0, countPushes(u) - (chance(0.06) ? 1 : 0))).fill(W['2DROP'])
   const extra = () => chance(0.05) ? push(rbytes(3)) : []      // one push too many
-  let unlock, lock, alg = null
+  let unlock, lock, alg = null, field = null, cut = null
   if (kind === 'ecdsa' || kind === 'ed25519') {
     // the lock is made first, then the signature over the preimage that covers it
     const key = kind === 'ecdsa' ? pick(nodeKeys) : pick(edKeys)
@@ -449,6 +462,13 @@ for (let t = 0; t < N_TICKS; t++) {
     const want = p.slice(off, off + cnt)
     if (chance(0.15)) want[int(0, cnt - 1)] ^= 1
     lock = build(off, want)
+  } else if (kind === 'field') {
+    // a field read by its word and cut from PREIMAGE by hand, the two compared; now and then against another field's cut
+    unlock = randomPushes()
+    field = pick(FIELD_WORDS)
+    const like = FIELD_WORDS.filter(w => w !== field && NUMBER_FIELDS.includes(w) === NUMBER_FIELDS.includes(field))
+    cut = chance(0.15) ? pick(like) : field
+    lock = Uint8Array.from([...decl, ...pad, ...dropsFor(unlock), ...fieldCheck(field, cut)])
   } else {
     unlock = randomPushes()
     if (chance(0.05)) unlock.push(...num(5))                  // not byte pushes only
@@ -459,7 +479,7 @@ for (let t = 0; t < N_TICKS; t++) {
     else { const body = chance(0.5) ? drops : []; for (let n = int(1, 20); n > 0; n--) body.push(...token()); lock = Uint8Array.from([...decl, ...pad, ...body]) }
   }
   if (at < nIn) inputs[at].unlocking = Uint8Array.from(unlock)
-  RANDOM.push({ what: `random tick ${t} (${kind}${alg ? ` ${alg}` : ''}, ${nIn} input${nIn > 1 ? 's' : ''}, judged at ${at})`, kind, alg,
+  RANDOM.push({ what: `random tick ${t} (${kind}${alg ? ` ${alg}` : ''}${field ? ` ${field}` : ''}, ${nIn} input${nIn > 1 ? 's' : ''}, judged at ${at})`, kind, alg, field, cut,
                 entry: hex(serializeEntry(entry)), input: at, lock: hex(lock), value: hex(le64(value)) })
 }
 /** How many pushes a byte-push script holds (the lock drops each one's two cells) */
@@ -480,10 +500,14 @@ function countPushes(s) {
   ok(same === RANDOM.length, `the PHP judge's answer on every one of ${RANDOM.length} random ticks (seed ${SEED}): ${tally(RANDOM.map(c => kindOf(c.php)))}`)
   const accepted = KINDS.filter(k => RANDOM.some(c => c.kind === k && c.php.accepted))
   const algs = ['SHA256', 'SHA1', 'RIPEMD160', 'HASH160', 'HASH256'].filter(a => RANDOM.some(c => c.alg === a && c.php.accepted))
-  ok(['hash256', 'slice', 'hashes', 'ecdsa', 'ed25519', 'true'].every(k => accepted.includes(k)) && algs.length === 5
+  ok(['hash256', 'slice', 'field', 'hashes', 'ecdsa', 'ed25519', 'true'].every(k => accepted.includes(k)) && algs.length === 5
      && RANDOM.some(c => c.php.accepted && parseEntry(unhex(c.entry)).inputs.length > 1 && c.input > 0)
      && RANDOM.some(c => c.php.accepted && unhex(c.lock).length >= 253),
      `accepted among them: every kind of lock (${accepted.join(', ')}), each hash (${algs.join(', ')}), a tick judged past its first input, and locks of 253 bytes and more`)
+  const fields = FIELD_WORDS.filter(w => RANDOM.some(c => c.field === w && c.php.accepted))
+  ok(fields.length === FIELD_WORDS.length && RANDOM.some(c => c.field && c.php.accepted && unhex(c.lock).length >= 253)
+     && RANDOM.some(c => c.field && c.cut !== c.field && c.php.accepted === false && c.php.stack),
+     `and each field word read against its cut, accepted (${fields.join(', ')}), on locks of 253 bytes and more, and refused against another field's cut`)
   const reasons = new Set(RANDOM.filter(c => c.php.error).map(c => Buffer.from(c.php.error, 'hex').toString('latin1').replace(/: .*$|[0-9]+/g, '').slice(0, 40)))
   console.log(`  - ${reasons.size} kinds of refusal among them, e.g. ${[...reasons].slice(0, 6).map(r => JSON.stringify(r)).join(', ')}`)
 }
@@ -613,6 +637,48 @@ const DECLARE = []
   }
 }
 
+// 4g. the preimage's fields: each word on real ticks, against the cut that works without it
+console.log('\n── the preimage\'s fields: each word on real ticks of locks of 100 and 300 bytes ──')
+const FIELD = []
+{
+  const JF3 = versionBuild('JF', 3), value = (1n << 63n) + 9n, sequence = 0xfffffffe
+  /** A tick spending a lock of exactly `size` bytes at input 1 of two: its declaration, its DEFS header if it has one, a
+   *  push of filler it drops, a 2DROP for the unlocking script's one push, then `code`. What the PHP judge must answer:
+   *  accepted, or refused with these words in the refusal. */
+  const add = (what, size, code, expect, defs = []) => {
+    const n = size - 5 - defs.length - 3 - 2 - code.length
+    const lock = Uint8Array.from([...declare(), ...defs, L.STR16, n & 0xff, n >> 8, ...new Uint8Array(n).fill(0xee), W['2DROP'], W['2DROP'], ...code])
+    const e = { version: JF3, locktime: 0, outputs: [{ value: 42n, locking: lock }, { value: 1n, locking: Uint8Array.of(W.TRUE) }],
+                inputs: [{ prevEntry: rbytes(32), index: 3, unlocking: Uint8Array.of(1, 1), sequence: 9 },
+                         { prevEntry: rbytes(32), index: 1, unlocking: Uint8Array.of(1, 2), sequence }] }
+    FIELD.push({ what: `a lock of ${lock.length}: ${what}`, expect, size, entry: hex(serializeEntry(e)), input: 1, lock: hex(lock), value: hex(le64(value)) })
+  }
+  /** a DEFS header of one function, ( -- x ), whose body is given */
+  const defs1 = fn => [JF_RESERVED0, 1, 0, 1, 0, 0, fn.length, ...fn]
+  for (const size of [100, 300]) {
+    for (const word of FIELD_WORDS) add(`${word} against its cut from PREIMAGE`, size, fieldCheck(word), 'accepted')
+    add('TXVALUE is the value spent, its top bit set, converted as BIN2NUM converts its 8 bytes', size, [W.TXVALUE, ...push(le64(value)), W.BIN2NUM, W['=']], 'accepted')
+    add('NSEQUENCE is the input\'s, unsigned', size, [W.NSEQUENCE, ...push(u32le(sequence)), W.BIN2NUM, W['=']], 'accepted')
+    add('LOCKTIME is the entry\'s, 0', size, [W.LOCKTIME, W['0=']], 'accepted')
+    // the scriptCode field as the preimage carries it: its length prefix first, then the lock
+    add('SCRIPTCODE is the length prefix and the lock', size, [...num(2000), W.SCRIPTCODE, W.NIP, ...num(size + (size < 253 ? 1 : 3)), W['='],
+        ...(size < 253 ? [...num(2000), W['C@'], ...num(size), W['=']] : [...num(2000), W['C@'], ...num(0xfd), W['='], ...num(2001), ...num(2), W.BIN2NUM, ...num(size), W['='], W.AND]),
+        W.AND], 'accepted')
+    for (const word of FIELD_WORDS)
+      add(`${word} in a function: refused`, size, [W.INVOKE, 0], `${word} is covenant-tier only`, defs1(BYTE_FIELDS.includes(word) ? [...num(100), W[word]] : [W[word]]))
+    add('OUTPOINT to a destination past program memory: refused', size, [...lit32(65536), W.OUTPOINT, W['2DROP'], W.TRUE], 'memory out of range: addr=65536 len=36')
+    add('OUTPUTS-HASH to a destination in the push space: refused', size, [...lit32(16777216), W['OUTPUTS-HASH'], W['2DROP'], W.TRUE], 'memory out of range: addr=16777216 len=32')
+    add('SCRIPTCODE to a destination its field runs past: refused', size, [...lit32(65500), W.SCRIPTCODE, W['2DROP'], W.TRUE], 'memory out of range: addr=65500')
+  }
+  withPhp(FIELD)
+  for (const c of FIELD) {
+    const js = await normJs(judge, c), same = JSON.stringify(js) === JSON.stringify(c.php)
+    const said = c.php.error ? Buffer.from(c.php.error, 'hex').toString('latin1') : ''
+    const right = unhex(c.lock).length === c.size && (c.expect === 'accepted' ? c.php.accepted === true : c.php.accepted === false && said.includes(c.expect))
+    ok(same && right, `${c.what}: ${kindOf(c.php)}${said ? `, "${said}"` : ''}` + (same ? '' : ` · JS ${JSON.stringify(js).slice(0, 100)}`))
+  }
+}
+
 // ── 5. mutants ───────────────────────────────────────────────────────────────────────────────────────────────────────
 console.log('\n── mutants: each file the judge loads, altered in a copy, must disagree with PHP or node somewhere ──')
 const stripComments = text => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
@@ -654,6 +720,8 @@ const GRAPH = importGraph(HERE, 'thread.mjs')
     ['thread.mjs', 'judge: the engine the tick names run, not the one its lock declares', 'const vm = interpreterFor(declared)', 'const vm = interpreterFor(entry.version)'],
     ['thread.mjs', 'judge: a tick naming another version than its lock declares, run anyway', '  if (entry.version !== declared) return', '  if (false) return'],
     ['thread.mjs', 'judge: a lock that does not start with VER read as declaring a version', '  if (lock.length < 5 || lock[0] !== VER) throw', '  if (false) throw'],
+    ['interpreter-jf.mjs', 'SCRIPTCODE: the field without its length prefix', "'SCRIPTCODE': [104, -52]", "'SCRIPTCODE': [105, -52]"],
+    ['interpreter-jf.mjs', 'TXVALUE: 4 bytes, not 8', "'TXVALUE': [-52, -44]", "'TXVALUE': [-52, -48]"],
     ['dispatch.mjs', 'dispatch: every JF revision judged', "registerSet('JF', { name: 'InterpreterJF', verifyTick }, [3])", "registerSet('JF', { name: 'InterpreterJF', verifyTick }, [1, 2, 3, 4])"],
     ['sha1.mjs', 'SHA-1: a round constant', 'k = 0x6ed9eba1', 'k = 0x6ed9eba2'],
     ['sha1.mjs', 'SHA-1: the padding one byte short', 'len - whole + 9 <= 64', 'len - whole + 8 <= 64'],
@@ -667,7 +735,7 @@ const GRAPH = importGraph(HERE, 'thread.mjs')
     ['secp256k1.mjs', 'secp256k1: a trailing byte allowed by default', 'digest32, allowTrailing = false)', 'digest32, allowTrailing = true)'],
     ['jf-crypto.mjs', 'Ed25519: the key and the message swapped', 'ed25519(sig, msg, pub)', 'ed25519(sig, pub, msg)'],
   ]
-  const TICKS = [...TIP, ...COUNTER, ...RANDOM, ...DECLARE]
+  const TICKS = [...TIP, ...COUNTER, ...RANDOM, ...DECLARE, ...FIELD]
   const native = { sha256: H('sha256'), sha1: H('sha1'), ripemd160: H('ripemd160') }
   const HASHED = [...Array.from({ length: 301 }, (_, n) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + n) & 0xff)), rbytes(65537)]
   for (const [k, [file, what, from, to]] of MUTANTS.entries()) {
@@ -716,7 +784,7 @@ console.log('\n── browser: what a page loads to judge ──')
   const caught = foreignIn(dir, importGraph(dir, 'thread.mjs'))
   ok(caught.some(x => x.includes('node:crypto')), `and the check finds node:crypto put back into a copy of preimage.mjs: ${caught.join('; ')}`)
   if (!BROWSER) console.log('  - headless Chromium not run: pass --browser to run the judge in it')
-  else await inBrowser([...TIP, ...COUNTER, ...DECLARE, ...RANDOM.slice(0, 300)])
+  else await inBrowser([...TIP, ...COUNTER, ...DECLARE, ...FIELD, ...RANDOM.slice(0, 300)])
 }
 
 /** Judge the cases in headless Chromium, from the files in tools/, and compare with PHP's answers. */

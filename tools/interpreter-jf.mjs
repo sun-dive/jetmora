@@ -71,6 +71,10 @@ for (const [k, v] of Object.entries(JF_WORD)) OP.set(v, k)
 for (const [k, v] of Object.entries(JF_LIT)) OP.set(v, k)
 const DEFS_MARK = JF_RESERVED0                               // the reserved slot the compiler emits for the header
 const VER_ELSEWHERE = 'VER declares the version a lock is written for, and is valid only as its first instruction'
+/** Where each field word cuts the preimage, [from, to), in BIP143's layout; a negative offset counts from the end. See
+ *  InterpreterJF::FIELDS in server/interpreter-jf.php. */
+const FIELDS = { 'PREVOUTS-HASH': [4, 36], 'SEQUENCES-HASH': [36, 68], 'OUTPOINT': [68, 104], 'SCRIPTCODE': [104, -52],
+                 'TXVALUE': [-52, -44], 'NSEQUENCE': [-44, -40], 'OUTPUTS-HASH': [-40, -8], 'LOCKTIME': [-8, -4] }
 const BANK_SEL = new Map(Object.entries(JF_BANK_WORD).map(([set, words]) => {
   const m = new Map(); for (const [w, v] of Object.entries(words)) if (!m.has(v)) m.set(v, w)
   return [set, m]
@@ -550,10 +554,18 @@ export class InterpreterJF {
       case 'PREIMAGE': { this.covenantOnly('PREIMAGE', covenant); const d = this.popInt()
         if (this.preimage === null) throw new JfScriptError('PREIMAGE: no transaction context')
         this.write(d, this.preimage); this.push(d); this.pushI(this.preimage.length); return i }
+      // the preimage's fields, cut where FIELDS says, in PREIMAGE's order of checks
+      //   PREVOUTS-HASH SEQUENCES-HASH OUTPOINT SCRIPTCODE OUTPUTS-HASH  ( dest -- dest u )
       case 'PREVOUTS-HASH': case 'SEQUENCES-HASH': case 'OUTPOINT':
-      case 'SCRIPTCODE': case 'TXVALUE': case 'NSEQUENCE': case 'OUTPUTS-HASH': case 'LOCKTIME':
-        this.covenantOnly(jf_op_name(op), covenant)
-        throw new JfScriptError(`${jf_op_name(op)}: not built yet — derive it from PREIMAGE with SUBSTR`)
+      case 'SCRIPTCODE': case 'OUTPUTS-HASH': { const word = jf_op_name(op); this.covenantOnly(word, covenant); const d = this.popInt()
+        if (this.preimage === null) throw new JfScriptError(`${word}: no transaction context`)
+        const f = this.field(word)
+        this.write(d, f); this.push(d); this.pushI(f.length); return i }
+      //   TXVALUE             ( -- n )  8 bytes as a cell, converted as BIN2NUM converts them
+      //   NSEQUENCE LOCKTIME  ( -- n )  4 bytes, unsigned
+      case 'TXVALUE': case 'NSEQUENCE': case 'LOCKTIME': { const word = jf_op_name(op); this.covenantOnly(word, covenant)
+        if (this.preimage === null) throw new JfScriptError(`${word}: no transaction context`)
+        this.push(leToBig(this.field(word))); return i }
       // the lock's declaration (codeStart): a lock's first instruction, reached here only by a branch back to it
       case 'VER':
         if (!covenant || i !== 1) throw new JfScriptError(VER_ELSEWHERE)
@@ -622,6 +634,15 @@ export class InterpreterJF {
   covenantOnly(word, covenant) {
     if (!covenant) throw new JfScriptError(`${word} is covenant-tier only: a stdForth function computes from what it `
                                           + 'was given, and reaches for nothing else')
+  }
+  /** A field's bytes, cut where FIELDS says, refused when the preimage is too short to hold them. */
+  field(word) {
+    const n = this.preimage.length
+    let [from, to] = FIELDS[word]
+    if (from < 0) from += n
+    if (to < 0) to += n
+    if (from < 0 || to > n || from > to) throw new JfScriptError(`${word}: the preimage is too short`)
+    return this.preimage.slice(from, to)
   }
   frame() { if (!this.frames.length) throw new JfScriptError('local access with no frame'); return this.frames[this.frames.length - 1] }
   jump(code, from, off) { const to = from + off; if (to < 0 || to > code.length) throw new JfScriptError('branch out of range'); return to }
@@ -747,10 +768,11 @@ export function bytePushesOnly(s) {
  *      nothing in the first can jump into the second or end it;
  *   3  the tick is accepted when the lock leaves exactly one item and it is non-zero. Any error refuses it.
  * A port of InterpreterJF::verifyTick in server/interpreter-jf.php. A refusal's errorBytes are PHP's message bytes:
- * its text in UTF-8, and an abort's diagnostic appended as it was, which no JS string can always hold.
+ * its text in UTF-8, and an abort's diagnostic appended as it was, which no JS string can always hold. A preimage left
+ * out is null, as PHP's: the tick has no transaction context.
  * @returns {Promise<{accepted: boolean, stack?: bigint[], error?: string, errorBytes?: Uint8Array}>}
  */
-export async function verifyTick({ unlocking, lock, preimage, crypto = {} }) {
+export async function verifyTick({ unlocking, lock, preimage = null, crypto = {} }) {
   const refuse = (error, bytes = UTF8.encode(error)) => ({ accepted: false, error, errorBytes: bytes })
   if (unlocking.length > TICK_MAX_SCRIPT || lock.length > TICK_MAX_SCRIPT) return refuse('a script is longer than 500000 bytes')
   if (!bytePushesOnly(unlocking)) return refuse('the unlocking script is not byte pushes only')
