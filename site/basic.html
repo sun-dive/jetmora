@@ -97,7 +97,7 @@
 <section id="write">
   <div class="grid">
     <div class="pane">
-      <h3>BASIC <span>VERSION · LET · IF · FOR · DIM · VERIFY</span></h3>
+      <h3>BASIC <span>VERSION · LET · IF · FOR · DIM · INPUT · VERIFY</span></h3>
       <div class="ex">
         <button data-w="sum">a real loop</button>
         <button data-w="pow">powers</button>
@@ -168,6 +168,10 @@
   </table>
   <p>The compiler writes the script once. After that the script rebuilds itself into each new tip, and the
   rules travel with it.</p>
+  <p>With <code>INPUT</code>, each tick brings values with it, pushed after the owner's signature and key in
+  the order <code>INPUT</code> names them. <code>code$</code> is bytes of any length, <code>code$32</code>
+  exactly 32; <code>r%2</code> is a number in at most 2 bytes, <code>r%</code> in at most 8. The owner's
+  signature covers an input only through what your program puts into the next tip's state.</p>
 
   <h2>How a tick is judged</h2>
   <p>As a BSV node judges a spend: the unlocking script is byte pushes only; it runs, then the lock runs on

@@ -8,7 +8,10 @@
 //     seq: n,       the tick's nSequence
 //     outputs: [ { value: n, locking: hex }, … ],
 //     unlock: { kind: 'sign', key: name, flip?: bool, msgFlip?: bool, extra?: hex, longSig?: bool,
-//               swap?: bool, onlySig?: bool, lit?: bool } | { kind: 'raw', hex },
+//               swap?: bool, onlySig?: bool, lit?: bool, inputs?: [hex, …], inputsFirst?: bool, under?: hex }
+//             | { kind: 'raw', hex },
+//             inputs being what the covenant's INPUT line names, pushed after the key and before extra, or before the
+//             signature when inputsFirst; under a push below everything else, the first the unlocking script makes
 //     version?: n,   the entry's nVersion, JF revision 3 when absent
 //     tamper?: bool  the successor's value changed after the tick was signed }
 // and writes, per case, the preimage, the unlocking script, the verdict of CovenantThread::judge, and asSigned:
@@ -35,6 +38,13 @@ $script = fn(string $h) => $h === 'hand' ? $HAND : hex2bin($h);
 
 /** A jetForth direct push: the opcode is the length, 1..72. */
 function push(string $b): string { return chr(strlen($b)) . $b; }
+/** A byte push in the smallest form that holds it: a direct push to 72 bytes, then STR8 and STR16. */
+function bytePush(string $b): string
+{
+  $n = strlen($b);
+  if ($n <= JF_PUSH_MAX) return chr($n) . $b;
+  return $n <= 0xff ? chr(JF_LIT['STR8']) . chr($n) . $b : chr(JF_LIT['STR16']) . pack('v', $n) . $b;
+}
 function hash256(string $b): string { return hash('sha256', hash('sha256', $b, true), true); }
 
 $in = json_decode((string)stream_get_contents(STDIN), true);
@@ -60,6 +70,9 @@ foreach ($in['cases'] as $c) {
       if (!empty($u['onlySig'])) return push($sig);
       if (!empty($u['lit'])) return push($sig) . chr(JF_LIT['LIT8']) . "\x20";   // a number where the key belongs
       $s = !empty($u['swap']) ? push($pub) . push($sig) : push($sig) . push($pub);
+      $carried = implode('', array_map(fn($h) => bytePush(hex2bin($h)), $u['inputs'] ?? []));
+      $s = !empty($u['inputsFirst']) ? $carried . $s : $s . $carried;
+      if (isset($u['under'])) $s = push(hex2bin($u['under'])) . $s;
       return $s . (isset($u['extra']) ? push(hex2bin($u['extra'])) : '');
     }, $c['version'] ?? null);
   if (!empty($c['tamper'])) $t['entry']['outputs'][0]['value'] += 1;

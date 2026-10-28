@@ -30,20 +30,28 @@
  *
  *   VER JF 3        the declaration, carried into every successor unchanged
  *   <f0> … <fn>     the DIM fields: the thread's state, as pushes at the head of the script
- *   the frame       bind the fields and the unlocking pushes ( sig pub ); then rules 1 and 2:
- *                   signed by the owner over HASH256(PREIMAGE); value + 1, and nSequence equal to it
+ *   the frame       bind the fields and the unlocking pushes ( sig pub in… ), check each input's size;
+ *                   then rules 1 and 2: signed by the owner over HASH256(PREIMAGE); value + 1, and
+ *                   nSequence equal to it
  *   the program     the covenant's own rules; it may assign the fields
  *   the rebuild     rules 3 and 4: the successor is this script with its new state, value + 1,
  *                   and HASH256 of it is the tick's hashOutputs
  *   TRUE
  *
- * A tick is run as its unlocking script (direct pushes only) followed by this one, and is accepted when
+ * A tick is run as its unlocking script (byte pushes only) followed by this one, and is accepted when
  * it leaves exactly one non-zero cell.
+ *
+ * INPUT names what a tick carries: the pushes its unlocking script makes after the signature and the key,
+ * in the order INPUT names them, bound to variables before the program runs. `code$` is bytes of any
+ * length, `code$32` exactly 32 bytes; `r%2` is a number, a push of at most 2 bytes read as BIN2NUM reads
+ * it, unsigned; `r%` is at most 8, a cell. The owner signs the preimage, which holds the successor
+ * (hashOutputs) and not the unlocking script: an input is signed through what the program makes of it in
+ * the successor's state, and only so.
  */
 import { JF_PUSH_MAX, JF_SMALL0, JF_LIT, JF_WORD } from '../tools/ops-jf.mjs'
 
 /** The version of this compiler. A script's bytes are a function of it. */
-export const BASIC_JF_VERSION = '0.4'
+export const BASIC_JF_VERSION = '0.5'
 
 /** The JF revision the bytes are numbered in: tools/ops-jf.mjs, revision 3. */
 export const JF_REVISION = 3
@@ -249,6 +257,11 @@ function parseStmts(p, stopAt, lineScoped = false) {
       p.next(); out.push(dimStmt(p)); continue
     }
     if (t.k === 'kw' && t.v === 'VERSION') { p.next(); out.push(versionStmt(p)); continue }
+    /* INPUT is a statement only where a name follows it, so a variable named `input` means what it did. */
+    if (t.k === 'name' && t.v.toUpperCase() === 'INPUT' && p.peekAt(1)?.k === 'name') {
+      if (lineScoped) throw new Error('BASIC: INPUT names what a tick carries: it cannot sit inside an IF')
+      p.next(); out.push(inputStmt(p)); continue
+    }
     if (t.k === 'name') { out.push(letStmt(p)); continue }       // LET is optional
     throw new Error(`BASIC: ${t.v} cannot start a statement`)
   }
@@ -314,6 +327,34 @@ function dimStmt(p) {
     fields.push({ name: n.v, width: w.n, bytes: sig.v === '$' })
   } while (p.eat(','))
   return { t: 'dim', fields }
+}
+
+/**
+ * `INPUT code$, h$32, r%2`: what a covenant's tick carries after the signature and the key, in this order,
+ * widths in bytes. A `$` input is bytes, that many or any number; a `%` input is a number, a push of at most
+ * that many bytes, 8 when no width is given.
+ */
+function inputStmt(p) {
+  const inputs = []
+  do {
+    const n = p.next()
+    if (!n || n.k !== 'name') throw new Error('BASIC: INPUT wants a name: INPUT code$, r%2')
+    const sig = p.next()
+    if (!sig || (sig.v !== '%' && sig.v !== '$')) {
+      throw new Error(`BASIC: INPUT ${n.v} needs a sigil: ${n.v}$ for bytes, ${n.v}%2 for a number of at most two bytes`)
+    }
+    let width = null
+    if (p.peek()?.k === 'num') {
+      const w = p.next(), most = sig.v === '%' ? INPUT_WIDEST.number : INPUT_WIDEST.bytes
+      if (!Number.isInteger(w.n) || w.n < 1 || w.n > most) {
+        throw new Error(`BASIC: INPUT ${n.v}${sig.v}: the width must be a whole number of bytes from 1 to ${most}, ` +
+          (sig.v === '%' ? 'as a number is a 64-bit cell' : 'what the push space holds'))
+      }
+      width = w.n
+    }
+    inputs.push({ name: n.v, width: sig.v === '%' ? width ?? 8 : width, bytes: sig.v === '$' })
+  } while (p.eat(','))
+  return { t: 'input', inputs }
 }
 
 /** `FOR i = <from> TO <to> [STEP <s>] … NEXT [i]` — the body runs to NEXT, however many lines. */
@@ -440,7 +481,7 @@ function assignedBy(ss, into) {
     if (s.t === 'let') into.add(s.name)
     else if (s.t === 'split') { into.add(s.left); into.add(s.right) }
     else if (s.t === 'for') assignedBy(s.body, into)
-    else if (s.t === 'verify' || s.t === 'dim' || s.t === 'version') continue
+    else if (s.t === 'verify' || s.t === 'dim' || s.t === 'version' || s.t === 'input') continue
     else { assignedBy(s.then, into); assignedBy(s.else, into) }
   }
 }
@@ -452,6 +493,9 @@ function writes(ss, into) {
     else if (s.t === 'let' || s.t === 'split') assignedBy([s], into)
   }
 }
+/** INPUT is a declaration, as DIM is: the program's variables it names are bound before the program runs. */
+const INPUT_FIRST = 'BASIC: every INPUT comes before the first statement that runs: what the tick carries is bound ' +
+  'before anything reads it'
 
 /**
  * Memory, laid out when compiling. Variables are low, so the program's addresses are short to write; the
@@ -462,6 +506,8 @@ function writes(ss, into) {
 const FRAME_BASE = 4096, BUF_BASE = 4608
 /** JF revision 3's program memory and push space, and the signature and key a covenant's tick pushes. */
 const MEMORY = 65536, PUSH_MEM = 65536, TICK_PUSHES = 64 + 32
+/** The widths INPUT gives, in bytes, from 1: a % input at most a cell, a $ input at most what the push space holds */
+export const INPUT_WIDEST = Object.freeze({ number: 8, bytes: PUSH_MEM })
 
 /**
  * Emits statements into `code`, allocating every variable and every made byte string a fixed address.
@@ -700,6 +746,7 @@ class Emitter {
           'the head of the script, before anything reads it')
       }
       if (s.t === 'version') throw new Error('BASIC: VERSION is said once, as the first statement')
+      if (s.t === 'input') throw new Error(INPUT_FIRST)
       // IF
       /* A variable assigned inside an IF must exist before it, or there is a path on which it was never
          given a value. */
@@ -817,6 +864,10 @@ export function compileBasic(src, env = {}) {
   if (prog.some(s => s.t === 'dim')) {
     throw new Error('BASIC: DIM lays out a covenant\'s state at the head of its script: compile it with compileCovenant')
   }
+  if (prog.some(s => s.t === 'input')) {
+    throw new Error('BASIC: INPUT names what a covenant\'s tick carries, and a covenant has DIM owner$20: compile it ' +
+      'with compileCovenant. What a program finds on the stack is named by env.stack')
+  }
   const em = new Emitter(env.consts ?? {})
   const inputs = (env.stack ?? []).map(raw => {
     const m = /^([A-Za-z][A-Za-z0-9_]*)(\$)?$/.exec(raw)
@@ -852,15 +903,27 @@ const PREIMAGE_AROUND = 156
  * The frame, as BASIC: rules 1 and 2 before the program, the rebuild (rules 3 and 4) after it. It is
  * compiled by the same emitter as the program, with the frame's own words — PREIMAGE, DEPTH, ED25519SIG —
  * and names that start with `#`, which a program cannot write.
- *   #sig #pub        the unlocking script's two pushes: the owner's 64-byte signature and 32-byte key.
- *                    ED25519-CHECKSIG is false for any other sizes, and a push left over is still on the
- *                    stack at the end, where a tick must leave exactly one item
+ *   #sig #pub        the unlocking script's first two pushes: the owner's 64-byte signature and 32-byte key.
+ *                    ED25519-CHECKSIG is false for any other sizes
+ *   the inputs       the pushes after them, one for each name INPUT gives. A push left over is still on the
+ *                    stack at the end, where a tick must leave exactly one item; a push missing leaves the
+ *                    binding short of what it stores
  *   the preimage     … ‖ scriptCode field [104, u−52) ‖ value 8 ‖ nSequence 4 ‖ hashOutputs 32 ‖ locktime 4 ‖ type 4
  * `written` is the fields the program assigns. A `$` field the program writes is checked for its width:
  * a push of another length would leave bytes in the successor that run as code.
  */
-function frameText(layout, vl, written) {
+function frameText(layout, vl, written, inputs) {
+  /* Each input is checked before anything reads it. A % input is bound as the bytes pushed, to #in_ followed by
+     its name; BIN2NUM reads only the first 8 of them, so their size is checked first. Below 8 bytes the number
+     is never negative; at 8 a negative cell fits, so it is checked, as a field's is. */
+  const given = inputs.length ? ['REM  what the tick carries after the key: each the size INPUT says'] : []
+  for (const x of inputs) {
+    if (x.bytes) { if (x.width !== null) given.push(`VERIFY SIZE(${x.name}) = ${x.width}`); continue }
+    given.push(`VERIFY SIZE(#in_${x.name}) <= ${x.width}`, `${x.name} = BIN2NUM(#in_${x.name})`)
+    if (x.width === 8) given.push(`VERIFY ${x.name} >= 0`)
+  }
   const before = [
+    ...given,
     '#pre = PREIMAGE()',
     '#head, #tail = SPLIT(#pre, SIZE(#pre) - 52)',
     '#val, #tail = SPLIT(#tail, 8)',
@@ -893,19 +956,31 @@ function frameText(layout, vl, written) {
   return { before, after }
 }
 
-/** The DIM fields, checked against what a jetForth push and cell can carry. */
-function covenantLayout(prog) {
-  const layout = []
+/** The DIM fields, checked against what a jetForth push and cell can carry, and the INPUT line's names. */
+function covenantLayout(prog, consts = {}) {
+  const layout = [], inputs = []
   let running = false
   const body = []
+  const both = name => `BASIC: ${name} is a DIM field and an INPUT: give the input its own name, and assign the field from it`
   for (const s of prog) {
-    if (s.t !== 'dim') { running = true; body.push(s); continue }
+    if (s.t !== 'dim' && s.t !== 'input') { running = true; body.push(s); continue }
+    if (running && s.t === 'input') throw new Error(INPUT_FIRST)
     if (running) {
       throw new Error('BASIC: every DIM comes before the first statement that runs: the state is laid out at ' +
         'the head of the script, before anything reads it')
     }
+    if (s.t === 'input') {
+      for (const x of s.inputs) {
+        if (layout.some(f => f.name === x.name)) throw new Error(both(x.name))
+        if (inputs.some(y => y.name === x.name)) throw new Error(`BASIC: ${x.name} is named twice by INPUT`)
+        if (has(consts, x.name)) throw new Error(`BASIC: ${x.name} is a compile-time constant, so a tick cannot carry it`)
+        inputs.push(x)
+      }
+      continue
+    }
     for (const f of s.fields) {
       if (layout.some(g => g.name === f.name)) throw new Error(`BASIC: ${f.name} is DIMmed twice`)
+      if (inputs.some(x => x.name === f.name)) throw new Error(both(f.name))
       if (f.bytes && f.width > JF_PUSH_MAX) throw new Error(`BASIC: DIM ${f.name}$${f.width}: a field is one direct push, at most ${JF_PUSH_MAX} bytes`)
       if (!f.bytes && f.width > 8) throw new Error(`BASIC: DIM ${f.name}%${f.width}: a number is a 64-bit cell, so at most 8 bytes`)
       layout.push(f)
@@ -915,7 +990,7 @@ function covenantLayout(prog) {
   if (!owner || !owner.bytes || owner.width !== 20) {
     throw new Error("BASIC: a thread is owned — DIM owner$20, the HASH160 of the owner's key (rule 1)")
   }
-  return { layout, body }
+  return { layout, inputs, body }
 }
 
 /** One field's bytes, as the head of the script pushes them. */
@@ -934,13 +1009,15 @@ function fieldBytes(f, v) {
 }
 
 /** Lay the script down for a guess at its own length; `compileCovenant` repeats until the guess holds. */
-function buildCovenant(layout, body, state, L, written, consts) {
+function buildCovenant(layout, inputs, body, state, L, written, consts) {
   const em = new Emitter(consts)
   const fields = layout.map(f => em.declare(f.name, f.bytes ? 'bytes' : 'num', f.bytes ? f.width : null))
+  const given = inputs.map(x => em.declare(x.name, x.bytes ? 'bytes' : 'num', x.bytes ? x.width : null))
   em.internal = true
   const sig = em.declare('#sig', 'bytes', 64), pub = em.declare('#pub', 'bytes', 32)
+  const carried = inputs.map((x, i) => x.bytes ? given[i] : em.declare(`#in_${x.name}`, 'bytes', x.width))
   em.preMax = PREIMAGE_AROUND + varintSize(L) + L
-  const { before, after } = frameText(layout, varintSize(L), written)
+  const { before, after } = frameText(layout, varintSize(L), written, inputs)
 
   const head = new Code()
   head.bytes(...DECLARATION)
@@ -948,7 +1025,7 @@ function buildCovenant(layout, body, state, L, written, consts) {
   /* The frame is laid out before the program, so its addresses are the same whatever the program is.
      Emission order is head, frame, program, rebuild; allocation order is frame, rebuild, program. */
   const frame = em.code
-  em.bind([sig, pub, ...fields], new Set(layout.filter(f => !f.bytes).map(f => f.name)))
+  em.bind([sig, pub, ...carried, ...fields], new Set(layout.filter(f => !f.bytes).map(f => f.name)))
   em.run(parseProgram(before.join('\n'), true))
   const rebuildCode = em.code = new Code()
   em.run(parseProgram(after.join('\n'), true))
@@ -958,15 +1035,18 @@ function buildCovenant(layout, body, state, L, written, consts) {
   em.run(body)
   const parts = { head: head.assemble(), frame: frame.assemble(), prog: prog.assemble(), rebuild: rebuildCode.assemble() }
   /* Literals go to the push space as they run, after the tick's own pushes; nothing a covenant pushes is in
-     a loop, so their total is known now. */
-  const memory = em.bufNext, pushed = TICK_PUSHES + [head, frame, prog, rebuildCode].reduce((n, c) => n + (c.pushed ?? 0), 0)
+     a loop, so their total is known now. An input counts at its width; one of any length is not counted, its
+     length being the tick's. */
+  const memory = em.bufNext, pushed = TICK_PUSHES + inputs.reduce((n, x) => n + (x.width ?? 0), 0)
+    + [head, frame, prog, rebuildCode].reduce((n, c) => n + (c.pushed ?? 0), 0)
   return { parts, bytes: Uint8Array.from([...parts.head, ...parts.frame, ...parts.prog, ...parts.rebuild]), em, memory, pushed }
 }
 
 /**
  * Compile a covenant. `env.state` gives each DIM field its value in this thread: a number for `%`, an
  * array of bytes for `$`. The fields are the head of the script, so two threads of one program differ
- * only there, and every tick rebuilds them.
+ * only there, and every tick rebuilds them. The result's `inputs` is what INPUT names, in its order:
+ * { name, width, bytes }, width null for bytes of any length.
  * @param {string} src
  * @param {{ state?: Record<string, number|bigint|number[]|Uint8Array>, consts?: Record<string, number> }} [env]
  */
@@ -976,21 +1056,21 @@ export function compileCovenant(src, env = {}) {
   if (!v || v.t !== 'version') throw new Error(`BASIC: a jetForth program names its version first: VERSION JF ${JF_REVISION}`)
   if (v.family !== 'JF' || v.revision !== JF_REVISION) throw new Error(`BASIC: VERSION ${v.family} ${v.revision}: this compiler emits JF revision ${JF_REVISION}`)
   if (findVersion(prog)) throw new Error('BASIC: VERSION is said once, as the first statement')
-  const { layout, body } = covenantLayout(prog)
+  const { layout, inputs, body } = covenantLayout(prog, env.consts ?? {})
   const all = new Set(); writes(body, all)
   const written = new Set(layout.filter(f => all.has(f.name)).map(f => f.name))
   /* The script's own length is inside it, twice over: in the preimage's size and in the varint the
      rebuild steps past. Build, measure, build again until the length holds, as a covenant is built by hand. */
   let L = 0
   for (let k = 0; k < 8; k++) {
-    const r = buildCovenant(layout, body, env.state ?? {}, L, written, env.consts ?? {})
+    const r = buildCovenant(layout, inputs, body, env.state ?? {}, L, written, env.consts ?? {})
     if (r.bytes.length === L) {
       if (r.memory > MEMORY) {
         throw new Error(`BASIC: the covenant needs ${r.memory} bytes of memory, and the interpreter has ${MEMORY}`)
       }
       if (r.pushed > PUSH_MEM) throw new Error(`BASIC: the covenant pushes ${r.pushed} bytes, and the push space has ${PUSH_MEM}`)
       return { bytes: r.bytes, nVersion: JF_NVERSION, revision: JF_REVISION, compiler: BASIC_JF_VERSION,
-               layout, written: [...written], assigned: r.em.assigned, names: namesOf(r.em), memory: r.memory, pushed: r.pushed }
+               layout, inputs, written: [...written], assigned: r.em.assigned, names: namesOf(r.em), memory: r.memory, pushed: r.pushed }
     }
     L = r.bytes.length
   }
@@ -999,11 +1079,11 @@ export function compileCovenant(src, env = {}) {
 
 /**
  * The frame and the rebuild of a covenant with this layout and length, as bytes: for the reader, which
- * finds them in a script by laying them down again. `written` is the fields the program assigns. H is where
- * the frame starts: past the declaration and the fields.
+ * finds them in a script by laying them down again. `written` is the fields the program assigns, `inputs`
+ * what INPUT names. H is where the frame starts: past the declaration and the fields.
  */
-export function covenantFrame(layout, L, written) {
+export function covenantFrame(layout, L, written, inputs = []) {
   const state = Object.fromEntries(layout.map(f => [f.name, f.bytes ? new Array(f.width).fill(0) : 0]))
-  const { parts } = buildCovenant(layout, [], state, L, new Set(written), {})
+  const { parts } = buildCovenant(layout, inputs, [], state, L, new Set(written), {})
   return { H: parts.head.length, frame: parts.frame, rebuild: parts.rebuild }
 }

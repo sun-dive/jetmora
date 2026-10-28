@@ -71,10 +71,13 @@
 //   write(next, { unlock }) → answer    next(tip) or an object: { outputs, sequence = tip.index + 1, index = 0, version },
 //                                       index being which of the tip's outputs it spends, and version by default the one
 //                                       that output's lock declares (another is refused by the judge: TickRefused)
-//   resend() → answer | null            the successors this writer recorded for this thread, sent again in order from the
+//   resend({ unlock }) → answer | null  the successors this writer recorded for this thread, sent again in order from the
 //                                       tip, each its very bytes: the recorded successor of the tip, then that tick's,
 //                                       until one does not land. Its answer is the last one's, with answers, all of
-//                                       them in order. null when nothing is recorded for the tip
+//                                       them in order. null when nothing is recorded for the tip. A successor recorded
+//                                       whose bytes are not (it was never signed to the end) is built again with
+//                                       unlock, the writer's by default: give that tick's own when its unlocking script
+//                                       carries more than the signature, as a covenant's INPUT asks
 //   pending() → { hash, bytes, step, index } | null   the successor recorded for the tip, without sending it
 // write() and resend() run one at a time per writer. They THROW when nothing was sent:
 //     TickRefused (reason, reasonBytes)   the script refuses the tick, so it is not sent
@@ -100,14 +103,18 @@
 //                                        any store name works. Give every thread of a page the same one
 //   ed25519Signer({ privateKey, publicKey }) → key     a WebCrypto Ed25519 key pair as a key here. WebCrypto signs by
 //                                        RFC 8032, deterministically, so a successor signed again has the same bytes
-//   basicUnlock(key) → unlock            what a BASIC covenant's frame asks for (basic/basic-jf.mjs, rule 1): the key's
-//                                        Ed25519 signature over HASH256(PREIMAGE), and the key, as two direct pushes
+//   basicUnlock(key, inputs = []) → unlock  what a BASIC covenant's frame asks for (basic/basic-jf.mjs, rule 1): the
+//                                        key's Ed25519 signature over HASH256(PREIMAGE), and the key, as two direct
+//                                        pushes; then what the covenant's INPUT line names, in its order: bytes (a
+//                                        Uint8Array or an array of byte values), or a number for a % input. Anything
+//                                        else is refused: WriterError
 // A ledger is { get(key), update(key, fn) }: update calls fn(record or null) once, synchronously, and stores what it
 // returns (null deletes), atomically. Records are plain objects of strings and numbers.
 import { tick, judge, declaredVersion, jfCrypto, VersionError, JfHostError, AUTH_V1_KEYS, AUTH_V2_HASHES } from './thread.mjs'
 import { parseEntry } from './entry.mjs'
 import { sha256d, toHex } from './sha256.mjs'
 import { readThread, NOT_ONE } from './thread-reader.mjs'
+import { JF_LIT } from './ops-jf.mjs'
 
 /**
  * What server/append.php refuses before it judges a tick: an entry over 100,000 bytes ('entry too large', 413), and an
@@ -215,7 +222,7 @@ export class ThreadWriter {
 
   open() { return this.#oneAtATime(() => this.#open()) }
   write(next, { unlock = this.unlock } = {}) { return this.#oneAtATime(() => this.#write(next, unlock)) }
-  resend() { return this.#oneAtATime(() => this.#resend()) }
+  resend({ unlock = this.unlock } = {}) { return this.#oneAtATime(() => this.#resend(unlock)) }
   pending() {
     return this.#oneAtATime(async () => {
       if (this.#tip === null) await this.#open()
@@ -304,11 +311,11 @@ export class ThreadWriter {
     return this.#send(tip, step, unlock)
   }
 
-  async #resend() {
+  async #resend(unlock) {
     if (this.#tip === null) await this.#open()
     const answers = []
     for (let found = await this.#recordOn(this.#tip); found !== null; found = await this.#recordOn(this.#tip)) {
-      const a = await this.#send(this.#tip, stepFrom(found.rec, found.index), this.unlock)
+      const a = await this.#send(this.#tip, stepFrom(found.rec, found.index), unlock)
       answers.push(a)
       if (!a.landed) break
     }
@@ -537,16 +544,47 @@ export async function ed25519Signer({ privateKey, publicKey }) {
   return { publicKey: pub, sign: async b => new Uint8Array(await subtle.sign('Ed25519', privateKey, bytes(b))) }
 }
 
+/** A number a % input carries, as BIN2NUM reads it: unsigned, little-endian, in the fewest bytes, one at least */
+function numberBytes(v) {
+  let n = typeof v === 'bigint' ? v : Number.isSafeInteger(v) ? BigInt(v) : null
+  if (n === null || n < 0n || n >= 1n << 63n) throw new WriterError('a number an input carries is a whole number from 0 to 2^63 - 1')
+  const o = []
+  do { o.push(Number(n & 0xffn)); n >>= 8n } while (n > 0n)
+  return o
+}
+/** What an input pushes: bytes as they are, a Uint8Array or an array of byte values; a number as a % input reads it */
+function inputBytes(v) {
+  if (typeof v === 'number' || typeof v === 'bigint') return numberBytes(v)
+  if (v instanceof Uint8Array) return v
+  if (Array.isArray(v) && v.every(x => Number.isInteger(x) && x >= 0 && x <= 0xff)) return Uint8Array.from(v)
+  throw new WriterError('an input is bytes, a Uint8Array or an array of byte values, or for a % input a whole number')
+}
+/** Bytes as one byte push, in the smallest form that holds them: a direct push to 72 bytes, then STR8, STR16, STR32 */
+function bytePush(b) {
+  const n = b.length, le = w => Array.from({ length: w }, (_, k) => (n >>> (8 * k)) & 0xff)
+  const head = n <= 72 ? [n] : n <= 0xff ? [JF_LIT.STR8, n] : n <= 0xffff ? [JF_LIT.STR16, ...le(2)] : [JF_LIT.STR32, ...le(4)]
+  const out = new Uint8Array(head.length + n)
+  out.set(head); out.set(b, head.length)
+  return out
+}
+
 /**
- * The unlocking script of a BASIC covenant's frame: <signature over HASH256(preimage)> <key>, two direct pushes. Its
- * size is known before anything is signed (an Ed25519 signature is 64 bytes), so the writer checks the service's size
- * limit first.
+ * The unlocking script of a BASIC covenant's frame: <signature over HASH256(preimage)> <key>, two direct pushes, then
+ * one push for each input the covenant's INPUT line names, in its order: bytes, or for a % input a number, pushed as
+ * BIN2NUM reads it. Its size is known before anything is signed (an Ed25519 signature is 64 bytes), so the writer checks
+ * the service's size limit first.
  */
-export const basicUnlock = key => {
+export const basicUnlock = (key, inputs = []) => {
+  const carried = inputs.map(v => bytePush(inputBytes(v)))
+  const size = 2 + 64 + bytes(key.publicKey).length + carried.reduce((n, b) => n + b.length, 0)
   const unlock = async pre => {
     const sig = bytes(await key.sign(Uint8Array.from(sha256d(pre))))
-    return Uint8Array.from([...push(sig), ...push(bytes(key.publicKey))])
+    const parts = [push(sig), push(bytes(key.publicKey)), ...carried]
+    const out = new Uint8Array(parts.reduce((n, b) => n + b.length, 0))
+    let at = 0
+    for (const b of parts) { out.set(b, at); at += b.length }
+    return out
   }
-  unlock.size = 2 + 64 + bytes(key.publicKey).length
+  unlock.size = size
   return unlock
 }

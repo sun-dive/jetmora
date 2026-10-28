@@ -7,12 +7,13 @@
 // the JavaScript interpreter here and the PHP one (tools/jf-run.php), and the two must leave the same
 // stack or raise the same refusal. Then every program is read back, and the reading compiles to the
 // same bytes; its listing's offsets are where the engine lets a jump land, and every branch lands on one.
-// Last, this compiler is proved against the one before it, 0.3 as it was released, read from git.
+// Covenants with INPUT are compiled, refused and read back here; their ticks are judged in basic/test/thread.mjs.
+// Last, this compiler is proved against the ones before it, 0.3 and 0.4 as they were released, read from git.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { compileBasic, compileCovenant, varintSize, JF_NVERSION, JF_REVISION, DECLARATION, BASIC_JF_VERSION } from '../basic-jf.mjs'
+import { compileBasic, compileCovenant, covenantFrame, varintSize, JF_NVERSION, JF_REVISION, DECLARATION, BASIC_JF_VERSION } from '../basic-jf.mjs'
 import { unbasic, disassemble, jfListing } from '../unbasic-jf.mjs'
 import { InterpreterJF } from '../../tools/interpreter-jf.mjs'
 import { JF_LIT, JF_WORD, JF_PUSH_MAX } from '../../tools/ops-jf.mjs'
@@ -171,6 +172,10 @@ prog('an IF with no ELSE at the very end', 'p = 0\nIF a > b THEN p = 1', { stack
 // 7. line numbers are labels
 prog('a numbered program', '10 x = a + b\n20 x = x * 2', { stack: ['a', 'b'], leave: ['x'] }, [3, 4], [14n])
 prog('a numbered FOR loop', '10 FOR i = 1 TO 3\n20 x = x + i\n30 NEXT i', { stack: ['x'], leave: ['x'] }, [0], [6n])
+
+// 7b. INPUT is a statement only where a name follows it: a variable may still be named input
+prog('a variable named input', 'input = a + b\nx = input * 2', { stack: ['a', 'b'], leave: ['x'] }, [3, 4], [14n])
+prog('…and one half of a SPLIT', 'input, rest = SPLIT(NUM2BIN(a, 2), 1)\nx = BIN2NUM(input) + BIN2NUM(rest)', { stack: ['a'], leave: ['x'] }, [0x0302], [5n])
 
 // 8. the machine stops a loop that does not end
 prog('★ a loop past the operation budget is refused by the interpreter', 'FOR i = 1 TO 1000000000\n s = s + 1\nNEXT i', { stack: ['s'], leave: ['s'] }, [0], 'refused')
@@ -334,6 +339,89 @@ ok(round === progs.length, `★★ and every reading compiles back to the SAME B
   ok(other.lines.length === 0 && /declares JF 2/.test(other.stoppedAt ?? ''), `nor one that declares another: ${other.stoppedAt}`)
 }
 
+// ── INPUT ────────────────────────────────────────────────────────────────────────────────────────────
+console.log('\n── INPUT: what a covenant\'s tick carries after the signature and the key ──')
+const OWN = new Array(20).fill(0xab)
+/** The code thread's covenant: each release carries its code, and the successor holds its SHA-256 */
+const RELEASE = 'DIM owner$20\nDIM rev%2\nDIM code$32\nINPUT bundle$, r%\ncode = SHA256(bundle)\nrev = r'
+const INPUTS = [
+  [RELEASE, { owner: OWN, rev: 3, code: new Array(32).fill(0) }],
+  ['DIM owner$20\nDIM n%2\nINPUT t$4, k%2, m%\nn = SIZE(t) + k + m', { owner: OWN, n: 0 }],
+  ['INPUT a$, b$40\nDIM owner$20\nINPUT c%3\nVERIFY SIZE(a) = 4\nVERIFY c < 9', { owner: OWN }],
+  ['DIM owner$20\nDIM h$32\nINPUT p$32, q$\nIF SIZE(q) > 0 THEN\n h = HASH256(CAT(p, h))\nEND IF', { owner: OWN, h: new Array(32).fill(1) }],
+  ['DIM owner$20\nDIM n%8\nINPUT k%8\nn = k', { owner: OWN, n: 1 }],
+  ['DIM owner$20\nINPUT big$1000\nVERIFY SIZE(big) = 1000', { owner: OWN }],
+  ['DIM owner$20\nINPUT input$\nVERIFY SIZE(input) > 0', { owner: OWN }],
+]
+{
+  const cov = (text, state, env = {}) => compileCovenant(V + text, { state, ...env })
+  const c = cov(...INPUTS[0])
+  ok(JSON.stringify(c.inputs) === JSON.stringify([{ name: 'bundle', width: null, bytes: true }, { name: 'r', width: 8, bytes: false }]),
+    `the release covenant compiles, ${c.bytes.length} B: INPUT bundle$, r% is bytes of any length, then a number of at most 8 bytes`)
+  const st = INPUTS[0][1], b = text => hex(cov(text, st).bytes)
+  ok(b(RELEASE) === b(RELEASE.replace('r%', 'r%8')), '`r%` is `r%8`: a number with no width is at most a cell')
+  ok(b(RELEASE) === b('INPUT bundle$, r%\n' + RELEASE.replace('INPUT bundle$, r%\n', ''))
+     && b(RELEASE) === b(RELEASE.replace('INPUT bundle$, r%', 'INPUT bundle$\nINPUT r%')),
+    'INPUT before the DIMs, or as two lines: the same bytes. The declarations are laid out fields first, then inputs, in order')
+  ok(c.pushed === cov(RELEASE.replace('r%', 'r%2'), st).pushed + 6 && c.pushed === cov(RELEASE.replace('bundle$', 'bundle$100'), st).pushed - 100,
+    `the push space counts an input at its width, and one of any length not at all, its length being the tick's: ${c.pushed} B`)
+  let compiled = 0, read = 0
+  for (const [text, state] of INPUTS) {
+    let k
+    try { k = cov(text, state); compiled++ } catch (e) { console.log(`  ✗ ${text.split('\n').join(' · ')}: ${e.message}`); continue }
+    for (const opts of [{ names: k.names }, {}]) {
+      const u = unbasic(k.bytes, opts)
+      let again = ''
+      try { again = hex(compileCovenant(u.lines.join('\n'), { state: u.state }).bytes) } catch (e) { again = e.message }
+      if (!u.stoppedAt && u.lines.some(l => l.startsWith('INPUT ')) && again === hex(k.bytes)) read++
+      else console.log(`  ✗ ${text.split('\n').join(' · ')}: read back, ${u.stoppedAt ?? 'it compiles to different bytes'}\n${u.lines.map(l => '      ' + l).join('\n')}`)
+    }
+  }
+  ok(compiled === INPUTS.length, `every INPUT covenant here compiles (${compiled}/${INPUTS.length})`)
+  ok(read === 2 * INPUTS.length, `★★ and each one is read back with its INPUT line, named and unnamed, and the reading compiles to the SAME BYTES (${read}/${2 * INPUTS.length})`)
+  const u = unbasic(c.bytes, { names: c.names })
+  ok(u.lines.includes('INPUT bundle$, r%8') && JSON.stringify(u.inputs) === JSON.stringify(c.inputs), `the release covenant reads back as ${u.lines.find(l => l.startsWith('INPUT'))}`)
+  /* A lock the compiler does not write: DIM owner$20 and one input r, the frame laid down for a width INPUT does not
+     have, at the lock's own length */
+  const unwritten = x => {
+    const layout = [{ name: 'owner', width: 20, bytes: true }], given = [{ name: 'r', ...x }]
+    const head = [...DECLARATION, 20, ...new Array(20).fill(0)]
+    for (let k = 0, L = 0; k < 8; k++) {
+      const { frame, rebuild } = covenantFrame(layout, L, [], given)
+      if (head.length + frame.length + rebuild.length === L) return Uint8Array.from([...head, ...frame, ...rebuild])
+      L = head.length + frame.length + rebuild.length
+    }
+  }
+  ok(hex(unwritten({ width: 7, bytes: false })) === hex(cov('DIM owner$20\nINPUT r%7', { owner: new Array(20).fill(0) }).bytes),
+    'a lock laid down this way for INPUT r%7 is the compiler\'s, byte for byte')
+  const odd = [{ width: 9, bytes: false }, { width: 0, bytes: false }, { width: 0, bytes: true }, { width: 65537, bytes: true }].map(x => unbasic(unwritten(x)))
+  ok(odd.every(r => r.covenant && r.stoppedAt?.startsWith('in0') && !r.lines.some(l => l.startsWith('INPUT'))),
+    `laid down for %9, %0, $0 and $65537, widths INPUT does not have: read as a covenant, stopped at that input, and no INPUT line given that would not compile (${odd.map(r => r.stoppedAt ?? r.lines.find(l => l.startsWith('INPUT'))).join(' · ')})`)
+  const badCov = (text, env = {}) => { try { cov(text, { owner: OWN, n: 1 }, env); return '' } catch (e) { return e.message } }
+  for (const [what, text, needle, env] of [
+    ['INPUT after a statement that runs', 'DIM owner$20\nx = 1\nINPUT k$', 'every INPUT comes before'],
+    ['INPUT inside an IF arm', 'DIM owner$20\nDIM n%1\nIF n > 0 THEN INPUT k$', 'cannot sit inside an IF'],
+    ['INPUT inside a block IF', 'DIM owner$20\nDIM n%1\nIF n > 0 THEN\n INPUT k$\nEND IF', 'every INPUT comes before'],
+    ['INPUT inside a FOR', 'DIM owner$20\nFOR i = 1 TO 2\n INPUT k$\nNEXT i', 'every INPUT comes before'],
+    ['a name INPUT gives twice', 'DIM owner$20\nINPUT k$, k%2', 'named twice by INPUT'],
+    ['INPUT naming a DIM field', 'DIM owner$20\nINPUT owner$20', 'a DIM field and an INPUT'],
+    ['a DIM naming an earlier INPUT', 'DIM owner$20\nINPUT n%2\nDIM n%2', 'a DIM field and an INPUT'],
+    ['an INPUT with no sigil', 'DIM owner$20\nINPUT k\nx = 1', 'needs a sigil'],
+    ['a comma and no name after it', 'DIM owner$20\nINPUT k$,\nx = 1', 'INPUT wants a name'],
+    ['a number wider than a cell', 'DIM owner$20\nINPUT k%9', 'from 1 to 8'],
+    ['bytes of width 0', 'DIM owner$20\nINPUT k$0', 'from 1 to 65536'],
+    ['a width that is not whole', 'DIM owner$20\nINPUT k%2.5', 'from 1 to 8'],
+    ['a compile-time constant as an INPUT', 'DIM owner$20\nINPUT K%2', 'compile-time constant', { consts: { K: 1 } }],
+    ['inputs past the push space', 'DIM owner$20\nINPUT a$40000, b$40000', 'the push space has 65536'],
+    ['bytes of any length where their length must be known', 'DIM owner$20\nINPUT k$\nx = CAT(k, k)', 'not known'],
+  ]) {
+    const m = badCov(text, env)
+    ok(m.includes(needle), `${what}${m ? '' : ': NOT refused'}`)
+  }
+  const m = bad('INPUT k$\nx = 1')
+  ok(m.includes('a covenant has DIM owner$20'), `INPUT in a program, which no tick runs: ${m || 'NOT refused'}`)
+}
+
 // ── where a jump lands ───────────────────────────────────────────────────────────────────────────────
 /* A jump lands on the start of an instruction, as GOTO lands on a line (his call, 27 Oct). The listing and the engine
    take each instruction at the same length, and every branch this compiler writes lands on a start, or on the end. */
@@ -342,7 +430,7 @@ console.log('\n── where a jump lands: on the start of an instruction, in eve
   const own = new Array(20).fill(0xab)
   const covenants = [['DIM owner$20', { owner: own }], ['DIM owner$20\nDIM n%4\nn = n + 1', { owner: own, n: 7 }],
     ['DIM owner$20\nDIM n%4\nDIM tag$3\nIF n > 3 THEN\n tag = &H010203\nELSE\n IF n = 0 THEN n = 9\nEND IF\nn = n + 2 ^ 3', { owner: own, n: 9, tag: [7, 8, 9] }],
-    ['DIM owner$20\nDIM h$32\nh = HASH256(CAT(h, owner))', { owner: own, h: new Array(32).fill(1) }]]
+    ['DIM owner$20\nDIM h$32\nh = HASH256(CAT(h, owner))', { owner: own, h: new Array(32).fill(1) }], ...INPUTS]
   const all = [...progs.flatMap(p => [p.c.bytes, p.script]), ...covenants.map(([text, state]) => compileCovenant(V + text, { state }).bytes)]
   const JUMPS = new Set(['BRANCH', '0BRANCH', '(?DO)', '(LOOP)', '(+LOOP)', 'LEAVE', 'CALL'])
   let same = 0, jumps = 0, landed = 0
@@ -374,6 +462,20 @@ async function released(rev) {
   const url = s => `data:text/javascript;base64,${Buffer.from(s).toString('base64')}`
   return import(url(src.replace("'../tools/ops-jf.mjs'", `'${url(ops)}'`) + '\nexport { buildCovenant, covenantLayout, parseProgram, writes }\n'))
 }
+// covenants: the threads basic/test/thread.mjs ticks, the page's, and a field of every width a push holds, read or written
+const COVENANTS = [
+  ['DIM owner$20', { owner: OWN }],
+  ['DIM owner$20\nDIM n%4\nn = n + 1', { owner: OWN, n: 7 }],
+  [`DIM owner$20\nowner = &H${'cd'.repeat(20)}`, { owner: OWN }],
+  ['DIM owner$20\nowner = &H0102', { owner: OWN }],
+  ['DIM owner$20\nDIM n%8\nn = n + 1', { owner: OWN, n: 2n ** 63n - 2n }],
+  ['DIM owner$20\nDIM n%4\nIF n > 3 THEN n = n + 1', { owner: OWN, n: 2 }],
+  ['DIM owner$20\nDIM n%4\nDIM tag$3\nIF n > 3 THEN\n tag = &H010203\nELSE\n IF n = 0 THEN n = 9\nEND IF\nn = n + 2 ^ 3', { owner: OWN, n: 9, tag: [7, 8, 9] }],
+  ['DIM owner$20\nDIM n%4\nx = n * 2\nVERIFY x > 0', { owner: OWN, n: 3 }],
+  ['DIM owner$20\nDIM h$32\nh = HASH256(CAT(h, owner))', { owner: OWN, h: new Array(32).fill(1) }],
+  ...Array.from({ length: JF_PUSH_MAX }, (_, k) => [`DIM owner$20\nDIM tag$${k + 1}`, { owner: OWN, tag: new Array(k + 1).fill(7) }]),
+  ...Array.from({ length: JF_PUSH_MAX }, (_, k) => [`DIM owner$20\nDIM tag$${k + 1}\ntag = &H${'cd'.repeat(k + 1)}`, { owner: OWN, tag: new Array(k + 1).fill(7) }]),
+]
 console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.3, as released (${REV03}, from git) ──`)
 const B3 = await released(REV03)
 if (B3 === null) console.log(`  - no 0.3 to prove against: revision ${REV03} is not in this repository. The comparison is skipped, never counted as passed.`)
@@ -397,21 +499,6 @@ else {
   }
   ok(words === refused.length, `every program 0.3 refuses here, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
 
-  // covenants: the threads basic/test/thread.mjs ticks, the page's, and a field of every width a push holds, read or written
-  const OWN = new Array(20).fill(0xab)
-  const COVENANTS = [
-    ['DIM owner$20', { owner: OWN }],
-    ['DIM owner$20\nDIM n%4\nn = n + 1', { owner: OWN, n: 7 }],
-    [`DIM owner$20\nowner = &H${'cd'.repeat(20)}`, { owner: OWN }],
-    ['DIM owner$20\nowner = &H0102', { owner: OWN }],
-    ['DIM owner$20\nDIM n%8\nn = n + 1', { owner: OWN, n: 2n ** 63n - 2n }],
-    ['DIM owner$20\nDIM n%4\nIF n > 3 THEN n = n + 1', { owner: OWN, n: 2 }],
-    ['DIM owner$20\nDIM n%4\nDIM tag$3\nIF n > 3 THEN\n tag = &H010203\nELSE\n IF n = 0 THEN n = 9\nEND IF\nn = n + 2 ^ 3', { owner: OWN, n: 9, tag: [7, 8, 9] }],
-    ['DIM owner$20\nDIM n%4\nx = n * 2\nVERIFY x > 0', { owner: OWN, n: 3 }],
-    ['DIM owner$20\nDIM h$32\nh = HASH256(CAT(h, owner))', { owner: OWN, h: new Array(32).fill(1) }],
-    ...Array.from({ length: JF_PUSH_MAX }, (_, k) => [`DIM owner$20\nDIM tag$${k + 1}`, { owner: OWN, tag: new Array(k + 1).fill(7) }]),
-    ...Array.from({ length: JF_PUSH_MAX }, (_, k) => [`DIM owner$20\nDIM tag$${k + 1}\ntag = &H${'cd'.repeat(k + 1)}`, { owner: OWN, tag: new Array(k + 1).fill(7) }]),
-  ]
   let laid = 0, oneNumber = 0, crossed = 0, back = 0
   for (const [text, state] of COVENANTS) {
     const src = V + text, c4 = compileCovenant(src, { state }), c3 = B3.compileCovenant(src, { state })
@@ -443,6 +530,46 @@ else {
     `★★ every covenant here, ${laid}/${COVENANTS.length}, its length settled: VER JF 3 and then 0.3's covenant laid down for that length, byte for byte, `
     + `but for that one number in the ${oneNumber} that write a field; in ${crossed}, 0.3's is under 253 bytes and ${BASIC_JF_VERSION}'s is not, so its length prefix is three bytes`)
   ok(back === COVENANTS.length, `★ and each one read back compiles to the same bytes (${back}/${COVENANTS.length})`)
+}
+
+// ── against 0.4 ──────────────────────────────────────────────────────────────────────────────────────
+/* Rule 3 again: 0.5 adds INPUT, so a program or a covenant without it is 0.4's, byte for byte, and so is all else the
+   compiler gives back. 0.4 is read from git as it was released, with the opcode table it was written against. */
+const REV04 = 'd896c7d'
+console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.4, as released (${REV04}, from git) ──`)
+const B4 = await released(REV04)
+if (B4 === null) console.log(`  - no 0.4 to prove against: revision ${REV04} is not in this repository. The comparison is skipped, never counted as passed.`)
+else {
+  ok(B4.BASIC_JF_VERSION === '0.4', '0.4 loads beside this compiler, on its own opcode table')
+  const same = (a, b, keys) => keys.every(k => JSON.stringify(a[k], (_, v) => typeof v === 'bigint' ? String(v) : v)
+                                           === JSON.stringify(b[k], (_, v) => typeof v === 'bigint' ? String(v) : v))
+  let plain = 0
+  for (const p of progs) {
+    const c4 = B4.compileBasic(p.src, p.env)
+    if (hex(p.c.bytes) === hex(c4.bytes) && same(p.c, c4, ['nVersion', 'revision', 'assigned', 'names', 'inputs', 'leave', 'memory', 'pushed'])) plain++
+    else console.log(`  ✗ ${p.name}\n      0.4 ${hex(c4.bytes)}\n      ${BASIC_JF_VERSION} ${hex(p.c.bytes)}`)
+  }
+  ok(plain === progs.length, `★★ every program here, ${plain}/${progs.length}: 0.4's bytes, byte for byte, and all else the compiler gives back is 0.4's`)
+  const refused = [...refusals.map(([, src, env]) => [V + src, env]), ...VERSION_REFUSALS.map(([, src]) => [src, {}])]
+  let words = 0
+  for (const [src, env] of refused) {
+    let m4 = ''
+    try { B4.compileBasic(src, env) } catch (e) { m4 = e.message }
+    if (m4 !== '' && m4 === badRaw(src, env)) words++
+  }
+  ok(words === refused.length, `every program 0.4 refuses here, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
+  const named = [['DIM owner$20\nDIM n%4\ninput = n + 1\nn = input', { owner: OWN, n: 7 }]]
+  let laid = 0
+  for (const [text, state] of [...COVENANTS, ...named]) {
+    const src = V + text, c5 = compileCovenant(src, { state }), c4 = B4.compileCovenant(src, { state })
+    if (hex(c5.bytes) === hex(c4.bytes) && same(c5, c4, ['nVersion', 'revision', 'layout', 'written', 'assigned', 'names', 'memory', 'pushed'])) laid++
+    else console.log(`  ✗ ${text.split('\n').join(' · ')}: differs from 0.4's`)
+  }
+  ok(laid === COVENANTS.length + named.length,
+    `★★ every covenant here, ${laid}/${COVENANTS.length + named.length}, one with a variable named input among them: 0.4's bytes, byte for byte, and all else the compiler gives back is 0.4's`)
+  let none = 0
+  for (const [text, state] of INPUTS) { try { B4.compileCovenant(V + text, { state }) } catch { none++ } }
+  ok(none === INPUTS.length, `and 0.4 compiles none of the INPUT covenants here (${none}/${INPUTS.length}): INPUT is new in ${BASIC_JF_VERSION}`)
 }
 
 console.log(`\n${fail === 0 ? '✅' : '⚠'}  ${pass} passed, ${fail} failed   [BASIC → jetForth]`)

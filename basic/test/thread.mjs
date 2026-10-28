@@ -6,6 +6,7 @@
 // 3 the successor is this script · 4 the state is inside it. Each tick is built and signed by PHP
 // (thread-ticks.php), judged by the PHP interpreter, then judged again by the JavaScript one. Every check
 // in the script is then disabled in turn, and some tick must change its verdict, or that check is untested.
+// A covenant with INPUT is ticked too: each tick carries what its INPUT line names, pushed after the key.
 // Last, every tick PHP judged here is judged again by tools/thread.mjs from its bytes alone (the entry, the tip's
 // script, its value), with its own preimage and its own crypto, and must get CovenantThread::judge's verdict.
 import { execFileSync } from 'node:child_process'
@@ -15,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { compileCovenant } from '../basic-jf.mjs'
 import { disassemble, unbasic } from '../unbasic-jf.mjs'
 import { verifyTick } from '../../tools/interpreter-jf.mjs'
-import { JF_WORD, JF_SMALL0 } from '../../tools/ops-jf.mjs'
+import { JF_WORD, JF_SMALL0, JF_LIT } from '../../tools/ops-jf.mjs'
 import { verify as ed25519 } from '../../tools/ed25519.mjs'     // libsodium 1.0.22's rules, as server/ed25519.php's
 import { judge as judgeTick, VersionError, OTHER_VERSION } from '../../tools/thread.mjs'
 import { parseEntry } from '../../tools/entry.mjs'
@@ -41,6 +42,8 @@ const OWNER = [...hash160(pubOf('owner'))], OTHER = [...hash160(pubOf('other'))]
 // ── the threads ──
 const MINIMAL = 'VERSION JF 3\nDIM owner$20'
 const COUNTING = 'VERSION JF 3\nDIM owner$20\nDIM n%4\nn = n + 1'
+/** The code thread's covenant: each release carries its code, and the successor holds its SHA-256 and its revision */
+const RELEASE = 'VERSION JF 3\nDIM owner$20\nDIM rev%2\nDIM code$32\nINPUT bundle$, r%\ncode = SHA256(bundle)\nrev = r'
 const P2PKH = '76a914' + '99'.repeat(20) + '88ac'
 const out = (value, locking) => ({ value, locking: typeof locking === 'string' ? locking : hex(locking) })
 const sign = (more = {}) => ({ kind: 'sign', key: 'owner', ...more })
@@ -77,6 +80,12 @@ function cases(S, next) {
 
 const minimal = compileCovenant(MINIMAL, { state: { owner: OWNER } }).bytes
 const counting = n => compileCovenant(COUNTING, { state: { owner: OWNER, n } }).bytes
+/** A covenant whose every input check can be seen: each input reaches the successor's state */
+const WIDTHS = 'VERSION JF 3\nDIM owner$20\nDIM n%2\nINPUT t$4, k%2, m%\nn = SIZE(t) + k + m'
+const widths = n => compileCovenant(WIDTHS, { state: { owner: OWNER, n } }).bytes
+/** t of 4 bytes, k 2, m 1: the successor's n is 7 */
+const T4 = '74697073', CARRIED = [T4, '02', '01']
+const carrying = inputs => ['', widths(0), 41, 42, [out(42, widths(4 + 2 + 1))], sign({ inputs })]
 const ALL = [
   ...cases(minimal, minimal).map(c => ['minimal · ' + c[0], ...c.slice(1)]),
   ['minimal · rule 4: the successor gives the thread to another owner', minimal, 41, 42,
@@ -88,6 +97,23 @@ const ALL = [
     [out(42, compileCovenant(COUNTING, { state: { owner: OTHER, n: 8 } }).bytes)], sign(), false],
   ['counting · n at the top of its 4 bytes cannot advance', counting(2 ** 32 - 1), 41, 42, [out(42, counting(2 ** 32 - 1))], sign(), false],
   ...[1, 2, 3, 4, 5].map(k => [`counting · the thread, tick ${k}: n ${k - 1} → ${k}`, counting(k - 1), k - 1, k, [out(k, counting(k))], sign(), true]),
+  ...cases(widths(0), widths(7)).map(c => ['widths · ' + c[0], ...c.slice(1, 5), { ...c[5], inputs: CARRIED }, c[6]]),
+  ['widths · rule 4: n left as it was', widths(0), 41, 42, [out(42, widths(0))], sign({ inputs: CARRIED }), false],
+  ['widths · INPUT: t in 3 bytes, where INPUT says 4', widths(0), 41, 42, [out(42, widths(3 + 2 + 1))], sign({ inputs: ['746970', '02', '01'] }), false],
+  ['widths · INPUT: t in 5 bytes', widths(0), 41, 42, [out(42, widths(5 + 2 + 1))], sign({ inputs: [T4 + '73', '02', '01'] }), false],
+  ['widths · INPUT: k in 3 bytes, where INPUT says at most 2', ...carrying([T4, '020000', '01']).slice(1), false],
+  ['widths · INPUT: k in 2 bytes, 02 00: read as BIN2NUM reads it', ...carrying([T4, '0200', '01']).slice(1), true],
+  ['widths · INPUT: k in no bytes at all, which BIN2NUM reads as 0', widths(0), 41, 42, [out(42, widths(4 + 0 + 1))], sign({ inputs: [T4, '', '01'] }), true],
+  ['widths · INPUT: m in 8 bytes, the most a % input with no width may be', ...carrying([T4, '02', '0100000000000000']).slice(1), true],
+  ['widths · INPUT: m in 9 bytes, past a cell, its first 8 a 1', ...carrying([T4, '02', '010000000000000000']).slice(1), false],
+  ['widths · INPUT: m in 8 bytes, all ones: a negative number, with k 4', ...carrying([T4, '04', 'ff'.repeat(8)]).slice(1), false],
+  ['widths · INPUT: m left out', ...carrying([T4, '02']).slice(1), false],
+  ['widths · INPUT: nothing carried', ...carrying([]).slice(1), false],
+  ['widths · INPUT: a push more than INPUT names', ...carrying([...CARRIED, '01']).slice(1), false],
+  ['widths · INPUT: the inputs in another order', ...carrying(['02', T4, '01']).slice(1), false],
+  ['widths · INPUT: the inputs before the signature and the key', widths(0), 41, 42, [out(42, widths(7))], sign({ inputs: CARRIED, inputsFirst: true }), false],
+  ['widths · INPUT: one push below the signature, the rest as INPUT names: left on the stack, where a tick leaves one item',
+    widths(0), 41, 42, [out(42, widths(7))], sign({ inputs: CARRIED, under: '01' }), false],
 ]
 
 const verifies = script => disassemble(script).flatMap((x, k, all) =>
@@ -162,6 +188,7 @@ for (const [src, state] of [
   [`VERSION JF 3\nDIM owner$20\nowner = &H${hex(OTHER)}`, { owner: OWNER }],
   ['VERSION JF 3\nDIM owner$20\nDIM n%4\nIF n > 3 THEN n = n + 1', { owner: OWNER, n: 2 }],
   ['VERSION JF 3\nDIM owner$20\nDIM n%4\nDIM tag$3\nIF n > 3 THEN\n tag = &H010203\nELSE\n IF n = 0 THEN n = 9\nEND IF\nn = n + 2 ^ 3', { owner: OWNER, n: 9, tag: [7, 8, 9] }],
+  [WIDTHS, { owner: OWNER, n: 0 }], [RELEASE, { owner: OWNER, rev: 3, code: new Array(32).fill(0) }],
 ]) {
   const c = compileCovenant(src, { state })
   const r = unbasic(c.bytes)
@@ -200,6 +227,45 @@ console.log('\n── a program that writes its $ field ──')
   ok(!m[0].accepted, 'wrong width, the check taken out: still refused — by the output comparison, as measured')
 }
 
+// ── INPUT: a release that carries its code; the successor holds its SHA-256 and its revision ──
+console.log('\n── INPUT: the code thread\'s covenant, a release carrying its code ──')
+{
+  const release = (rev, code) => compileCovenant(RELEASE, { state: { owner: OWNER, rev, code: [...code] } }).bytes
+  const sha = H('sha256'), hash256 = b => sha(sha(b))
+  /* a bundle of 33,600 bytes, so it is a STR16 push; and one a direct push holds */
+  const BUNDLE = Buffer.concat(Array.from({ length: 1050 }, (_, k) => sha(Buffer.from(`the engine, part ${k}`))))
+  const SMALL = Buffer.from('a release a direct push holds')
+  const tip = release(3, sha(Buffer.from('revision 3'))), next = release(4, sha(BUNDLE))
+  const carried = (inputs, more = {}) => sign({ inputs, ...more })
+  const R4 = [hex(BUNDLE), '04']
+  const list = [
+    ['revision 4: the bundle carried, its SHA-256 the successor\'s code', tip, 41, 42, [out(42, next)], carried(R4), true],
+    ['the release after it, revision 5, its bundle in a direct push', next, 42, 43, [out(43, release(5, sha(SMALL)))], carried([hex(SMALL), '05']), true],
+    ['the revision in two bytes, 04 00', tip, 41, 42, [out(42, next)], carried([hex(BUNDLE), '0400']), true],
+    ['the successor\'s code is not the SHA-256 of the bundle carried', tip, 41, 42, [out(42, release(4, sha(SMALL)))], carried(R4), false],
+    ['the successor\'s code is the bundle\'s HASH256, not its SHA-256', tip, 41, 42, [out(42, release(4, hash256(BUNDLE)))], carried(R4), false],
+    ['the successor says revision 5, and the tick carries 4', tip, 41, 42, [out(42, release(5, sha(BUNDLE)))], carried(R4), false],
+    ['the successor keeps revision 3', tip, 41, 42, [out(42, release(3, sha(BUNDLE)))], carried(R4), false],
+    ['the revision left out: a missing input', tip, 41, 42, [out(42, next)], carried([hex(BUNDLE)]), false],
+    ['nothing carried', tip, 41, 42, [out(42, next)], sign(), false],
+    ['a push more than INPUT names', tip, 41, 42, [out(42, next)], carried([...R4, '01']), false],
+    ['the revision in 9 bytes, past a cell, its first 8 a 4', tip, 41, 42, [out(42, next)], carried([hex(BUNDLE), '04' + '00'.repeat(8)]), false],
+    ['revision 65,536, which DIM rev%2 cannot hold: the rebuild refuses it', tip, 41, 42, [out(42, next)], carried([hex(BUNDLE), '000001']), false],
+    ['the bundle and the revision the other way round', tip, 41, 42, [out(42, next)], carried(['04', hex(BUNDLE)]), false],
+    ['signed by somebody else, with their own key', tip, 41, 42, [out(42, next)], carried(R4, { key: 'other' }), false],
+  ]
+  const r = judge(list)
+  let agree = 0
+  for (const [k, c] of list.entries()) {
+    const js = await runJs(c[1], r[k])
+    if (JSON.stringify(js) === JSON.stringify({ accepted: r[k].accepted, result: r[k].result })) agree++
+    ok(r[k].accepted === c[6], `${c[0]}: ${r[k].accepted ? 'accepted' : 'refused'}`)
+  }
+  ok(agree === list.length, `★ the JavaScript interpreter gives the same verdict and leaves the same thing on every one (${agree}/${list.length})`)
+  ok(unhex(r[0].unlocking)[2 + 64 + 32] === JF_LIT.STR16 && r[0].entry.length / 2 > BUNDLE.length && r[0].entry.length / 2 < 100000,
+    `the release tick is ${r[0].entry.length / 2} bytes, its bundle one STR16 push after the key: under the service's 100,000`)
+}
+
 // ── against the hand-written 7 Sept counter, on the rules both have: value + 1, the same script, the outputs ──
 console.log('\n── the same ticks, with the hand-written 7 Sept counter as the tip (server/verify-wired.php) ──')
 {
@@ -228,6 +294,7 @@ console.log('\n── every VERIFY in the script, disabled in turn: some tick mu
 for (const [name, base, list] of [
   ['minimal', minimal, ALL.filter(c => c[0].startsWith('minimal'))],
   ['counting', counting(7), ALL.filter(c => c[0].startsWith('counting'))],
+  ['widths', widths(0), ALL.filter(c => c[0].startsWith('widths'))],
 ]) {
   const sites = verifies(base)
   const mutated = []

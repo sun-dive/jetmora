@@ -33,6 +33,10 @@
 //             lock that declares no version (no verdict). The writer extends neither
 //   limits    a tick over the service's 100,000 bytes, and a genesis that needs two signatures: refused before anything
 //             is recorded or signed; 100,000 bytes exactly lands
+//   inputs    a covenant with INPUT, the code thread's: a release carrying 33,600 bytes of code and its revision, pushed by
+//             basicUnlock(key, inputs) whose size is known before signing, lands; one whose successor names other code,
+//             and one with its revision left out, are refused here and never sent; an input neither bytes nor a number is
+//             refused. A release whose page closed while it was signed: reloaded, resend({ unlock }) lands it
 //   liars     a host whose pages stop short, repeat, give nothing, or never end: each a problem, never a loop
 //   paging    260 ticks, read back in the service's pages of 256 and in pages of 7
 //   reader    ticks put straight into the store, past the judge: a refusal, a lock that declares no version, two inputs, an
@@ -150,6 +154,9 @@ const newKey = async () => REAL.ed25519Signer(await subtle.generateKey({ name: '
 const OWNER = await newKey(), OTHER = await newKey()
 const SRC = 'VERSION JF 3\nDIM owner$20'
 const covenantFor = key => compileCovenant(SRC, { state: { owner: [...ripemd160(Uint8Array.from(sha256(key.publicKey)))] } }).bytes
+/** The code thread's covenant: each release carries its code, and the successor holds its SHA-256 and its revision */
+const RELEASE = 'VERSION JF 3\nDIM owner$20\nDIM rev%2\nDIM code$32\nINPUT bundle$, r%\ncode = SHA256(bundle)\nrev = r'
+const releaseFor = (key, rev, code) => compileCovenant(RELEASE, { state: { owner: [...ripemd160(Uint8Array.from(sha256(key.publicKey)))], rev, code: [...code] } }).bytes
 const JF3 = versionBuild('JF', 3)
 const W = JF_WORD, lit16 = n => [JF_LIT.LIT16, n & 0xff, n >> 8]
 /** The lock's declaration, VER JF 3, which every lock starts with */
@@ -582,6 +589,46 @@ const SCENARIOS = {
          `a genesis whose set needs 2 signatures: refused, nothing recorded, signed or sent: ${e4?.message}`)
   },
 
+  async inputs(M, c) {
+    const T = await thread('inputs', OWNER, { script: releaseFor(OWNER, 3, sha256(utf8('revision 3'))) })
+    const release = (rev, code) => tip => ({ outputs: [{ value: tip.outputs[0].value + 1n, locking: releaseFor(OWNER, rev, sha256(code)) }],
+                                             sequence: Number(tip.outputs[0].value) + 1 })
+    const bundle = Uint8Array.from({ length: 33600 }, (_, k) => (k * 7 + 3) & 0xff)
+    const unlock = M.basicUnlock(OWNER, [bundle, 4])
+    const { w, t, ledger } = writerOf(M, T, { unlock })
+    const r1 = await w.write(release(4, bundle))
+    const u = r1.entry?.inputs[0].unlocking
+    c.ok(r1.status === 201 && u?.length === unlock.size && u[2 + 64 + 32] === JF_LIT.STR16,
+         `a release carrying 33,600 bytes of code and its revision lands (${r1.status}): its unlocking script ${u?.length} bytes, the code one STR16 push after the key, as unlock.size said before anything was signed`)
+    const sent = t.appends()
+    const e1 = await thrown(() => w.write(release(5, utf8('other code')), { unlock: M.basicUnlock(OWNER, [bundle, 5]) }))
+    c.ok(e1 instanceof M.TickRefused && t.appends() === sent, `a successor naming the SHA-256 of other code than the tick carries: refused here, and not sent (${e1?.reason})`)
+    const e2 = await thrown(() => w.write(release(5, bundle), { unlock: M.basicUnlock(OWNER, [bundle]) }))
+    c.ok(e2 instanceof M.TickRefused && t.appends() === sent, `the revision left out: refused here, and not sent (${e2?.reason})`)
+    const e3 = await thrown(() => M.basicUnlock(OWNER, [-1]))
+    c.ok(e3 instanceof M.WriterError, `a number an input carries is unsigned: -1 is refused before anything is built (${e3?.message})`)
+    const odd = await Promise.all(['74ab', {}, true, [1, 256], new ArrayBuffer(2)].map(x => thrown(() => M.basicUnlock(OWNER, [x]))))
+    c.ok(odd.every(e => e instanceof M.WriterError),
+         `an input that is neither bytes nor a whole number, a hex string among them, is refused, never pushed as other bytes (${odd.map(e => e?.constructor.name ?? 'pushed').join(', ')})`)
+    const small = utf8('revision 5, in a direct push')
+    const r2 = await w.write(release(5, small), { unlock: M.basicUnlock(OWNER, [small, 5n]) })
+    c.ok(r2.status === 201, `the next release, its code a direct push and its revision a bigint, lands (${r2.status})`)
+    // the page closes while a release is signed: its successor recorded, its bytes not. Reloaded, the page makes its
+    // writer as before, its unlock the first release's, which carries other inputs
+    const third = utf8('revision 6'), g = gate()
+    void w.write(release(6, third), { unlock: g.unlock(M.basicUnlock(OWNER, [third, 6])) })
+    await g.entered
+    const B = writerOf(M, T, { ledger, unlock })
+    const e4 = await thrown(() => B.w.resend())
+    const r3 = await B.w.resend({ unlock: M.basicUnlock(OWNER, [third, 6]) }).catch(e => e)
+    c.ok(e4 instanceof M.TickRefused && r3?.status === 201 && B.t.appends() === 1,
+         `a release whose page closed while it was signed: reloaded, resend() with the writer's own unlock is refused here (${e4?.reason ?? e4}), and resend({ unlock }) with the release's lands it (${r3?.status ?? r3})`)
+    const rep = await M.readThread(SERVICE, T.id)
+    c.ok(rep.count === 3 && rep.complete && rep.ticks.every(x => x.link === true && x.verdict?.accepted === true), 'read back: three releases, each linked and accepted')
+    const { judged, differ } = phpAgrees(rep)
+    c.ok(judged === 3 && differ.length === 0, `each verdict is CovenantThread::judge's (${judged - differ.length}/${judged})`)
+  },
+
   async liars(M, c) {
     const T = await thread('liars')
     const { w } = writerOf(M, T)
@@ -780,6 +827,8 @@ console.log('\n── mutants: the modules altered in copies; each copy must fai
     ['thread-writer.mjs', 'the size limit not checked before signing', '    if (size > SERVICE_LIMITS.entryBytes)\n', '    if (false)\n', ['limits']],
     ['thread-writer.mjs', 'a genesis needing several signatures let through', 'a[1] > SERVICE_LIMITS.signatures)', 'a[1] > 99)', ['limits']],
     ['thread-writer.mjs', 'resend() sends one tick, and does not walk on', '      if (!a.landed) break', '      break', ['putback']],
+    ['thread-writer.mjs', 'basicUnlock leaves the inputs out', 'const parts = [push(sig), push(bytes(key.publicKey)), ...carried]', 'const parts = [push(sig), push(bytes(key.publicKey))]', ['inputs']],
+    ['thread-writer.mjs', 'basicUnlock\'s size leaves the inputs out', ' + carried.reduce((n, b) => n + b.length, 0)', '', ['inputs']],
     ['thread-reader.mjs', 'the link not checked', 'same(input.prevEntry, before.hash)', 'true', ['reader']],
     ['thread-reader.mjs', 'a pruned body passed over without a gap', '    report.gaps.push({ position, seq })\n', '', ['pruned']],
     ['thread-reader.mjs', 'the output spent taken as output 0, whatever the outpoint', 'before.outputs[input.index]', 'before.outputs[0]', ['reader']],

@@ -11,13 +11,14 @@
  * A script's first instruction is the lock's declaration, `VER JF 3`, and it is read back as the VERSION
  * line. A script that declares no version, or another one, is not read: this reader reads JF revision 3.
  *
- * A covenant is read by its parts: the pushes at its head are its DIM fields; its frame and rebuild are
- * found by laying them down again for that layout, and must match byte for byte; what lies between is
- * the program. Variables come back named by their address (`v24`) unless the names are supplied; the
- * compiler returns them as `names`.
+ * A covenant is read by its parts: the pushes at its head are its DIM fields; the stores that bind the
+ * unlocking script's pushes after the key, and the checks after them, are its INPUT line; its frame and
+ * rebuild are found by laying them down again for that layout and those inputs, and must match byte for
+ * byte; what lies between is the program. Variables come back named by their address (`v24`) unless the
+ * names are supplied; the compiler returns them as `names`.
  */
 import { JF_PUSH_MAX, JF_SMALL0, JF_SMALL_NEG1, JF_LIT, JF_WORD, JF_ESC0, JF_RESERVED0, jf_op_name } from '../tools/ops-jf.mjs'
-import { JF_NVERSION, JF_REVISION, covenantFrame } from './basic-jf.mjs'
+import { JF_NVERSION, JF_REVISION, INPUT_WIDEST, covenantFrame } from './basic-jf.mjs'
 
 const NAME = new Map(Object.entries(JF_WORD).map(([k, v]) => [v, k]))
 const LIT = new Map(Object.entries(JF_LIT).map(([k, v]) => [v, k]))
@@ -349,6 +350,28 @@ function readCovenant(bytes, ins, opts, version) {
     else if (ins[k]?.name === 'NUM' && ins[k + 1]?.name === '2!') { kinds[i] = { bytes: true, addr: Number(ins[k].value) }; k += 2 }
     else return null
   }
+  // then the inputs, the last first, and the key and the signature: the last two of the frame's stores are its own
+  const stores = []
+  while (ins[k]?.name === 'NUM' && ins[k + 1]?.name === '2!') { stores.push(Number(ins[k].value)); k += 2 }
+  if (stores.length < 2) return null
+  /* Each input's checks follow, in the order INPUT names them: a $ input's size when it has a width; a % input's size,
+     its bytes read as a number into the variable the program reads, and at 8 bytes that the number is not negative.
+     What is read here is only a reading: the frame laid down for it must then match byte for byte. */
+  const given = []
+  for (const a of stores.slice(0, -2).reverse()) {
+    const at = (j, name, v) => ins[k + j]?.name === name && (v === undefined || ins[k + j].value === BigInt(v))
+    const verify = j => at(j, '0=') && at(j + 1, '(ABORT")') && ins[k + j + 1].data.length === 0
+    const size = cmp => at(0, 'NUM', a) && at(1, '2@') && at(2, 'NIP') && at(3, 'NUM') && at(4, cmp)
+    if (size('=') && verify(5)) { given.push({ addr: a, width: Number(ins[k + 3].value), bytes: true }); k += 7 }
+    else if (size('>') && at(5, '0=') && verify(6) && at(8, 'NUM', a) && at(9, '2@') && at(10, 'BIN2NUM') && at(11, 'NUM') && at(12, '!')) {
+      const width = Number(ins[k + 3].value)
+      given.push({ addr: Number(ins[k + 11].value), width, bytes: false })
+      k += width === 8 ? 13 + 7 : 13                    // at 8 bytes, the VERIFY that it is not negative: 7 more
+    } else given.push({ addr: a, width: null, bytes: true })
+  }
+  const inputs = given.map((x, i) => ({ name: opts.names?.[x.addr] ?? `in${i}`, width: x.width, bytes: x.bytes }))
+  // a width INPUT does not give is in no INPUT line: the reading stops there, and gives none that would not compile
+  const odd = inputs.find(x => x.width !== null && (x.width < 1 || x.width > (x.bytes ? INPUT_WIDEST.bytes : INPUT_WIDEST.number)))
   const layoutOf = ownerIdx => ins.slice(0, n).map((x, i) => ({
     name: i === ownerIdx ? 'owner' : (opts.names?.[kinds[i].addr] ?? `f${i}`), width: x.data.length, bytes: kinds[i].bytes,
   }))
@@ -359,7 +382,7 @@ function readCovenant(bytes, ins, opts, version) {
     const layout = layoutOf(o)
     const dollars = layout.filter(f => f.bytes).map(f => f.name)
     const numbers = layout.filter(f => !f.bytes).map(f => f.name)
-    const { H, frame } = covenantFrame(layout, L, [])
+    const { H, frame } = covenantFrame(layout, L, [], inputs)
     if (!same(H, frame)) continue
     // which fields the program writes decides the rebuild: try each, then hold the reading to it
     const tries = [[]]
@@ -369,10 +392,18 @@ function readCovenant(bytes, ins, opts, version) {
       if (numbers.length) tries.push([...d, numbers[0]])
     }
     for (const written of tries) {
-      const { rebuild } = covenantFrame(layout, L, written)
+      const { rebuild } = covenantFrame(layout, L, written, inputs)
       if (!same(L - rebuild.length, rebuild)) continue
+      const state = Object.fromEntries(layout.map((f, i) => [f.name, fieldValue(f, ins[i].data)]))
+      const dims = layout.map(f => `DIM ${f.name}${f.bytes ? '$' : '%'}${f.width}`)
+      if (odd) {
+        return { covenant: true, layout, inputs, state, lines: [version, ...dims],
+                 stoppedAt: `${odd.name}${odd.bytes ? '$' : '%'}${odd.width}: no INPUT line has this width (a % input is 1 to ` +
+                   `${INPUT_WIDEST.number} bytes, a $ input 1 to ${INPUT_WIDEST.bytes})` }
+      }
       const start = H + frame.length, stop = L - rebuild.length
-      const vars = new Map(layout.map((f, i) => [kinds[i].addr, { name: f.name, type: f.bytes ? 'b' : 'n' }]))
+      const vars = new Map([...layout.map((f, i) => [kinds[i].addr, { name: f.name, type: f.bytes ? 'b' : 'n' }]),
+                            ...inputs.map((x, i) => [given[i].addr, { name: x.name, type: x.bytes ? 'b' : 'n' }])])
       const body = disassemble(bytes.slice(start, stop))
       const m = machine(body, vars, a => opts.names?.[a] ?? `v${a}`)
       let stoppedAt
@@ -383,9 +414,9 @@ function readCovenant(bytes, ins, opts, version) {
         : written.length > 0 && dollars.every(d => wrote.includes(d) === written.includes(d))
       if (!holds && !stoppedAt) continue
       return {
-        covenant: true, layout, stoppedAt,
-        state: Object.fromEntries(layout.map((f, i) => [f.name, fieldValue(f, ins[i].data)])),
-        lines: [version, ...layout.map(f => `DIM ${f.name}${f.bytes ? '$' : '%'}${f.width}`),
+        covenant: true, layout, inputs, stoppedAt, state,
+        lines: [version, ...dims,
+          ...(inputs.length ? [`INPUT ${inputs.map(x => `${x.name}${x.bytes ? '$' : '%'}${x.width ?? ''}`).join(', ')}`] : []),
           "REM  rules 1 to 4 are the frame: the owner's signature, value + 1 and nSequence, the script rebuilt", ...m.lines],
       }
     }
