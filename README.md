@@ -163,6 +163,49 @@ against the tick, decides. A tick the script refuses is not recorded (422); a ti
 invalid (§4.4), never weighed against the first. A thread service is a witness. The parties to a thread reach consensus by running its script, without trusting each
 other or the host; it is not a global consensus among strangers who care nothing for the tick.
 
+## Releases
+
+`tools/release.mjs` writes a release of this code base to a thread service, as a thread of its own: the genesis
+is the code thread's covenant, `basic/code-thread.bas`, owned by the release key, and each tick carries one part of
+the archive, in order. Joined, the parts are the archive. Its SHA-256 is what is timestamped.
+
+The archive is every file `git ls-files` lists at the commit, read from git's objects, never the working tree. It
+is one tar as GNU tar writes it (owner and group root, mode 0644 or 0755 for an executable, mtime 00:00 of the
+commit's date in its own timezone), gzipped as GNU gzip does at level 6, with no name and no time.
+`tools/gzip.mjs` is our own port of gzip's deflate, so node alone rebuilds the same bytes on any machine. It is how
+the 14 Sept archive was made: 448b796 rebuilds to `8f3884e2…`, 624,949 bytes, the hash in `PROVENANCE.md`.
+
+```
+node tools/release.mjs keygen FILE                                         # a new seed, mode 0600, outside any git work tree
+node tools/release.mjs archive <commit> [--out FILE]                       # the archive, its hash, its parts
+node tools/release.mjs publish <commit> --service URL                      # the plan; add --send to write it
+node tools/release.mjs verify <genesis-id> --service URL --owner HASH160   # read back and check every part
+```
+
+⚠⚠ **The release key is never asked for, never passed as an argument, and never printed.** `publish` reads it
+from the environment, a 32-byte Ed25519 seed in hex. Set it for that one run, so nothing started from the shell
+afterwards inherits it:
+
+```
+# fish: typed (not shown), or read from the seed file
+begin; read -l -x -s JETMORA_RELEASE_SEED; node tools/release.mjs publish <commit> --service URL; end
+begin; read -l -x JETMORA_RELEASE_SEED < FILE; node tools/release.mjs publish <commit> --service URL; end
+# bash: the same, in a subshell
+( read -rs JETMORA_RELEASE_SEED && export JETMORA_RELEASE_SEED && node tools/release.mjs publish <commit> --service URL )
+```
+
+The tool takes the variable out of its own environment before git runs, and refuses an argument that holds the
+seed.
+
+★ **Use a key for releases only.** Should it leak, only releases are exposed.
+
+⚠ **Dry run by default.** Nothing is written without `--send`, and there is no default service. Publishing again
+carries on after the ticks already there.
+
+The tool holds no blockchain key. BTC is stamped with OpenTimestamps (`ots stamp`, as `PROVENANCE.md` describes);
+WAX and BSV are stamped from foenjam, which holds those keys. `verify` prints draft rows for
+`PROVENANCE.md`.
+
 ## Files
 
 | `tools/ops.mjs` | the 0.1.3 opcode table. ⚠ `0x7f`–`0x81` are `SUBSTR`/`LEFT`/`RIGHT`, **not** `SPLIT`/`NUM2BIN`/`BIN2NUM` |
@@ -185,6 +228,9 @@ other or the host; it is not a global consensus among strangers who care nothing
 | `tools/thread-reader.mjs` | **the reader**: `readThread()` reads a thread from the genesis and checks every tick (the link, the canonical form, the judge against the output it spends), reporting each gap, broken link and refusal by position, never skipping one. It checks it read all the service holds (the last page's tip, `op=tip`'s count) and that its pages move forward, within a bound: a shortfall or a page that repeats is a problem, never a loop. Returns the tip and its outputs |
 | `tools/thread-service.mjs` | the thread service's HTTP endpoint, from a page or node: genesis (its id checked), tip, entries, register and append, in JSON or packed. fetch only |
 | `tools/verify-writer.mjs` | `node tools/verify-writer.mjs [--no-browser]` → the writer and the reader end to end, against the service staged as `.cpanel.yml` deploys it and served by `php -S`: ticks land, a refused tick is never sent, 409s, lost answers, a reload, two tabs on one ledger, a rolled-back host put back by `resend()`, one key on two threads with a host that mixes them up, a forged tick, the service's size and signature limits, hosts whose pages stop short, repeat or never end, 260 ticks paged, a corrupt store, pruned bodies, a lying genesis; the limits pinned to `server/append.php`; each guard of the cross-thread attack alone; mutants that must be caught; and one headless Chromium run with a WebCrypto key and the default ledger, IndexedDB |
+| `tools/release.mjs` | **a release of the code base**: the archive of a commit, rebuilt the same anywhere, written as a thread of ticks, read back and verified. See *Releases* |
+| `tools/gzip.mjs` | gzip as GNU gzip writes it at level 6, with no name and no time: a port of its deflate, no dependencies, synchronous |
+| `tools/verify-release.mjs` | `node tools/verify-release.mjs` → the release tool end to end, against the staged thread service and a lying host in front of it: 448b796 rebuilt to the 14 Sept archive, the gzip port held to GNU gzip and the tar to GNU tar, a local `git replace` and `GIT_DIR` ignored, `keygen` (never in a git work tree; the shell lines it prints leave nothing behind), `publish` (refused without the key, with the seed in an argument, without a service, and for a commit that holds no covenant or whose compiler cannot compile it; a dry run, in full, again, and carried on after a stop), the covenant always the release's commit's (a release still verifies once the working tree, or a later commit, changes the covenant and bumps the compiler), the draft rows in `PROVENANCE.md`'s columns, `verify` refusing a part missing, out of order, changed, empty or cut to another size, another key's thread, the wrong commit, each wrong genesis field and a lying host, a host's control characters kept off the terminal, Ctrl-\ without a core dump, and no seed in anything printed |
 | `tools/run-folder.mjs` | a test run's temp folder and the processes it starts, gone however the run ends; a run killed outright is cleared by the next run of the same test |
 | `tools/dispatch.mjs` | the nVersion → interpreter registry, a port of `dispatch.php`, its errors in the same words |
 | `tools/jf-crypto.mjs` | the crypto a JF tick is judged with, the same in a page and in node: SHA-256, SHA-1, RIPEMD-160, Ed25519 by libsodium 1.0.22's rules, and secp256k1. All ours, synchronous, and never a browser's own |
@@ -196,10 +242,10 @@ other or the host; it is not a global consensus among strangers who care nothing
 | `tools/crosscheck.mjs` | `node tools/crosscheck.mjs` → differential check of the `bsv` subset. ⚠ Needs `@bsv/sdk` resolvable; set `BSV_SDK=/abs/path/to/@bsv/sdk/dist/esm/mod.js` if it is not installed alongside |
 | `basic/basic-jf.mjs` | **the jetForth BASIC compiler**, 0.5: BASIC to jetForth, served at `/basic.html`. `VERSION JF 3` compiles to the lock's declaration, `VER JF 3`, the script's first five bytes. `compileCovenant` lays a thread's covenant down: its DIM state at its head, rules 1 to 4 written for it, the declaration carried into every successor. `INPUT` names what each tick carries, pushed after the owner's signature and key, each checked for the size it says |
 | `basic/unbasic-jf.mjs` | the reader: jetForth back to BASIC, the declaration read back as the `VERSION` line and a covenant's inputs as its `INPUT` line. A script that declares no version, or another one, is not read |
-| `basic/code-thread.bas` | **the covenant of jetmora's own code thread**: each release is one tick carrying the code bundle and the engine revision it implements, and the successor's state keeps the bundle's SHA-256 and that revision. It holds no key: the genesis state is given when the thread is made |
+| `basic/code-thread.bas` | **the covenant of jetmora's own code thread**. A release is a thread of its own: each tick, signed by the release key, carries one part of the code archive and the engine revision; the successor keeps that part's SHA-256 and the revision. It holds no key: the genesis state is given when the thread is made |
 | `basic/test/basic-jf.mjs` | `node basic/test/basic-jf.mjs` → every program in both interpreters, each read back to the same bytes, `INPUT` compiled, refused and read back, and the compiler proved against 0.4 and 0.3 as released, read from git: without `INPUT`, a program or a covenant is 0.4's bytes exactly; against 0.3, a program is `VER JF 3` and then 0.3's bytes, and a covenant is `VER JF 3` and then 0.3's covenant laid down for its length, the same but for one number when it writes a field |
 | `basic/test/thread.mjs` | `node basic/test/thread.mjs` → a covenant thread in BASIC, ticked and judged by both interpreters and both judges, every `VERIFY` in it disabled in turn |
-| `basic/test/code-thread.mjs` | `node basic/test/code-thread.mjs` → the code thread end to end, with a throwaway key: releases carrying the engine's code, judged by both judges; another signer, another hash, another revision and the wrong pushes refused; the largest bundle one tick can carry; and two releases through the staged thread service, read back |
+| `basic/test/code-thread.mjs` | `node basic/test/code-thread.mjs` → the code thread end to end, with a throwaway key: ticks carrying the engine's code, judged by both judges; another signer, another hash, another revision and the wrong pushes refused; the largest bundle one tick can carry; and two ticks through the staged thread service, read back |
 
 ⚠ **Licence position.** Expected results are derived from **Bitcoin 0.1.3, which is MIT/X11**.
 `crosscheck.mjs` uses `@bsv/sdk` (Open BSV Licence) **solely to establish BSV compatibility** — that is

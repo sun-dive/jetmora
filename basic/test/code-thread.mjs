@@ -3,14 +3,14 @@
 // The code thread's covenant, basic/code-thread.bas, end to end: a release is accepted, and nothing else is.
 //   node basic/test/code-thread.mjs
 // A throwaway Ed25519 key, made for the run and never exported, is the release key. The genesis is the covenant with
-// owner the key's HASH160, rev 3 and code 32 zero bytes: no release yet, so the bytes of every release are in a tick, the
-// first one's too. The first release carries the engine's code, a gzip of server/interpreter-jf.php and
+// owner the key's HASH160, rev 3 and code 32 zero bytes: no part yet, so every byte of the archive is in a tick, the
+// first part's too. The first tick carries a part of the engine's code, a gzip of server/interpreter-jf.php and
 // tools/interpreter-jf.mjs, and revision 3; a second, on top of it, carries those and their opcode tables, and revision 4.
 // Each tick is built by tick() of tools/thread.mjs with basicUnlock(key, inputs), and judged from its bytes by
 // CovenantThread::judge (tools/judge-run.php) and by judge() of tools/thread.mjs: the same verdict, and the same stack
 // or refusal bytes. Then the largest bundle one tick can carry, measured. Last, once through the thread service, staged
-// as .cpanel.yml deploys it and served by php -S: the genesis registered, the two releases written by
-// tools/thread-writer.mjs and read back by tools/thread-reader.mjs, and the tip's state and each release's code read
+// as .cpanel.yml deploys it and served by php -S: the genesis registered, the two ticks written by
+// tools/thread-writer.mjs and read back by tools/thread-reader.mjs, and the tip's state and each tick's part read
 // from the thread alone. The temp folder and the server go when the run ends (tools/run-folder.mjs).
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
