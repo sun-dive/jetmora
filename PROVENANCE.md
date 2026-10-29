@@ -39,6 +39,7 @@ one part of the archive, in order. To read a release back and check it against a
 
 | Date | Commit | Archive SHA-256 | Release key HASH160 | Thread | Ticks |
 |------|--------|-----------------|---------------------|--------|-------|
+| 2026-10-29 | `8e088b5` | `f90774f4332b949ffe031a66c60c038099d23a1643c90180f32672e91b967ddc` | `785744334ee89ce9a8048a4460ea964a1b27734e` | `7eea530ec1a2129777a234c0b465df72342755827a061f19cfd41b33a3474bba` | 15 |
 
 <!-- append-only: one row per release thread, newest at the bottom -->
 
