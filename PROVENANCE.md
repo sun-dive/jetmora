@@ -51,5 +51,6 @@ and holds the keys for both.
 
 | Date | Commit | Archive SHA-256 | WAX block, tx | BSV tx |
 |------|--------|-----------------|---------------|--------|
+| 2026-10-29 | `8e088b5` | `f90774f4332b949ffe031a66c60c038099d23a1643c90180f32672e91b967ddc` | 463517243, `9a47f6adf7944e35bee254f1ae52cfe1e76b253399982014c235310e4a0f0db9` | `90d42b147258756f88226d2b4145581210000a531c4a14f95f4a967e3637bac7` (block 973118) |
 
 <!-- append-only: one row per timestamped archive, newest at the bottom -->
