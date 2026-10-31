@@ -189,6 +189,7 @@ for (const [src, state] of [
   ['VERSION JF 3\nDIM owner$20\nDIM n%4\nIF n > 3 THEN n = n + 1', { owner: OWNER, n: 2 }],
   ['VERSION JF 3\nDIM owner$20\nDIM n%4\nDIM tag$3\nIF n > 3 THEN\n tag = &H010203\nELSE\n IF n = 0 THEN n = 9\nEND IF\nn = n + 2 ^ 3', { owner: OWNER, n: 9, tag: [7, 8, 9] }],
   [WIDTHS, { owner: OWNER, n: 0 }], [RELEASE, { owner: OWNER, rev: 3, code: new Array(32).fill(0) }],
+  ['VERSION JF 3\nDIM owner$20\nDIM d$1200\nDIM e$73\nINPUT nd$1200\nd = nd', { owner: OWNER, d: new Array(1200).fill(7), e: new Array(73).fill(5) }],
 ]) {
   const c = compileCovenant(src, { state })
   const r = unbasic(c.bytes)
@@ -264,6 +265,36 @@ console.log('\n── INPUT: the code thread\'s covenant, a release carrying its
   ok(agree === list.length, `★ the JavaScript interpreter gives the same verdict and leaves the same thing on every one (${agree}/${list.length})`)
   ok(unhex(r[0].unlocking)[2 + 64 + 32] === JF_LIT.STR16 && r[0].entry.length / 2 > BUNDLE.length && r[0].entry.length / 2 < 100000,
     `the release tick is ${r[0].entry.length / 2} bytes, its bundle one STR16 push after the key: under the service's 100,000`)
+}
+
+// ── fields wider than a direct push: carried, rebuilt and kept ──
+console.log('\n── fields wider than a direct push: STR8 and STR16 in the head ──')
+{
+  const LONG = 'VERSION JF 3\nDIM owner$20\nDIM a$73\nDIM b$256\nDIM d$1200\nDIM e$300\nINPUT na$73, nb$256, nd$1200\na = na\nb = nb\nd = nd'
+  const fill = (w, x) => new Array(w).fill(x)
+  const long = (x, { d = x, e = 0x65 } = {}) => compileCovenant(LONG, { state: { owner: OWNER, a: fill(73, x), b: fill(256, x), d: fill(1200, d), e: fill(300, e) } }).bytes
+  const carry = x => [hex(fill(73, x)), hex(fill(256, x)), hex(fill(1200, x))]
+  const tip = long(0), next = long(7)
+  const list = [
+    ['a, b and d carried, and the successor holds them', tip, 41, 42, [out(42, next)], sign({ inputs: carry(7) }), true],
+    ['the tick after it', next, 42, 43, [out(43, long(9))], sign({ inputs: carry(9) }), true],
+    ['the successor keeps d as it was', tip, 41, 42, [out(42, long(7, { d: 0 }))], sign({ inputs: carry(7) }), false],
+    ['the successor changes e, which no tick writes', tip, 41, 42, [out(42, long(7, { e: 0x66 }))], sign({ inputs: carry(7) }), false],
+    ['d carried a byte short', tip, 41, 42, [out(42, next)], sign({ inputs: [...carry(7).slice(0, 2), hex(fill(1199, 7))] }), false],
+    ['a carried a byte long', tip, 41, 42, [out(42, next)], sign({ inputs: [hex(fill(74, 7)), ...carry(7).slice(1)] }), false],
+    ['signed by somebody else, with their own key', tip, 41, 42, [out(42, next)], sign({ inputs: carry(7), key: 'other' }), false],
+  ]
+  const r = judge(list)
+  let agree = 0
+  for (const [k, c] of list.entries()) {
+    const js = await runJs(c[1], r[k])
+    if (JSON.stringify(js) === JSON.stringify({ accepted: r[k].accepted, result: r[k].result })) agree++
+    ok(r[k].accepted === c[6], `${c[0]}: ${r[k].accepted ? 'accepted' : 'refused'}`)
+  }
+  ok(agree === list.length, `★ the JavaScript interpreter gives the same verdict and leaves the same thing on every one (${agree}/${list.length})`)
+  /* past VER JF 3 (5 bytes) and owner's push (21): a's push, then b's after a's 2 + 73 */
+  ok(next[26] === JF_LIT.STR8 && next[27] === 73 && next[101] === JF_LIT.STR16 && next[102] === 0 && next[103] === 1,
+     `a$73 is an STR8 push in the head and b$256 an STR16; the covenant is ${tip.length} B`)
 }
 
 // ── against the hand-written 7 Sept counter, on the rules both have: value + 1, the same script, the outputs ──

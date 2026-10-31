@@ -51,7 +51,7 @@
 import { JF_PUSH_MAX, JF_SMALL0, JF_LIT, JF_WORD } from '../tools/ops-jf.mjs'
 
 /** The version of this compiler. A script's bytes are a function of it. */
-export const BASIC_JF_VERSION = '0.5'
+export const BASIC_JF_VERSION = '0.6'
 
 /** The JF revision the bytes are numbered in: tools/ops-jf.mjs, revision 3. */
 export const JF_REVISION = 3
@@ -321,8 +321,8 @@ function dimStmt(p) {
         'twenty raw bytes. A field is a layout, and a layout has a size.')
     }
     const w = p.next()
-    if (!w || w.k !== 'num' || !Number.isInteger(w.n) || w.n < 1 || w.n > 75) {
-      throw new Error(`BASIC: DIM ${n.v}: the width must be a whole number of bytes from 1 to 75`)
+    if (!w || w.k !== 'num' || !Number.isInteger(w.n) || w.n < 1 || w.n > 0xffff) {
+      throw new Error(`BASIC: DIM ${n.v}: the width must be a whole number of bytes from 1 to 65535, the most one push holds`)
     }
     fields.push({ name: n.v, width: w.n, bytes: sig.v === '$' })
   } while (p.eat(','))
@@ -912,6 +912,10 @@ const PREIMAGE_AROUND = 156
  * `written` is the fields the program assigns. A `$` field the program writes is checked for its width:
  * a push of another length would leave bytes in the successor that run as code.
  */
+/** What comes before a field's bytes in the head: its push, as Code.push lays it down. A direct push to 72 bytes, then
+ *  STR8 to 255, then STR16, its length in two bytes, least significant first. */
+const pushHead = n => n <= JF_PUSH_MAX ? [n] : n <= 0xff ? [JF_LIT.STR8, n] : [JF_LIT.STR16, n & 0xff, n >> 8]
+
 function frameText(layout, vl, written, inputs) {
   /* Each input is checked before anything reads it. A % input is bound as the bytes pushed, to #in_ followed by
      its name; BIN2NUM reads only the first 8 of them, so their size is checked first. Below 8 bytes the number
@@ -944,8 +948,8 @@ function frameText(layout, vl, written, inputs) {
   if (!layout.some(f => written.has(f.name))) {
     return { before, after: ['VERIFY SAMEBYTES(HASH256(CAT(NUM2BIN(#next, 8), #field)), #hout)'] }
   }
-  const H = layout.reduce((n, f) => n + 1 + f.width, 0)
-  const piece = f => `CAT(&H${hex([f.width])}, ${f.bytes ? f.name : `NUM2BIN(${f.name}, ${f.width})`})`
+  const H = layout.reduce((n, f) => n + pushHead(f.width).length + f.width, 0)
+  const piece = f => `CAT(&H${hex(pushHead(f.width))}, ${f.bytes ? f.name : `NUM2BIN(${f.name}, ${f.width})`})`
   /* #vi is what comes before the state: the length prefix and the declaration, carried into the successor as they are. */
   const after = [`#vi, #rest = SPLIT(#field, ${vl + DECLARATION.length})`, `#old, #suf = SPLIT(#rest, ${H})`]
   for (const f of layout) if (f.bytes && written.has(f.name)) after.push(`VERIFY SIZE(${f.name}) = ${f.width}`)
@@ -981,7 +985,6 @@ function covenantLayout(prog, consts = {}) {
     for (const f of s.fields) {
       if (layout.some(g => g.name === f.name)) throw new Error(`BASIC: ${f.name} is DIMmed twice`)
       if (inputs.some(x => x.name === f.name)) throw new Error(both(f.name))
-      if (f.bytes && f.width > JF_PUSH_MAX) throw new Error(`BASIC: DIM ${f.name}$${f.width}: a field is one direct push, at most ${JF_PUSH_MAX} bytes`)
       if (!f.bytes && f.width > 8) throw new Error(`BASIC: DIM ${f.name}%${f.width}: a number is a 64-bit cell, so at most 8 bytes`)
       layout.push(f)
     }

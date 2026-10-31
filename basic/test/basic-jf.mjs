@@ -8,7 +8,7 @@
 // stack or raise the same refusal. Then every program is read back, and the reading compiles to the
 // same bytes; its listing's offsets are where the engine lets a jump land, and every branch lands on one.
 // Covenants with INPUT are compiled, refused and read back here; their ticks are judged in basic/test/thread.mjs.
-// Last, this compiler is proved against the ones before it, 0.3 and 0.4 as they were released, read from git.
+// Last, this compiler is proved against the ones before it, 0.3, 0.4 and 0.5 as they were released, read from git.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
@@ -570,6 +570,73 @@ else {
   let none = 0
   for (const [text, state] of INPUTS) { try { B4.compileCovenant(V + text, { state }) } catch { none++ } }
   ok(none === INPUTS.length, `and 0.4 compiles none of the INPUT covenants here (${none}/${INPUTS.length}): INPUT is new in ${BASIC_JF_VERSION}`)
+}
+
+// ── a field wider than a direct push ─────────────────────────────────────────────────────────────────
+/* A $ field is one push in the head, as Code.push lays it down: a direct push to 72 bytes, STR8 to 255, STR16 past that.
+   The rebuild writes the same push, so a field of any width the interpreter's memory holds can be written and kept. */
+console.log('\n── a field wider than a direct push ──')
+const WIDE = [73, 255, 256, 1200]
+const wideCov = (w, written) => V + `DIM owner$20\nDIM tag$${w}` + (written ? `\nINPUT t$${w}\ntag = t` : '')
+{
+  let forms = 0, back = 0
+  for (const w of WIDE) for (const written of [false, true]) {
+    const c = compileCovenant(wideCov(w, written), { state: { owner: OWN, tag: new Array(w).fill(7) } })
+    const head = [...c.bytes.slice(26, 26 + (w <= 0xff ? 2 : 3))]
+    if (JSON.stringify(head) === JSON.stringify(w <= 0xff ? [JF_LIT.STR8, w] : [JF_LIT.STR16, w & 0xff, w >> 8])) forms++
+    const r = unbasic(c.bytes)
+    let again = ''
+    try { again = hex(compileCovenant(r.lines.join('\n'), { state: r.state }).bytes) } catch (e) { again = e.message }
+    if (!r.stoppedAt && again === hex(c.bytes)) back++
+  }
+  ok(forms === WIDE.length * 2, `tag$73 and tag$255 are one STR8 push in the head, tag$256 and tag$1200 one STR16, written or not (${forms}/${WIDE.length * 2})`)
+  ok(back === WIDE.length * 2, `and each reads back to BASIC that compiles to the same bytes (${back}/${WIDE.length * 2})`)
+  const past = (w, written) => { try { compileCovenant(wideCov(w, written), { state: { owner: OWN, tag: new Array(w).fill(7) } }); return '' } catch (e) { return e.message } }
+  ok(past(29998, false) === '' && /needs \d+ bytes of memory, and the interpreter has 65536/.test(past(29999, false))
+     && past(6458, true) === '' && /needs \d+ bytes of memory, and the interpreter has 65536/.test(past(6459, true)),
+     'the interpreter\'s memory bounds a field: 29,998 bytes never written, 6,458 written from an INPUT, and past it the compiler says so')
+  ok(/from 1 to 65535/.test(past(65536, false)), `DIM tag$65536 is refused: one push holds at most 65535 bytes`)
+}
+
+// ── against 0.5 ──────────────────────────────────────────────────────────────────────────────────────
+/* Rule 3 again: 0.6 lets a $ field be wider than a direct push, so a program or a covenant 0.5 compiles is 0.5's, byte
+   for byte, and so is all else the compiler gives back. 0.5 is read from git as it was released. */
+const REV05 = 'edf926d'
+console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.5, as released (${REV05}, from git) ──`)
+const B5 = await released(REV05)
+if (B5 === null) console.log(`  - no 0.5 to prove against: revision ${REV05} is not in this repository. The comparison is skipped, never counted as passed.`)
+else {
+  ok(B5.BASIC_JF_VERSION === '0.5', '0.5 loads beside this compiler, on its own opcode table')
+  const same = (a, b, keys) => keys.every(k => JSON.stringify(a[k], (_, v) => typeof v === 'bigint' ? String(v) : v)
+                                           === JSON.stringify(b[k], (_, v) => typeof v === 'bigint' ? String(v) : v))
+  let plain = 0
+  for (const p of progs) {
+    const c5 = B5.compileBasic(p.src, p.env)
+    if (hex(p.c.bytes) === hex(c5.bytes) && same(p.c, c5, ['nVersion', 'revision', 'assigned', 'names', 'inputs', 'leave', 'memory', 'pushed'])) plain++
+    else console.log(`  ✗ ${p.name}\n      0.5 ${hex(c5.bytes)}\n      ${BASIC_JF_VERSION} ${hex(p.c.bytes)}`)
+  }
+  ok(plain === progs.length, `★★ every program here, ${plain}/${progs.length}: 0.5's bytes, byte for byte, and all else the compiler gives back is 0.5's`)
+  const refused = [...refusals.map(([, src, env]) => [V + src, env]), ...VERSION_REFUSALS.map(([, src]) => [src, {}])]
+  let words = 0
+  for (const [src, env] of refused) {
+    let m5 = ''
+    try { B5.compileBasic(src, env) } catch (e) { m5 = e.message }
+    if (m5 !== '' && m5 === badRaw(src, env)) words++
+  }
+  ok(words === refused.length, `every program 0.5 refuses here, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
+  let laid = 0
+  for (const [text, state] of [...COVENANTS, ...INPUTS]) {
+    const src = V + text, c6 = compileCovenant(src, { state }), c5 = B5.compileCovenant(src, { state })
+    if (hex(c6.bytes) === hex(c5.bytes) && same(c6, c5, ['nVersion', 'revision', 'layout', 'inputs', 'written', 'assigned', 'names', 'memory', 'pushed'])) laid++
+    else console.log(`  ✗ ${text.split('\n').join(' · ')}: differs from 0.5's`)
+  }
+  ok(laid === COVENANTS.length + INPUTS.length,
+    `★★ every covenant here, ${laid}/${COVENANTS.length + INPUTS.length}, the INPUT ones among them: 0.5's bytes, byte for byte, and all else the compiler gives back is 0.5's`)
+  let none = 0
+  for (const w of WIDE) for (const written of [false, true]) {
+    try { B5.compileCovenant(wideCov(w, written), { state: { owner: OWN, tag: new Array(w).fill(7) } }) } catch (e) { if (/one direct push|from 1 to 75/.test(e.message)) none++ }
+  }
+  ok(none === WIDE.length * 2, `and 0.5 compiles none of the wide-field covenants above (${none}/${WIDE.length * 2}): past 72 bytes it refuses a field, past 75 its parser does; a field past a direct push is new in ${BASIC_JF_VERSION}`)
 }
 
 console.log(`\n${fail === 0 ? '✅' : '⚠'}  ${pass} passed, ${fail} failed   [BASIC → jetForth]`)

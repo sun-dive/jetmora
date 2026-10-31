@@ -340,7 +340,7 @@ const fieldValue = (f, data) => f.bytes ? [...data] : [...data].reverse().reduce
  */
 function readCovenant(bytes, ins, opts, version) {
   let n = 0
-  while (ins[n]?.name === 'PUSH' && ins[n].data.length >= 1 && ins[n].data.length <= JF_PUSH_MAX) n++
+  while (ins[n]?.name === 'PUSH' && ins[n].data.length >= 1) n++
   if (n === 0) return null
   // the binding: the fields from the top down — a number through BIN2NUM — then the key and the signature
   const kinds = []
