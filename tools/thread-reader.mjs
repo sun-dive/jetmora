@@ -63,8 +63,18 @@
 //   reader reports the rewritten tip as whole, and cannot tell the two forms apart, since the service keeps no append
 //   signature to show. The next tick's link exposes it: it names the hash of the form its writer signed on.
 //
-// ⚠ It reads from the genesis every time: O(n) in the thread's length, each tick judged. ⏭ A reader that resumes from a
-//   tick it checked before is not built.
+// ⚠ readThread reads from the genesis every time: O(n) in the thread's length, each tick judged. ⏭ A reader that resumes
+//   from a tick it checked before is not built.
+//
+//   readBack(service, genesisId, { before = null, limit = 20, crypto = jfCrypto }) → Promise<report>
+//     a thread read from its TIP, newest first, a page at a time (op=back): what a page reads that shows the newest
+//     first and older ones only as they are asked for. Each tick is checked as above, against the output it spends,
+//     which is in the entry before it; so a page asks for one entry more than it shows, and the thread's first tick
+//     spends the genesis. A tick is proved by itself and that output: nothing older is read.
+//     before           the seq to read back from: the page before's report.next; null for the tip
+//     report           { genesis, service: { tip }, ticks: newest first, each with ts (when the service received it),
+//                      gaps, problems (by seq: position is null), next, complete }
+//     report.next      the seq the next older page is read before; null once this page reaches the genesis
 import { parseEntry, assertCanonical } from './entry.mjs'
 import { sha256d } from './sha256.mjs'
 import { judge, jfCrypto, VersionError, JfHostError } from './thread.mjs'
@@ -136,6 +146,50 @@ export async function readThread(service, genesisId, { crypto = jfCrypto, limit 
         checked: tip.link === true && tip.verdict?.accepted === true }
   report.complete = report.gaps.length === 0 && report.problems.length === 0
   return report
+}
+
+/**
+ * @param {import('./thread-service.mjs').ThreadService} service
+ * @param {Uint8Array|string} genesisId  32 bytes, or their hex
+ * @param {{before?: number|null, limit?: number, crypto?: object}} [options]
+ */
+export async function readBack(service, genesisId, { before = null, limit = 20, crypto = jfCrypto } = {}) {
+  const genesis = await service.genesis(genesisId)
+  const page = await service.back(genesis.id, before, limit + 1)
+  const report = { genesis, service: { tip: page.tip }, ticks: [], gaps: [], problems: [], next: null, complete: false }
+  const problem = (seq, kind, detail) => report.problems.push({ position: null, seq, kind, detail })
+  // each page must move back: every seq below the one before it, and below `before`
+  for (let k = 0; k < page.entries.length; k++) {
+    const s = page.entries[k].seq, above = k === 0 ? before : page.entries[k - 1].seq
+    if (!Number.isInteger(s) || (above !== null && s >= above)) {
+      problem(s, 'paging', `the service gave seq ${s} after seq ${above}: its pages do not move back, so reading stops here`)
+      return report
+    }
+  }
+  const shown = page.entries.slice(0, limit), older = page.entries[limit]
+  if (before === null && shown.length && shown[0].seq !== page.tip)
+    problem(shown[0].seq, 'missing', `the newest tick read is seq ${shown[0].seq}, and the service names seq ${page.tip} as the tip`)
+  for (let k = 0; k < shown.length; k++) {
+    const { seq, bytes, ts } = shown[k]
+    const prior = k + 1 < shown.length ? spentFrom(shown[k + 1].bytes)
+      : older ? spentFrom(older.bytes)
+      : page.more ? { hash: null, outputs: null, why: `the service says the thread holds older entries, and gave none before seq ${seq}` }
+      : { hash: genesis.id, outputs: [{ value: 0n, locking: genesis.script }], why: null }
+    const t = await check(null, seq, bytes, prior, crypto, report)
+    t.tick.ts = ts
+    report.ticks.push(t.tick)
+  }
+  report.next = shown.length && (older || page.more) ? shown.at(-1).seq : null
+  report.complete = report.gaps.length === 0 && report.problems.length === 0
+  return report
+}
+
+/** What the tick after an entry spends, from the entry's bytes, as check() gives it as `next`, the entry not judged */
+function spentFrom(b) {
+  if (b.length === 0) return { hash: null, outputs: null, why: 'the output it spends is in a pruned body' }
+  const hash = Uint8Array.from(sha256d(b))
+  try { return { hash, outputs: parseEntry(b).outputs, why: null } }
+  catch { return { hash, outputs: null, why: 'the output it spends is in an entry that does not decode' } }
 }
 
 /** One tick: its report, and what the tick after it spends. */

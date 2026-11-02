@@ -676,6 +676,32 @@ const SCENARIOS = {
          'and in pages of 7: the same 260, in order, each linked and accepted')
   },
 
+  async back(M, c) {
+    const T = await thread('back')
+    const { w } = writerOf(M, T)
+    for (let k = 0; k < 30; k++) await w.write(counter)
+    const all = await M.readThread(SERVICE, T.id)
+    // read back from the tip in pages of 7, each page before the oldest tick of the one before
+    const pages = []
+    let before = null
+    do { const r = await M.readBack(SERVICE, T.id, { before, limit: 7 }); pages.push(r); before = r.next } while (before !== null && pages.length < 10)
+    const back = pages.flatMap(r => r.ticks)
+    c.ok(pages.map(r => r.ticks.length).join() === '7,7,7,7,2' && pages.every(r => r.complete) && pages.at(-1).next === null,
+         `30 ticks read back from the tip in pages of 7: ${pages.map(r => r.ticks.length).join(' ')}, each page complete, the last reaching the genesis`)
+    c.ok(back.every(x => x.link === true && x.verdict?.accepted === true) && back.map(x => hex(x.bytes)).join() === all.ticks.map(x => hex(x.bytes)).reverse().join(),
+         'newest first, the same ticks as read from the genesis, each linked and accepted, the first tick against the genesis')
+    c.ok(back.every((x, k) => Number.isInteger(x.ts) && (k === 0 || x.ts <= back[k - 1].ts)) && back[0].seq === pages[0].service.tip,
+         `each with the time the service received it, newest first (${back[0].ts} … ${back.at(-1).ts}); the first is the service's tip`)
+    const { judged, differ } = phpAgrees({ ticks: back })
+    c.ok(judged === 30 && differ.length === 0, `every verdict CovenantThread::judge's (${judged - differ.length}/${judged})`)
+    const t = tap()
+    const one = await M.readBack(new M.ThreadService(BASE, { fetch: t.fetch }), T.id, { limit: 1 })
+    c.ok(one.ticks.length === 1 && one.ticks[0].verdict?.accepted === true && one.next === one.ticks[0].seq && t.requests.map(x => x.op).join() === 'genesis,back',
+         `the tip alone, proved by itself and the output it spends: ${t.requests.length} requests, the genesis and one page of two entries`)
+    const fwd = await SERVICE.entries(T.id, -1, 5)
+    c.ok(fwd.entries.length === 5 && fwd.entries.every(e => Number.isInteger(e.ts)), 'entries read forward carry their time too')
+  },
+
   async reader(M, c) {
     const T = await thread('reader')
     const { w } = writerOf(M, T)
@@ -723,6 +749,12 @@ const SCENARIOS = {
     const fresh = writerOf(M, T)
     const e = await thrown(() => fresh.w.write(counter))
     c.ok(e instanceof M.ThreadBroken && fresh.t.appends() === 0, `a writer will not extend it: ${e?.message}`)
+    const rb = await M.readBack(SERVICE, T.id, { limit: 20 })
+    const bySeq = {}
+    for (const p of rb.problems) (bySeq[p.seq] ??= []).push(p.kind)
+    const same11 = rep.ticks.every(x => JSON.stringify(bySeq[x.seq] ?? []) === JSON.stringify(kinds[x.position] ?? []))
+    c.ok(rb.ticks.length === 11 && rb.next === null && same11 && rb.ticks.map(x => x.seq).join() === rep.ticks.map(x => x.seq).reverse().join(),
+         'read back from the tip: the same eleven, newest first, and each tick the same problems as read from the genesis')
   },
 
   async pruned(M, c) {
@@ -749,6 +781,9 @@ const SCENARIOS = {
     const e = await thrown(() => fresh.w.write(counter))
     c.ok(e instanceof M.ThreadBroken && e.problem?.kind === 'pruned' && e.problem.position === 1 && fresh.t.appends() === 0,
          `a writer with no tick of its own in the thread cannot stand behind a tip nothing can check: ${e?.message}`)
+    const rb = await M.readBack(SERVICE, T.id, { limit: 10 })
+    c.ok(JSON.stringify(rb.gaps.map(g => g.seq)) === JSON.stringify(rep.gaps.map(g => g.seq).reverse()) && rb.ticks[0].link === null && rb.ticks[0].verdict === null,
+         `read back from the tip: the same gaps by seq, and the tip, whose output spent is pruned, not judged: ${rb.ticks[0]?.why}`)
     const again = writerOf(M, T, { ledger })                   // the writer of the tip, its page reloaded
     const r5 = await again.w.write(counter)
     const rep2 = await M.readThread(SERVICE, T.id)
@@ -832,6 +867,8 @@ console.log('\n── mutants: the modules altered in copies; each copy must fai
     ['thread-reader.mjs', 'the link not checked', 'same(input.prevEntry, before.hash)', 'true', ['reader']],
     ['thread-reader.mjs', 'a pruned body passed over without a gap', '    report.gaps.push({ position, seq })\n', '', ['pruned']],
     ['thread-reader.mjs', 'the output spent taken as output 0, whatever the outpoint', 'before.outputs[input.index]', 'before.outputs[0]', ['reader']],
+    ['thread-reader.mjs', 'readBack judges each tick against its own outputs, not the entry before it', 'const prior = k + 1 < shown.length ? spentFrom(shown[k + 1].bytes)', 'const prior = k + 1 < shown.length ? spentFrom(shown[k].bytes)', ['back']],
+    ['thread-reader.mjs', 'readBack: the first tick of the thread spends nothing', "      : { hash: genesis.id, outputs: [{ value: 0n, locking: genesis.script }], why: null }\n    const t = await check(null", "      : { hash: null, outputs: null, why: 'nothing' }\n    const t = await check(null", ['back']],
     ['thread-reader.mjs', 'the genesis output valued 1, not 0', '{ value: 0n, locking: genesis.script }', '{ value: 1n, locking: genesis.script }', ['lands']],
     ['thread-reader.mjs', 'the canonical form not checked', 'try { e = parseEntry(b); assertCanonical(b) }', 'try { e = parseEntry(b) }', ['reader']],
     ['thread-reader.mjs', 'only the first page read', '    if (stuck || !page.more) break', '    break', ['paging']],
