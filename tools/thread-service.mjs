@@ -20,7 +20,8 @@
 //   tip(id) → { seq, count }       the newest entry's sequence number (null when the thread has none), and how many
 //   entries(id, after = -1, limit = 256) → { entries: [{ seq, bytes, ts }], tip, more }
 //       one page of the thread, oldest first. ⚠ A pruned body is held as zero bytes: bytes.length === 0. ts: when the
-//       service received the entry, in seconds, its time for the tick; null where it kept none
+//       service received the entry, its time for the tick, in Unix time (seconds since 1970-01-01 UTC, the same on every
+//       host; a page shows it in its viewer's timezone); null where it kept none
 //   back(id, before = null, limit = 256) → { entries: [{ seq, bytes, ts }], tip, more }
 //       one page of the thread NEWEST first: the entries before seq `before`, from the tip when it is null. more: the
 //       thread holds entries older than the last one given

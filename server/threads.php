@@ -189,7 +189,7 @@ case 'entries':
     if ($packedOut)   // each entry: 4-byte length ‖ bytes — the relay's framing, so one parser serves both
         outBytes(implode('', array_map(fn($r) => $lp($r['body']), $rows)), 200,
                  ['X-Tip' => $tip ?? -1, 'X-Count' => count($rows), 'X-More' => ($rows !== [] && end($rows)['seq'] < $tip) ? 1 : 0]);
-    // ts: when this host received each entry, its time for the tick (null on a row from before times were kept)
+    // ts: when this host received each entry, its time for the tick, in Unix time, UTC (null on a row from before times were kept)
     out(['genesis' => $hex($g), 'after' => $after,
          'entries' => array_map(fn($r) => ['seq' => $r['seq'], 'entry' => $hex($r['body']), 'ts' => $r['ts']], $rows),
          'tip' => $tip, 'more' => $rows !== [] && end($rows)['seq'] < $tip]);

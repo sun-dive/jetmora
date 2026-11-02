@@ -99,8 +99,8 @@ final class ThreadStore
         //   read back with one query instead of a scan. Added as a column so an older file migrates.
         $cols = array_column($this->db->query('PRAGMA table_info(entries)')->fetchAll(PDO::FETCH_ASSOC), 'name');
         if (!in_array('genesis', $cols, true)) $this->db->exec('ALTER TABLE entries ADD COLUMN genesis BLOB');
-        // ⚠ When the operator RECEIVED the entry: a record for retention policy (§4.5), and the host's time for a tick,
-        //   which readers are given with it; never a protocol field and never read by a covenant (§6.3). Absent on rows
+        // ⚠ When the operator RECEIVED the entry, in Unix time (seconds since 1970-01-01 UTC, the same on every host, as a
+        //   block header's): a record for retention policy (§4.5), and the host's time for a tick, which readers are given; never a protocol field and never read by a covenant (§6.3). Absent on rows
         //   from before the column existed.
         if (!in_array('ts', $cols, true)) $this->db->exec('ALTER TABLE entries ADD COLUMN ts INTEGER');
         $this->db->exec('CREATE INDEX IF NOT EXISTS entries_genesis ON entries (genesis, seq)');
