@@ -8,9 +8,9 @@
 // stack or raise the same refusal. Then every program is read back, and the reading compiles to the
 // same bytes; its listing's offsets are where the engine lets a jump land, and every branch lands on one.
 // Covenants with INPUT are compiled, refused and read back here; their ticks are judged in basic/test/thread.mjs.
-// Last, this compiler is proved against the ones before it, 0.3, 0.4 and 0.5 as they were released, read from git.
+// Last, this compiler is proved against the ones before it, 0.3, 0.4, 0.5 and 0.6 as they were released, read from git.
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compileBasic, compileCovenant, covenantFrame, varintSize, JF_NVERSION, JF_REVISION, DECLARATION, BASIC_JF_VERSION } from '../basic-jf.mjs'
@@ -18,11 +18,12 @@ import { unbasic, disassemble, jfListing } from '../unbasic-jf.mjs'
 import { InterpreterJF } from '../../tools/interpreter-jf.mjs'
 import { JF_LIT, JF_WORD, JF_PUSH_MAX } from '../../tools/ops-jf.mjs'
 import { declaredVersion } from '../../tools/thread.mjs'
+import { verify as ed25519 } from '../../tools/ed25519.mjs'     // libsodium 1.0.22's rules, as server/ed25519.php's
 
 const HERE = dirname(fileURLToPath(import.meta.url)), ROOT = join(HERE, '../..')
 const hex = b => Buffer.from(b).toString('hex')
 const h = alg => b => Uint8Array.from(createHash(alg).update(b).digest())
-const crypto = { sha256: h('sha256'), sha1: h('sha1'), ripemd160: h('ripemd160') }
+const crypto = { sha256: h('sha256'), sha1: h('sha1'), ripemd160: h('ripemd160'), ed25519Verify: (s, p, m) => ed25519(s, m, p) }
 let pass = 0, fail = 0
 const ok = (c, what) => { c ? pass++ : fail++; console.log(`  ${c ? '✓' : '✗'} ${what}`) }
 const S = 2n ** 32n
@@ -569,7 +570,7 @@ else {
     `★★ every covenant here, ${laid}/${COVENANTS.length + named.length}, one with a variable named input among them: 0.4's bytes, byte for byte, and all else the compiler gives back is 0.4's`)
   let none = 0
   for (const [text, state] of INPUTS) { try { B4.compileCovenant(V + text, { state }) } catch { none++ } }
-  ok(none === INPUTS.length, `and 0.4 compiles none of the INPUT covenants here (${none}/${INPUTS.length}): INPUT is new in ${BASIC_JF_VERSION}`)
+  ok(none === INPUTS.length, `and 0.4 compiles none of the INPUT covenants here (${none}/${INPUTS.length}): INPUT is new in 0.5`)
 }
 
 // ── a field wider than a direct push ─────────────────────────────────────────────────────────────────
@@ -596,6 +597,105 @@ const wideCov = (w, written) => V + `DIM owner$20\nDIM tag$${w}` + (written ? `\
      && past(6458, true) === '' && /needs \d+ bytes of memory, and the interpreter has 65536/.test(past(6459, true)),
      'the interpreter\'s memory bounds a field: 29,998 bytes never written, 6,458 written from an INPUT, and past it the compiler says so')
   ok(/from 1 to 65535/.test(past(65536, false)), `DIM tag$65536 is refused: one push holds at most 65535 bytes`)
+}
+
+// ── a program checks a signature ─────────────────────────────────────────────────────────────────────
+/* ED25519SIG(sig, pub, msg), the word the frame checks the owner's signature with, is a program's too: Ed25519 over the
+   message as given, -1 or 0. Each program runs in both interpreters and reads back, as the ones above do. */
+console.log('\n── a program checks a signature: ED25519SIG ──')
+const keyOf = s => createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), h('sha256')(Buffer.from(s))]), format: 'der', type: 'pkcs8' })
+const pubOf = k => hex(createPublicKey(k).export({ format: 'der', type: 'spki' }).subarray(12))
+const sigOf = (k, m) => hex(sign(null, Buffer.from(m, 'hex'), k))
+const AUTHOR = keyOf('an author'), SOMEONE = keyOf('somebody else')
+const MSG = hex(Buffer.from('a comment, as its author wrote it')), PUB = pubOf(AUTHOR), SIG = sigOf(AUTHOR, MSG)
+/** Programs that check a signature: 0.6 compiles none of them, so they are kept apart from `progs`. */
+const SIGNED = []
+{
+  const env = { stack: ['s$', 'p$', 'm$'], leave: ['x'] }, CHECK = 'x = ED25519SIG(s, p, m)'
+  const one = (name, src, inputs, want, e = env) => SIGNED.push({ name, src: V + src, env: e, inputs, want })
+  const flip = s => (parseInt(s.slice(0, 2), 16) ^ 1).toString(16).padStart(2, '0') + s.slice(2)
+  one('signed by the key given: -1', CHECK, [SIG, PUB, MSG], [-1n])
+  one('the message changed after signing: 0', CHECK, [SIG, PUB, flip(MSG)], [0n])
+  one('the signature with one bit changed: 0', CHECK, [flip(SIG), PUB, MSG], [0n])
+  one('signed by somebody else: 0', CHECK, [sigOf(SOMEONE, MSG), PUB, MSG], [0n])
+  one('a key of 31 bytes: 0, a failed check and not an error', CHECK, [SIG, PUB.slice(2), MSG], [0n])
+  one('a signature of 63 bytes: 0', CHECK, [SIG.slice(2), PUB, MSG], [0n])
+  one('an empty message, signed: -1', CHECK, [sigOf(AUTHOR, ''), PUB, ''], [-1n])
+  one('a message the program makes: signed over the SHA-256 of the bytes given', 'x = ED25519SIG(s, p, SHA256(m))',
+    [sigOf(AUTHOR, hex(h('sha256')(Buffer.from(MSG, 'hex')))), PUB, MSG], [-1n])
+  one('as numbers: two that pass and one that does not', 'x = ED25519SIG(s, p, m) + ED25519SIG(s, p, m) + ED25519SIG(s, p, SHA256(m))', [SIG, PUB, MSG], [-2n])
+  one('VERIFY ED25519SIG passes and leaves nothing behind', 'VERIFY ED25519SIG(s, p, m)\nx = 1', [SIG, PUB, MSG], [1n])
+  one('VERIFY ED25519SIG refuses a signature by somebody else', 'VERIFY ED25519SIG(s, p, m)\nx = 1', [sigOf(SOMEONE, MSG), PUB, MSG], 'refused')
+  const LOOP = 'x = 0\nFOR i = 1 TO n\n x = x + ED25519SIG(s, p, m)\nNEXT i', env4 = { stack: ['s$', 'p$', 'm$', 'n'], leave: ['x'] }
+  one('★ in a FOR, 100 checks, the most JF revision 3 makes in a run', LOOP, [SIG, PUB, MSG, 100], [-100n], env4)
+  one('★ …and the 101st is refused by the interpreter, not the compiler', LOOP, [SIG, PUB, MSG, 101], 'refused', env4)
+}
+/** Covenants whose program checks a signature: an author's, over the text a tick carries. Their ticks are in basic/test/thread.mjs. */
+const SIGNED_COVENANTS = [
+  ['DIM owner$20\nDIM by$32\nDIM said$32\nINPUT asig$64, apub$32, text$\nVERIFY ED25519SIG(asig, apub, text)\nby = apub\nsaid = SHA256(text)',
+    { owner: OWN, by: new Array(32).fill(0), said: new Array(32).fill(0) }],
+  ['DIM owner$20\nINPUT asig$64, apub$32, text$, n%2\nFOR i = 1 TO n\n VERIFY ED25519SIG(asig, apub, text)\nNEXT i', { owner: OWN }],
+]
+{
+  for (const p of SIGNED) {
+    p.c = compileBasic(p.src, p.env)
+    const d = DECLARATION.length
+    p.script = Uint8Array.from([...p.c.bytes.slice(0, d), ...pushes(p.inputs), ...p.c.bytes.slice(d)])
+  }
+  const php = execFileSync('php', [join(ROOT, 'tools/jf-run.php'), '0'],
+    { input: JSON.stringify(SIGNED.map(p => ({ script: hex(p.script), preimage: null }))), maxBuffer: 1 << 28 })
+    .toString().trim().split('\n').map(l => JSON.parse(l))
+  const big = (_, v) => typeof v === 'bigint' ? String(v) : v
+  let agree = 0, right = 0, back = 0
+  for (const [k, p] of SIGNED.entries()) {
+    const vm = new InterpreterJF({ crypto })
+    let js, got
+    try {
+      const stack = await vm.run(p.script)
+      js = { stack: stack.map(String) }; got = stack.slice(0, p.c.leave.length)
+    } catch (e) { js = { error: hex(Buffer.from(e.message)) }; got = 'refused' }
+    const same = JSON.stringify(js) === JSON.stringify(php[k].stack ? { stack: php[k].stack } : { error: php[k].error })
+    const correct = JSON.stringify(got, big) === JSON.stringify(p.want, big)
+    const r = unbasic(p.c.bytes, { stack: p.c.inputs })
+    let again = r.stoppedAt ?? ''
+    if (!r.stoppedAt) { try { again = hex(compileBasic(r.lines.join('\n'), { stack: r.stack, consts: {}, leave: r.leave }).bytes) } catch (e) { again = e.message } }
+    if (same) agree++; if (correct) right++; if (again === hex(p.c.bytes)) back++
+    if (!same || !correct || again !== hex(p.c.bytes) || process.env.V) {
+      console.log(`  ${same && correct ? '·' : '✗'} ${p.name}: ${p.c.bytes.length} B` +
+        (correct ? '' : `\n      want ${JSON.stringify(p.want, big)}, got ${JSON.stringify(got, big)}`) +
+        (same ? '' : `\n      JS ${JSON.stringify(js)}\n      PHP ${JSON.stringify(php[k])}`) +
+        (again === hex(p.c.bytes) ? '' : `\n      reads as\n${r.lines.map(l => '      ' + l).join('\n')}`))
+    }
+  }
+  ok(right === SIGNED.length, `★★ ${right}/${SIGNED.length} programs that check a signature compute what they say`)
+  ok(agree === SIGNED.length, `★ the JavaScript and PHP interpreters leave the same stack, or raise the same refusal, on all ${agree}/${SIGNED.length}`)
+  const why = start => Buffer.from(php[SIGNED.findIndex(p => p.name.startsWith(start))].error ?? '', 'hex').toString()
+  ok(/signature check limit exceeded/.test(why('★ …and the 101st')), `…the 101st check: ${why('★ …and the 101st') || 'NOT refused'}`)
+  ok(back === SIGNED.length, `★ and each reads back, ED25519SIG and all, to BASIC that compiles to the same bytes (${back}/${SIGNED.length})`)
+  let read = 0
+  for (const [text, state] of SIGNED_COVENANTS) {
+    const c = compileCovenant(V + text, { state })
+    for (const opts of [{ names: c.names }, {}]) {
+      const u = unbasic(c.bytes, opts)
+      let again = ''
+      try { again = hex(compileCovenant(u.lines.join('\n'), { state: u.state }).bytes) } catch (e) { again = e.message }
+      if (!u.stoppedAt && u.lines.some(l => l.includes('ED25519SIG(')) && again === hex(c.bytes)) read++
+      else console.log(`  ✗ ${text.split('\n').join(' · ')}: read back, ${u.stoppedAt ?? 'it compiles to different bytes'}\n${u.lines.map(l => '      ' + l).join('\n')}`)
+    }
+  }
+  ok(read === 2 * SIGNED_COVENANTS.length, `★ a covenant whose program checks an author's signature compiles and reads back, named and unnamed, to the same bytes (${read}/${2 * SIGNED_COVENANTS.length})`)
+}
+/** The frame's own words stay its own; ED25519SIG takes three byte strings. */
+const SIGNED_REFUSALS = [
+  ['PREIMAGE is still the frame\'s alone', 'x = SIZE(PREIMAGE())', {}, 'no such word: PREIMAGE'],
+  ['and so is DEPTH', 'x = DEPTH()', {}, 'no such word: DEPTH'],
+]
+for (const [what, src, env, needle] of [...SIGNED_REFUSALS,
+  ['ED25519SIG with two arguments', 'x = ED25519SIG(&H01, &H02)', {}, 'takes 3 argument(s)'],
+  ['ED25519SIG given a number', 'x = ED25519SIG(1, &H02, &H03)', {}, 'works on bytes'],
+]) {
+  const m = bad(src, env)
+  ok(m.includes(needle), `${what}${m ? '' : ': NOT refused'}`)
 }
 
 // ── against 0.5 ──────────────────────────────────────────────────────────────────────────────────────
@@ -636,7 +736,50 @@ else {
   for (const w of WIDE) for (const written of [false, true]) {
     try { B5.compileCovenant(wideCov(w, written), { state: { owner: OWN, tag: new Array(w).fill(7) } }) } catch (e) { if (/one direct push|from 1 to 75/.test(e.message)) none++ }
   }
-  ok(none === WIDE.length * 2, `and 0.5 compiles none of the wide-field covenants above (${none}/${WIDE.length * 2}): past 72 bytes it refuses a field, past 75 its parser does; a field past a direct push is new in ${BASIC_JF_VERSION}`)
+  ok(none === WIDE.length * 2, `and 0.5 compiles none of the wide-field covenants above (${none}/${WIDE.length * 2}): past 72 bytes it refuses a field, past 75 its parser does; a field past a direct push is new in 0.6`)
+}
+
+// ── against 0.6 ──────────────────────────────────────────────────────────────────────────────────────
+/* Rule 3 again: 0.7 lets a program check a signature, so a program or a covenant 0.6 compiles is 0.6's, byte for byte,
+   and so is all else the compiler gives back. 0.6 is read from git as it was released. */
+const REV06 = 'cc36cd2'
+console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.6, as released (${REV06}, from git) ──`)
+const B6 = await released(REV06)
+if (B6 === null) console.log(`  - no 0.6 to prove against: revision ${REV06} is not in this repository. The comparison is skipped, never counted as passed.`)
+else {
+  ok(B6.BASIC_JF_VERSION === '0.6', '0.6 loads beside this compiler, on its own opcode table')
+  const same = (a, b, keys) => keys.every(k => JSON.stringify(a[k], (_, v) => typeof v === 'bigint' ? String(v) : v)
+                                           === JSON.stringify(b[k], (_, v) => typeof v === 'bigint' ? String(v) : v))
+  let plain = 0
+  for (const p of progs) {
+    const c6 = B6.compileBasic(p.src, p.env)
+    if (hex(p.c.bytes) === hex(c6.bytes) && same(p.c, c6, ['nVersion', 'revision', 'assigned', 'names', 'inputs', 'leave', 'memory', 'pushed'])) plain++
+    else console.log(`  ✗ ${p.name}\n      0.6 ${hex(c6.bytes)}\n      ${BASIC_JF_VERSION} ${hex(p.c.bytes)}`)
+  }
+  ok(plain === progs.length, `★★ every program here, ${plain}/${progs.length}: 0.6's bytes, byte for byte, and all else the compiler gives back is 0.6's`)
+  const refused = [...refusals.map(([, src, env]) => [V + src, env]), ...SIGNED_REFUSALS.map(([, src, env]) => [V + src, env]),
+                   ...VERSION_REFUSALS.map(([, src]) => [src, {}])]
+  let words = 0
+  for (const [src, env] of refused) {
+    let m6 = ''
+    try { B6.compileBasic(src, env) } catch (e) { m6 = e.message }
+    if (m6 !== '' && m6 === badRaw(src, env)) words++
+  }
+  ok(words === refused.length, `every program 0.6 refuses here, PREIMAGE and DEPTH among them, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
+  const wide = WIDE.flatMap(w => [false, true].map(written => [wideCov(w, written).slice(V.length), { owner: OWN, tag: new Array(w).fill(7) }]))
+  let laid = 0
+  for (const [text, state] of [...COVENANTS, ...INPUTS, ...wide]) {
+    const src = V + text, c7 = compileCovenant(src, { state }), c6 = B6.compileCovenant(src, { state })
+    if (hex(c7.bytes) === hex(c6.bytes) && same(c7, c6, ['nVersion', 'revision', 'layout', 'inputs', 'written', 'assigned', 'names', 'memory', 'pushed'])) laid++
+    else console.log(`  ✗ ${text.split('\n').join(' · ')}: differs from 0.6's`)
+  }
+  ok(laid === COVENANTS.length + INPUTS.length + wide.length,
+    `★★ every covenant here, ${laid}/${COVENANTS.length + INPUTS.length + wide.length}, the INPUT and wide-field ones among them: 0.6's bytes, byte for byte, and all else the compiler gives back is 0.6's`)
+  let none = 0
+  for (const p of SIGNED) { try { B6.compileBasic(p.src, p.env) } catch (e) { if (e.message === 'BASIC: no such word: ED25519SIG') none++ } }
+  for (const [text, state] of SIGNED_COVENANTS) { try { B6.compileCovenant(V + text, { state }) } catch (e) { if (e.message === 'BASIC: no such word: ED25519SIG') none++ } }
+  ok(none === SIGNED.length + SIGNED_COVENANTS.length,
+    `and 0.6 compiles none of the programs and covenants above that check a signature (${none}/${SIGNED.length + SIGNED_COVENANTS.length}): "no such word: ED25519SIG"; a program's signature check is new in ${BASIC_JF_VERSION}`)
 }
 
 console.log(`\n${fail === 0 ? '✅' : '⚠'}  ${pass} passed, ${fail} failed   [BASIC → jetForth]`)

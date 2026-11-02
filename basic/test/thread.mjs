@@ -10,7 +10,7 @@
 // Last, every tick PHP judged here is judged again by tools/thread.mjs from its bytes alone (the entry, the tip's
 // script, its value), with its own preimage and its own crypto, and must get CovenantThread::judge's verdict.
 import { execFileSync } from 'node:child_process'
-import { createHash, createPrivateKey, createPublicKey } from 'node:crypto'
+import { createHash, createPrivateKey, createPublicKey, sign as signWith } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compileCovenant } from '../basic-jf.mjs'
@@ -34,9 +34,9 @@ const ok = (c, what) => { c ? pass++ : fail++; console.log(`  ${c ? '✓' : '✗
 
 // ── the keys: seeds both sides derive the same Ed25519 pair from ──
 const seed = s => hex(H('sha256')(Buffer.from(s)))
-const KEYS = { owner: seed('the owner'), other: seed('somebody else') }
-const pubOf = name => createPublicKey(createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(KEYS[name], 'hex')]), format: 'der', type: 'pkcs8' }))
-  .export({ format: 'der', type: 'spki' }).subarray(12)
+const KEYS = { owner: seed('the owner'), other: seed('somebody else'), author: seed('an author') }
+const privOf = name => createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(KEYS[name], 'hex')]), format: 'der', type: 'pkcs8' })
+const pubOf = name => createPublicKey(privOf(name)).export({ format: 'der', type: 'spki' }).subarray(12)
 const OWNER = [...hash160(pubOf('owner'))], OTHER = [...hash160(pubOf('other'))]
 
 // ── the threads ──
@@ -86,6 +86,15 @@ const widths = n => compileCovenant(WIDTHS, { state: { owner: OWNER, n } }).byte
 /** t of 4 bytes, k 2, m 1: the successor's n is 7 */
 const T4 = '74697073', CARRIED = [T4, '02', '01']
 const carrying = inputs => ['', widths(0), 41, 42, [out(42, widths(4 + 2 + 1))], sign({ inputs })]
+/** A program that checks a signature, the author's over the text the tick carries; the successor keeps the key and the text's SHA-256 */
+const SIGNED = 'VERSION JF 3\nDIM owner$20\nDIM by$32\nDIM said$32\nINPUT asig$64, apub$32, text$\nVERIFY ED25519SIG(asig, apub, text)\nby = apub\nsaid = SHA256(text)'
+const signedBy = (by, said) => compileCovenant(SIGNED, { state: { owner: OWNER, by: [...by], said: [...said] } }).bytes
+/** n checks of the author's, in a loop: up to 100 a tick, the owner's among them */
+const MANY = 'VERSION JF 3\nDIM owner$20\nINPUT asig$64, apub$32, text$, n%2\nFOR i = 1 TO n\n VERIFY ED25519SIG(asig, apub, text)\nNEXT i'
+/* The same check where every VERIFY can be seen to matter: inputs of any length, and a counter. In SIGNED the widths of
+   asig, apub and by are already fixed by ED25519SIG, which fails any other, and said's by SHA256, so those checks cannot. */
+const CHECKED = 'VERSION JF 3\nDIM owner$20\nDIM n%4\nINPUT asig$, apub$, text$\nVERIFY ED25519SIG(asig, apub, text)\nn = n + 1'
+const checked = n => compileCovenant(CHECKED, { state: { owner: OWNER, n } }).bytes
 const ALL = [
   ...cases(minimal, minimal).map(c => ['minimal · ' + c[0], ...c.slice(1)]),
   ['minimal · rule 4: the successor gives the thread to another owner', minimal, 41, 42,
@@ -190,6 +199,7 @@ for (const [src, state] of [
   ['VERSION JF 3\nDIM owner$20\nDIM n%4\nDIM tag$3\nIF n > 3 THEN\n tag = &H010203\nELSE\n IF n = 0 THEN n = 9\nEND IF\nn = n + 2 ^ 3', { owner: OWNER, n: 9, tag: [7, 8, 9] }],
   [WIDTHS, { owner: OWNER, n: 0 }], [RELEASE, { owner: OWNER, rev: 3, code: new Array(32).fill(0) }],
   ['VERSION JF 3\nDIM owner$20\nDIM d$1200\nDIM e$73\nINPUT nd$1200\nd = nd', { owner: OWNER, d: new Array(1200).fill(7), e: new Array(73).fill(5) }],
+  [SIGNED, { owner: OWNER, by: new Array(32).fill(0), said: new Array(32).fill(0) }], [MANY, { owner: OWNER }], [CHECKED, { owner: OWNER, n: 7 }],
 ]) {
   const c = compileCovenant(src, { state })
   const r = unbasic(c.bytes)
@@ -297,6 +307,59 @@ console.log('\n── fields wider than a direct push: STR8 and STR16 in the hea
      `a$73 is an STR8 push in the head and b$256 an STR16; the covenant is ${tip.length} B`)
 }
 
+// ── a program that checks a signature: an author's, over the text the tick carries ──
+/* The owner signs every tick, as the frame says; the program checks a second signature, the author's (SIGNED, MANY above). */
+const signedTip = signedBy(new Array(32).fill(0), new Array(32).fill(0))
+const SIGNED_TICKS = (() => {
+  const sha = H('sha256'), AUTHOR = pubOf('author')
+  const TEXT = Buffer.from('a comment, as its author wrote it'), TEXT2 = Buffer.from('a comment, changed after it was signed')
+  const sigBy = (name, text) => hex(signWith(null, text, privOf(name)))
+  const flip = s => (parseInt(s.slice(0, 2), 16) ^ 1).toString(16).padStart(2, '0') + s.slice(2)
+  const SA = [sigBy('author', TEXT), hex(AUTHOR), hex(TEXT)], next = signedBy(AUTHOR, sha(TEXT))
+  const tick = (what, successor, inputs, accept, more = {}) => ['signed · ' + what, signedTip, 41, 42, [out(42, successor)], sign({ inputs, ...more }), accept]
+  const many = compileCovenant(MANY, { state: { owner: OWNER } }).bytes
+  return [
+    tick('the author\'s signature over the text: the successor holds their key and the text\'s SHA-256', next, SA, true),
+    tick('another author\'s, with their own key', signedBy(pubOf('other'), sha(TEXT)), [sigBy('other', TEXT), hex(pubOf('other')), hex(TEXT)], true),
+    tick('an empty text, signed', signedBy(AUTHOR, sha(Buffer.alloc(0))), [sigBy('author', Buffer.alloc(0)), hex(AUTHOR), ''], true),
+    tick('the text changed after signing', signedBy(AUTHOR, sha(TEXT2)), [SA[0], SA[1], hex(TEXT2)], false),
+    tick('the author\'s signature with one bit changed', next, [flip(SA[0]), SA[1], SA[2]], false),
+    tick('signed by somebody else, the author\'s key given', next, [sigBy('other', TEXT), SA[1], SA[2]], false),
+    tick('the successor names another key than the one that signed', signedBy(pubOf('other'), sha(TEXT)), SA, false),
+    tick('the successor keeps the SHA-256 it had', signedBy(AUTHOR, new Array(32).fill(0)), SA, false),
+    tick('the signature and the key the other way round', next, [SA[1], SA[0], SA[2]], false),
+    tick('the text left out', next, SA.slice(0, 2), false),
+    tick('the author\'s signature, and the tick signed by somebody else, not the owner', next, SA, false, { key: 'other' }),
+    ['signed · ★ 99 checks of the author\'s and the owner\'s: 100, the most a tick makes, accepted', many, 41, 42, [out(42, many)], sign({ inputs: [...SA, '63'] }), true],
+    ['signed · ★ 100 of the author\'s and the owner\'s: the 101st check is refused by the interpreter', many, 41, 42, [out(42, many)], sign({ inputs: [...SA, '64'] }), false],
+    ...cases(checked(7), checked(8)).map(c => ['checked · ' + c[0], ...c.slice(1, 5), { ...c[5], inputs: SA }, c[6]]),
+    ...[['the text changed after signing', [SA[0], SA[1], hex(TEXT2)]], ['the author\'s signature with one bit changed', [flip(SA[0]), SA[1], SA[2]]],
+        ['signed by somebody else, the author\'s key given', [sigBy('other', TEXT), SA[1], SA[2]]]]
+      .map(([what, inputs]) => ['checked · ' + what, checked(7), 41, 42, [out(42, checked(8))], sign({ inputs }), false]),
+    ['checked · rule 4: n left as it was', checked(7), 41, 42, [out(42, checked(7))], sign({ inputs: SA }), false],
+  ]
+})()
+console.log(`\n── a program that checks a signature: an author's, over the text the tick carries (${signedTip.length} B) ──`)
+{
+  const r = judge(SIGNED_TICKS)
+  let agree = 0, right = 0
+  const isChecked = c => c[0].startsWith('checked · ')
+  for (const [k, c] of SIGNED_TICKS.entries()) {
+    const js = await runJs(c[1], r[k])
+    if (JSON.stringify(js) === JSON.stringify({ accepted: r[k].accepted, result: r[k].result })) agree++
+    if (!isChecked(c)) ok(r[k].accepted === c[6], `${c[0].replace(/^signed · /, '')}: ${r[k].accepted ? 'accepted' : 'refused'}`)
+    else {
+      if (r[k].accepted === c[6]) right++
+      console.log(`   ${r[k].accepted ? 'accept' : 'refuse'}  ${r[k].accepted === c[6] ? ' ' : '✗'} ${c[0]}`)
+    }
+  }
+  const nChecked = SIGNED_TICKS.filter(isChecked).length
+  ok(right === nChecked, `★ the counter with the author's check, ${checked(0).length} B, every rule broken in turn: each tick accepted or refused as its rules say (${right}/${nChecked})`)
+  ok(agree === SIGNED_TICKS.length, `★ the JavaScript interpreter gives the same verdict and leaves the same thing on every one (${agree}/${SIGNED_TICKS.length})`)
+  const why = Buffer.from(r[SIGNED_TICKS.findIndex(c => c[0].includes('the 101st'))].result?.error ?? '', 'hex').toString()
+  ok(/signature check limit exceeded/.test(why), `…the 101st check: ${why || 'NOT refused'}`)
+}
+
 // ── against the hand-written 7 Sept counter, on the rules both have: value + 1, the same script, the outputs ──
 console.log('\n── the same ticks, with the hand-written 7 Sept counter as the tip (server/verify-wired.php) ──')
 {
@@ -326,6 +389,7 @@ for (const [name, base, list] of [
   ['minimal', minimal, ALL.filter(c => c[0].startsWith('minimal'))],
   ['counting', counting(7), ALL.filter(c => c[0].startsWith('counting'))],
   ['widths', widths(0), ALL.filter(c => c[0].startsWith('widths'))],
+  ['checked', checked(7), SIGNED_TICKS.filter(c => c[0].startsWith('checked'))],
 ]) {
   const sites = verifies(base)
   const mutated = []

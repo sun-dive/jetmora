@@ -47,11 +47,15 @@
  * it, unsigned; `r%` is at most 8, a cell. The owner signs the preimage, which holds the successor
  * (hashOutputs) and not the unlocking script: an input is signed through what the program makes of it in
  * the successor's state, and only so.
+ *
+ * A program may check a signature, as the frame checks the owner's: `ED25519SIG(sig, pub, msg)` is Ed25519 over
+ * the message as given, -1 or 0. A tick makes at most 100 signature checks, the frame's among them: JF revision 3's
+ * limit, counted by the interpreter as each runs.
  */
 import { JF_PUSH_MAX, JF_SMALL0, JF_LIT, JF_WORD } from '../tools/ops-jf.mjs'
 
 /** The version of this compiler. A script's bytes are a function of it. */
-export const BASIC_JF_VERSION = '0.6'
+export const BASIC_JF_VERSION = '0.7'
 
 /** The JF revision the bytes are numbered in: tools/ops-jf.mjs, revision 3. */
 export const JF_REVISION = 3
@@ -688,16 +692,18 @@ class Emitter {
           c.num(d); c.word(f); c.num(d); c.num(BigInt(HASHES[f]))
           return { t: 'bytes', max: HASHES[f] }
         }
+        /* Ed25519 over the message as given, the frame's check and a program's alike. A key that is not 32 bytes, or a
+           signature that is not 64, is a failed check, never an error. */
+        if (f === 'ED25519SIG') {
+          need(3)
+          for (const x of e.a) this.want(this.emit(x), 'bytes', f)
+          c.word('ED25519-CHECKSIG'); return { t: 'flag' }
+        }
         // the frame's own words
         if (this.internal && f === 'PREIMAGE') {
           need(0); c.num(this.site(this.preMax, 'PREIMAGE')); c.word('PREIMAGE'); return { t: 'bytes', max: this.preMax }
         }
         if (this.internal && f === 'DEPTH') { need(0); c.word('DEPTH'); return { t: 'num' } }
-        if (this.internal && f === 'ED25519SIG') {
-          need(3)
-          for (const x of e.a) this.want(this.emit(x), 'bytes', f)
-          c.word('ED25519-CHECKSIG'); return { t: 'flag' }
-        }
         if (f === 'SPLIT') {
           throw new Error('BASIC: SPLIT gives back TWO values, a left half and a right half, so it ' +
             'needs two names: left, right = SPLIT(bytes, at)')
@@ -901,8 +907,8 @@ const PREIMAGE_AROUND = 156
 
 /**
  * The frame, as BASIC: rules 1 and 2 before the program, the rebuild (rules 3 and 4) after it. It is
- * compiled by the same emitter as the program, with the frame's own words — PREIMAGE, DEPTH, ED25519SIG —
- * and names that start with `#`, which a program cannot write.
+ * compiled by the same emitter as the program, with the frame's own words, PREIMAGE and DEPTH, and names
+ * that start with `#`, which a program cannot write.
  *   #sig #pub        the unlocking script's first two pushes: the owner's 64-byte signature and 32-byte key.
  *                    ED25519-CHECKSIG is false for any other sizes
  *   the inputs       the pushes after them, one for each name INPUT gives. A push left over is still on the
