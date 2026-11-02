@@ -18,8 +18,12 @@
 //       the fields and must be the id asked for, or this throws: a service that gave another script for a genesis would
 //       have every tick judged against the wrong lock.
 //   tip(id) → { seq, count }       the newest entry's sequence number (null when the thread has none), and how many
-//   entries(id, after = -1, limit = 256) → { entries: [{ seq, bytes }], tip, more }
-//       one page of the thread, oldest first. ⚠ A pruned body is held as zero bytes: bytes.length === 0.
+//   entries(id, after = -1, limit = 256) → { entries: [{ seq, bytes, ts }], tip, more }
+//       one page of the thread, oldest first. ⚠ A pruned body is held as zero bytes: bytes.length === 0. ts: when the
+//       service received the entry, in seconds, its time for the tick; null where it kept none
+//   back(id, before = null, limit = 256) → { entries: [{ seq, bytes, ts }], tip, more }
+//       one page of the thread NEWEST first: the entries before seq `before`, from the tip when it is null. more: the
+//       thread holds entries older than the last one given
 //   entry(seq) → { seq, bytes } | { seq, pruned: true } | null      one entry by its sequence number; null if none
 //   register({ sourceHash, script, state, authorised }) → id
 //       authorised packed (tools/thread.mjs: AUTH_OPEN or authorisedHashes). The id the service answers must be the id
@@ -68,6 +72,9 @@ function same(a, b) {
   for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return false
   return true
 }
+
+/** An entry as the service gives it: its seq, its bytes, and when the service received it (null where it kept none) */
+const entryOf = e => ({ seq: e.seq, bytes: unhex(e.entry), ts: Number.isInteger(e.ts) ? e.ts : null })
 
 export class ThreadService {
   /**
@@ -127,7 +134,13 @@ export class ThreadService {
   async entries(id, after = -1, limit = 256) {
     const p = await this.#get(`op=entries&genesis=${idHex(id)}&after=${after}&limit=${limit}`, 'the entries')
     if (!Array.isArray(p.entries)) throw new ServiceError('the entries: not the JSON the service sends', 200, p)
-    return { entries: p.entries.map(e => ({ seq: e.seq, bytes: unhex(e.entry) })), tip: p.tip, more: p.more === true }
+    return { entries: p.entries.map(entryOf), tip: p.tip, more: p.more === true }
+  }
+
+  async back(id, before = null, limit = 256) {
+    const p = await this.#get(`op=back&genesis=${idHex(id)}${before === null ? '' : `&before=${before}`}&limit=${limit}`, 'the entries')
+    if (!Array.isArray(p.entries)) throw new ServiceError('the entries: not the JSON the service sends', 200, p)
+    return { entries: p.entries.map(entryOf), tip: p.tip, more: p.more === true }
   }
 
   async entry(seq) {

@@ -189,9 +189,23 @@ case 'entries':
     if ($packedOut)   // each entry: 4-byte length ‖ bytes — the relay's framing, so one parser serves both
         outBytes(implode('', array_map(fn($r) => $lp($r['body']), $rows)), 200,
                  ['X-Tip' => $tip ?? -1, 'X-Count' => count($rows), 'X-More' => ($rows !== [] && end($rows)['seq'] < $tip) ? 1 : 0]);
+    // ts: when this host received each entry, its time for the tick (null on a row from before times were kept)
     out(['genesis' => $hex($g), 'after' => $after,
-         'entries' => array_map(fn($r) => ['seq' => $r['seq'], 'entry' => $hex($r['body'])], $rows),
+         'entries' => array_map(fn($r) => ['seq' => $r['seq'], 'entry' => $hex($r['body']), 'ts' => $r['ts']], $rows),
          'tip' => $tip, 'more' => $rows !== [] && end($rows)['seq'] < $tip]);
+
+// ── one thread, read back from its tip: newest first, before a seq (from the tip when none is given) ─────────
+//   A reader shows the newest ticks first and asks for older ones only as it needs them. more: the thread holds
+//   older entries than the last one given.
+case 'back':
+    $g = $unhex((string)($_GET['genesis'] ?? ''), 32);
+    $before = isset($_GET['before']) && $_GET['before'] !== '' ? (int)$_GET['before'] : null;
+    $limit = (int)($_GET['limit'] ?? 256);
+    $rows = $store->entriesBefore($g, $before, $limit);
+    $older = $rows !== [] && $store->entriesBefore($g, end($rows)['seq'], 1) !== [];
+    out(['genesis' => $hex($g), 'before' => $before,
+         'entries' => array_map(fn($r) => ['seq' => $r['seq'], 'entry' => $hex($r['body']), 'ts' => $r['ts']], $rows),
+         'tip' => $store->tipOf($g), 'more' => $older]);
 
 case 'find':
     // Threads by initial state: the way a party finds threads addressed to it by a state it can derive.

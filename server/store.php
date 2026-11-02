@@ -99,8 +99,9 @@ final class ThreadStore
         //   read back with one query instead of a scan. Added as a column so an older file migrates.
         $cols = array_column($this->db->query('PRAGMA table_info(entries)')->fetchAll(PDO::FETCH_ASSOC), 'name');
         if (!in_array('genesis', $cols, true)) $this->db->exec('ALTER TABLE entries ADD COLUMN genesis BLOB');
-        // ⚠ When the operator RECEIVED the entry: a record for retention policy (§4.5), never a protocol
-        //   field and never read by a covenant (§6.3). Absent on rows from before the column existed.
+        // ⚠ When the operator RECEIVED the entry: a record for retention policy (§4.5), and the host's time for a tick,
+        //   which readers are given with it; never a protocol field and never read by a covenant (§6.3). Absent on rows
+        //   from before the column existed.
         if (!in_array('ts', $cols, true)) $this->db->exec('ALTER TABLE entries ADD COLUMN ts INTEGER');
         $this->db->exec('CREATE INDEX IF NOT EXISTS entries_genesis ON entries (genesis, seq)');
         // ★ THE TIP of every thread (§4.4, his ruling 23 Sept): HASH256 of its newest entry, which is what the next
@@ -128,12 +129,23 @@ final class ThreadStore
         if ($tip !== $prev) throw new TipTickedException('tip already ticked: the entry does not name the thread\'s tip');
     }
 
-    /** The entries of one thread, oldest first, after a sequence number. @return array<array{seq:int, body:string}> */
+    /** The entries of one thread, oldest first, after a sequence number, each with the time it was received (null on a
+     *  row from before times were kept). @return array<array{seq:int, body:string, ts:?int}> */
     public function entriesOf(string $genesis, int $after = -1, int $limit = 256): array
     {
-        $st = $this->db->prepare('SELECT seq, body FROM entries WHERE genesis=? AND seq>? ORDER BY seq LIMIT ?');
+        $st = $this->db->prepare('SELECT seq, body, ts FROM entries WHERE genesis=? AND seq>? ORDER BY seq LIMIT ?');
         $st->execute([$genesis, $after, max(1, min(256, $limit))]);
-        return array_map(fn($r) => ['seq' => (int)$r['seq'], 'body' => $r['body']], $st->fetchAll(PDO::FETCH_ASSOC));
+        return array_map(fn($r) => ['seq' => (int)$r['seq'], 'body' => $r['body'], 'ts' => $r['ts'] === null ? null : (int)$r['ts']],
+                         $st->fetchAll(PDO::FETCH_ASSOC));
+    }
+    /** The entries of one thread, NEWEST first, before a sequence number (from the tip when null), each with the time it
+     *  was received: a thread read back from its tip, a page at a time. @return array<array{seq:int, body:string, ts:?int}> */
+    public function entriesBefore(string $genesis, ?int $before = null, int $limit = 256): array
+    {
+        $st = $this->db->prepare('SELECT seq, body, ts FROM entries WHERE genesis=? AND seq<? ORDER BY seq DESC LIMIT ?');
+        $st->execute([$genesis, $before ?? PHP_INT_MAX, max(1, min(256, $limit))]);
+        return array_map(fn($r) => ['seq' => (int)$r['seq'], 'body' => $r['body'], 'ts' => $r['ts'] === null ? null : (int)$r['ts']],
+                         $st->fetchAll(PDO::FETCH_ASSOC));
     }
     /**
      * ★ RETENTION (spec §5c, an operator's policy): discard the BODIES of entries received more than
