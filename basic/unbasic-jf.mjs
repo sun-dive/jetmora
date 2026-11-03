@@ -1,21 +1,32 @@
 // © 2026 sun-dive — Apache License 2.0.
 /**
- * jetForth → BASIC: the reader. It reads bytecode and renders what it computes, so a covenant can be
- * checked by reading it.
+ * jetForth → BASIC: the reader, a view over any jetForth. It reads bytecode and renders what it computes, so a
+ * script can be checked by reading it, whoever wrote it: this compiler, an earlier version of it, or a person.
  *
- * The method is grafverse/mint/src/unbasic.ts's: symbolic execution, on a stack of expressions instead of
- * values. Variables are cells at fixed addresses, so `addr @` reads one and `addr !` assigns it; anything
- * the reader does not model stops the reading, by name, at the instruction. It never guesses: a listing
- * that quietly skipped an instruction would be believed.
+ * The method is grafverse/mint/src/unbasic.ts's: symbolic execution, on a stack of expressions instead of values.
+ * A number is one cell, a byte string two, its address and its length, and lengths and addresses are followed as
+ * sums of constants and lengths. Variables are cells at addresses known when the script is read: `addr @` reads one
+ * and `addr !` assigns it. What a word writes to memory (a hash, CAT, NUM2BIN, the preimage's fields, MOVE…) is kept
+ * by its place, so a span read back from memory is the expression written there, CAT of writes side by side, or
+ * REPLACE(x, at, y) where a later write lies inside an earlier one. A value used twice is computed once: it gets a
+ * name and a line of its own. Under everything the lock pushes are the tick's own pushes, in0, in1, … the first
+ * pushed first. Anything the reader does not model stops the reading, by name, at the instruction. It never guesses:
+ * a listing that quietly skipped an instruction would be believed.
  *
- * A script's first instruction is the lock's declaration, `VER JF 3`, and it is read back as the VERSION
- * line. A script that declares no version, or another one, is not read: this reader reads JF revision 3.
+ * A script's first instruction is the lock's declaration, `VER JF 3`, and it is read back as the VERSION line. A
+ * script that declares no version, or another one, is not read: this reader reads JF revision 3.
  *
- * A covenant is read by its parts: the pushes at its head are its DIM fields; the stores that bind the
- * unlocking script's pushes after the key, and the checks after them, are its INPUT line; its frame and
- * rebuild are found by laying them down again for that layout and those inputs, and must match byte for
- * byte; what lies between is the program. Variables come back named by their address (`v24`) unless the
- * names are supplied; the compiler returns them as `names`.
+ * Three readings, the first that holds:
+ *   a covenant as this compiler writes one: its head pushes are its DIM fields, the stores that bind the tick's pushes
+ *     after the key and the checks after them its INPUT line, its frame and rebuild laid down again for that layout
+ *     and matched byte for byte; what lies between is the program. The reading compiles back to the same bytes
+ *   a program as this compiler writes one: what is on the stack bound to variables first, then the program, then
+ *     what it leaves. The reading compiles back to the same bytes
+ *   any script: read as what it computes. A script that uses a word only a covenant's lock runs (the preimage's words)
+ *     is a covenant: its leading pushes are its state, as DIM fields. This reading is a READING, not a source: it
+ *     names what BASIC has no word for (REPLACE, SUBSTR, MEMORY, BYTE) and need not compile back
+ * Variables come back named by their address (`v24`) unless the names are supplied; the compiler returns them as
+ * `names`, and a covenant's fields take the names of the variables they are bound to.
  */
 import { JF_PUSH_MAX, JF_SMALL0, JF_SMALL_NEG1, JF_LIT, JF_WORD, JF_ESC0, JF_RESERVED0, jf_op_name } from '../tools/ops-jf.mjs'
 import { JF_NVERSION, JF_REVISION, INPUT_WIDEST, covenantFrame } from './basic-jf.mjs'
@@ -110,43 +121,189 @@ const call = (f, ...a) => ({ txt: `${f}(${a.map(v => v.txt).join(', ')})`, bp: 9
 const pow = (l, r) => ({ txt: `${wrap(l, 7)} ^ ${wrap(r, 6)}`, bp: 6, simple: false })
 
 /* A cell on the symbolic stack:
-     { k: 'n', v, flag, cmp?, l?, r?, istrue? }   a number; `flag` when it is -1 or 0
-     { k: 'a', b } { k: 'u', b }                   the two cells of a byte string b, address then length */
+     { k: 'n', v, flag, cmp?, l?, r?, istrue?, not?, lin? }   a number; `flag` when it is -1 or 0; `not`, what a 0= was
+                                                             made from; `lin` when it is a constant, a byte string's
+                                                             length, or a sum of those: what an address or a length is
+     { k: 'a', b } { k: 'u', b }                             the two cells of a byte string b, its address then its length
+   A byte string is { e, len }: its expression, and its length as a linear form. */
 const N = (v, flag = false, more = {}) => ({ k: 'n', v, flag, ...more })
 const HASH = { SHA256: 32n, HASH256: 32n, HASH160: 20n, RIPEMD160: 20n, SHA1: 20n }
+/** The preimage's byte fields, ( dest -- dest u ): their BASIC names, and their lengths when fixed */
+const FIELD = { 'PREIMAGE': ['PREIMAGE', null], 'SCRIPTCODE': ['SCRIPTCODE', null], 'OUTPUTS-HASH': ['OUTPUTS_HASH', 32n],
+                'PREVOUTS-HASH': ['PREVOUTS_HASH', 32n], 'SEQUENCES-HASH': ['SEQUENCES_HASH', 32n], 'OUTPOINT': ['OUTPOINT', 36n] }
+/** Words only a covenant's lock may run: a script that uses one reads its leading pushes as its state */
+export const COVENANT_WORDS = new Set([...Object.keys(FIELD), 'TXVALUE', 'NSEQUENCE', 'LOCKTIME'])
+/** A check that aborts when its flag is set holds when the opposite comparison does */
+const OPPOSITE = { '=': '<>', '<>': '=', '<': '>=', '>': '<=', '<=': '>', '>=': '<' }
+
+// ── linear forms: { c, t }, a constant and a sum of named lengths, so an address or a length can be followed ──
+const lin = (c = 0n, t = new Map()) => ({ c: BigInt(c), t })
+const linOf = txt => lin(0n, new Map([[txt, 1n]]))
+const linAdd = (a, b, s = 1n) => {
+  const t = new Map(a.t)
+  for (const [key, v] of b.t) { const x = (t.get(key) ?? 0n) + s * v; if (x) t.set(key, x); else t.delete(key) }
+  return { c: a.c + s * b.c, t }
+}
+const linEq = (a, b) => a.c === b.c && a.t.size === b.t.size && [...a.t].every(([key, v]) => b.t.get(key) === v)
+const linConst = a => a.t.size === 0 ? a.c : null
+/** -1, 0 or 1 when the sign of a − b is known: a constant, or lengths (never negative) all added, or all taken
+ *  away, with a constant of the same sign; null otherwise */
+const linCmp = (a, b) => {
+  const d = linAdd(a, b, -1n)
+  if (!d.t.size) return d.c < 0n ? -1 : d.c > 0n ? 1 : 0
+  const ts = [...d.t.values()]
+  if (ts.every(v => v > 0n) && d.c >= 0n) return 1
+  if (ts.every(v => v < 0n) && d.c <= 0n) return -1
+  return null
+}
+const linText = a => {
+  const parts = [...a.t].map(([key, v]) => v === 1n ? key : `${v} * ${key}`)
+  if (a.c || !parts.length) parts.push(String(a.c))
+  return parts.join(' + ').replace(/\+ -/g, '- ')
+}
+const B = (e, len) => ({ e, len })
 
 class Stop extends Error {}
 
 /**
- * The reading machine over a run of instructions. `vars` is what the reader knows of memory:
- * address → { name, type: 'n' | 'b' | 'hidden' }; a store to an address it does not know declares it.
+ * The reading machine over a run of instructions. `vars` is what the reader knows of memory as variables:
+ * address → { name, type: 'n' | 'b' | 'hidden' }; a store to an address it does not know declares it. With
+ * `opts.inputs`, reading below the bottom of the stack reaches the tick's own pushes, each a byte string, and names
+ * them; without it, that stops the reading. `opts.names` names the variables a head field is bound to.
  */
-function machine(ins, vars, nameOf) {
+function machine(ins, vars, nameOf, opts = {}) {
   const lines = []
+  let cur = 0                        // the depth being written at
   const say = (depth, s) => lines.push('  '.repeat(depth) + s)
-  const st = []
+  const st = [], rs = []
   const written = new Set()          // the names this reading assigns
+  const inputs = []                  // the tick's pushes reached, the last pushed first
+  const writes = []                  // byte strings words wrote to memory: { at, b, seq }
+  let seq = 0, temps = 0
   const idxAt = new Map(ins.map((x, k) => [x.at, k]))
   /* a branch to just past the last instruction read lands at the end of the run */
   if (ins.length) idxAt.set(ins[ins.length - 1].at + ins[ins.length - 1].size, ins.length)
   const is = (k, name, arg) => ins[k] !== undefined && ins[k].name === name && (arg === undefined || ins[k].arg === arg)
   const isNum = (k, v) => ins[k] !== undefined && ins[k].name === 'NUM' && (v === undefined || ins[k].value === BigInt(v))
   const addrAt = k => Number(ins[k].value)
+  const temp = () => `t${++temps}`
+  let loopDepth = 0                  // inside a FOR, a variable's value is not one form
 
   /** Loops: a BRANCH back to an earlier instruction. top index → { back: index of that BRANCH }. */
   const loops = new Map()
   ins.forEach((x, k) => { if (x.name === 'BRANCH' && x.arg <= x.at) loops.set(idxAt.get(x.arg), { back: k }) })
 
-  const pop = () => { const v = st.pop(); if (!v) throw new Stop('the script reads below the bottom of the stack'); return v }
-  const popNum = () => { const v = pop(); if (v.k !== 'n') throw new Stop('a number was expected here'); return v }
-  const popBytes = () => {
-    const u = pop(), a = pop()
-    if (u.k !== 'u' || a.k !== 'a' || u.b !== a.b) throw new Stop('a byte string ( c-addr u ) was expected here')
-    return u.b
-  }
   const pushBytes = b => { st.push({ k: 'a', b }, { k: 'u', b }) }
+  /* the tick's pushes are under everything the lock pushes; each is a byte string, the unlocking script being byte
+     pushes only. Named for now by how deep they are; in0 is the first pushed once the reading knows how many */
+  const more = () => {
+    if (!opts.inputs) throw new Stop('the script reads below the bottom of the stack')
+    const b = B(atom(`in·${inputs.length}`), null)
+    b.len = linOf(`SIZE(${b.e.txt})`)
+    inputs.push(b); st.unshift({ k: 'a', b }, { k: 'u', b })
+  }
+  const ensure = n => { while (st.length < n) more() }
+  const pop = () => { if (!st.length) more(); return st.pop() }
+  const numOf = c => {
+    if (c.k === 'n') return c
+    if (c.k === 'u') return N(c.b.n ?? call('SIZE', c.b.e), false, { lin: c.b.len })
+    throw new Stop('a byte string\'s address used as a number')
+  }
+  const popNum = () => numOf(pop())
+  /** A place in memory: a number known when the script is read */
+  const popAddr = () => {
+    const v = popNum(), a = v.lin ? linConst(v.lin) : null
+    if (a === null) throw new Stop('an address that is worked out as the script runs, which this reader does not follow')
+    return a
+  }
+  const write = (at, b) => { writes.push({ at, b, seq: ++seq }) }
+  /** The byte string a ( c-addr u ) pair stands for: a string on the stack, or what was written to memory there */
+  const spanOf = (a, u) => {
+    if (a.k === 'a' && u.k === 'u' && a.b === u.b) return a.b
+    const n = numOf(u)
+    if (a.k === 'n' && a.lin && linConst(a.lin) !== null && n.lin) return memRead(linConst(a.lin), n.lin) ?? B(call('MEMORY', a.v, n.v), n.lin)
+    throw new Stop('a byte string ( c-addr u ) was expected here')
+  }
+  const popBytes = () => { const u = pop(), a = pop(); return spanOf(a, u) }
+
+  /**
+   * The bytes in memory from `at`, `len` long, rebuilt from what was written there. First as whole writes laid end to
+   * end, each the newest at its place, landing exactly on the end of the read; else piece by piece, a write that starts
+   * here or covers here taken from where this place falls in it. In both, one written later inside a piece is laid
+   * over it as REPLACE (the later bytes over the earlier, as long as the earlier is), and pieces side by side are
+   * joined with CAT. null when the writes do not account for every byte.
+   */
+  function memRead(at, len) {
+    const end = linAdd(lin(at), len)
+    const parts = whole(at, end) ?? pieces(at, end)
+    return parts && B(parts.reduce((l, r) => call('CAT', l, r)), len)
+  }
+  /** The newest write that starts at this place, or covers it */
+  const newestAt = pc => {
+    let w = null
+    for (const x of writes) {
+      const n = linConst(x.b.len)
+      if ((x.at === pc || (x.at < pc && n !== null && x.at + n > pc)) && (!w || x.seq > w.seq)) w = x
+    }
+    return w
+  }
+  /** A write's bytes from `pc`, with the writes made later inside it laid over them */
+  const overlaid = (e, w, pc, pieceEnd) => {
+    for (const o of writes) {
+      if (o.seq <= w.seq || o.at <= pc) continue
+      const inside = linCmp(lin(o.at), pieceEnd)
+      if (inside === null || inside < 0) e = call('REPLACE', e, atom(String(o.at - pc)), o.b.e)
+    }
+    return e
+  }
+  function whole(at, end) {
+    const parts = []
+    let p = lin(at)
+    for (let guard = 0; !linEq(p, end); guard++) {
+      const pc = linConst(p)
+      if (pc === null || guard > 64) return null
+      const w = newestAt(pc)
+      if (!w || w.at !== pc) return null
+      const next = linAdd(p, w.b.len)
+      if (linCmp(next, end) === 1) return null
+      parts.push(overlaid(w.b.e, w, pc, next))
+      p = next
+    }
+    return parts
+  }
+  function pieces(at, end) {
+    const parts = []
+    let p = lin(at)
+    for (let guard = 0; !linEq(p, end); guard++) {
+      const pc = linConst(p)
+      if (pc === null || guard > 64) return null
+      const w = newestAt(pc)
+      if (!w) return null
+      const off = pc - w.at, wEnd = linAdd(lin(w.at), w.b.len), toEnd = linCmp(end, wEnd)
+      let pieceLen
+      if (off === 0n && (toEnd === 0 || linEq(end, wEnd))) pieceLen = w.b.len
+      else if (toEnd !== null && toEnd <= 0) pieceLen = linAdd(end, p, -1n)
+      else if (toEnd !== null) pieceLen = linAdd(wEnd, p, -1n)
+      else return null
+      const e = off === 0n && linEq(pieceLen, w.b.len) ? w.b.e
+        : call('SUBSTR', w.b.e, atom(String(off)), atom(linText(pieceLen)))
+      const pieceEnd = linAdd(p, pieceLen)
+      parts.push(overlaid(e, w, pc, pieceEnd))
+      p = pieceEnd
+    }
+    return parts
+  }
+
+  /** A value about to be used twice is computed once: it gets a name and a line of its own */
+  const mat = c => {
+    if (c.k === 'n') { if (!c.v.simple) { const t = temp(); say(cur, `${t} = ${c.v.txt}`); c.v = atom(t) } return c }
+    if (!c.b.e.simple) { const t = temp(); say(cur, `${t} = ${c.b.e.txt}`); c.b.e = atom(t) }
+    return c
+  }
   /** A flag made with 0<> renders as the value it was made from, inside AND and OR. */
   const plain = c => c.istrue ?? c.v
+  /** What a check that aborts on this flag requires: the flag's opposite */
+  const holds = f => f.not ?? (f.cmp ? bin(f.l, OPPOSITE[f.cmp], f.r) : call('NOT', f.v))
 
   /** The variable at an address, declared by its first store. */
   const varFor = (addr, type) => {
@@ -161,10 +318,13 @@ function machine(ins, vars, nameOf) {
     if (v.type !== type) throw new Stop(`address ${addr} holds ${v.type === 'b' ? 'bytes' : 'a number'}`)
     return v
   }
+  /** A constant the instruction before pushed: the depth PICK reaches */
+  const depthOf = c => { const d = c.lin ? linConst(c.lin) : null; if (d === null || d < 0n) throw new Stop('PICK at a depth worked out as the script runs'); return Number(d) }
 
   /** Straight-line code from k, statement by statement, to `end` (an instruction index). */
   function block(k, end, depth) {
     while (k < end) {
+      cur = depth
       const x = ins[k]
       const where = `${x.name === 'NUM' ? String(x.value) : x.name} at ${x.at}`
       try {
@@ -175,50 +335,127 @@ function machine(ins, vars, nameOf) {
           if (loops.has(t) && (pairs === 2 || pairs === 3)) { k = forLoop(k, t, pairs, depth); continue }
         }
         switch (x.name) {
-          case 'NUM': {
-            const next = ins[k + 1]?.name, addr = Number(x.value)
-            if (next === '@') { st.push(N(atom(read(addr, 'n').name))); k += 2; continue }
-            if (next === '2@') { pushBytes(atom(read(addr, 'b').name)); k += 2; continue }
-            if (next === '!') {
-              const val = popNum(), v = varFor(addr, 'n')
-              written.add(v.name); say(depth, `${v.name} = ${val.v.txt}`); k += 2; continue
-            }
-            if (next === '2!') {
-              const b = popBytes(), v = varFor(addr, 'b')
-              written.add(v.name); say(depth, `${v.name} = ${b.txt}`); k += 2; continue
-            }
-            if (next === 'CAT') { const b2 = popBytes(), b1 = popBytes(); pushBytes(call('CAT', b1, b2)); k += 2; continue }
-            if (next === 'NUM2BIN') { const w = popNum(), v = popNum(); pushBytes(call('NUM2BIN', v.v, w.v)); k += 2; continue }
-            if (next === 'PREIMAGE') { pushBytes(call('PREIMAGE')); k += 2; continue }
-            if (HASH[next] !== undefined && isNum(k + 2, addr) && isNum(k + 3, HASH[next])) {
-              pushBytes(call(next, popBytes())); k += 4; continue
-            }
-            st.push(N(atom(String(x.value)))); k++; continue
+          case 'NUM': st.push(N(atom(String(x.value)), false, { lin: lin(x.value) })); k++; continue
+          case 'PUSH': pushBytes(B(atom(`&H${HEX(x.data)}`), lin(x.data.length))); k++; continue
+          case 'TRUE': st.push(N(atom('-1'), true, { lin: lin(-1n) })); k++; continue
+          case 'FALSE': st.push(N(atom('0'), true, { lin: lin(0n) })); k++; continue
+
+          // ── variables, at addresses known when the script is read ──
+          case '@': { const a = popAddr(), v = read(Number(a), 'n'); st.push(N(atom(v.name), false, v.once && v.lin ? { lin: v.lin } : {})); k++; continue }
+          case 'C@': { const a = popAddr(); st.push(N(call('BIN2NUM', (memRead(a, lin(1n)) ?? B(call('MEMORY', atom(String(a)), atom('1')), lin(1n))).e))); k++; continue }
+          case 'C!': { const a = popAddr(), v = popNum(); write(a, B(call('BYTE', v.v), lin(1n))); k++; continue }
+          case '2@': { const a = popAddr(); pushBytes(B(atom(read(Number(a), 'b').name), null)); st.at(-1).b.len = linOf(`SIZE(${st.at(-1).b.e.txt})`); k++; continue }
+          case '!': {
+            const a = Number(popAddr()), val = popNum(), v = varFor(a, 'n')
+            v.once = !written.has(v.name) && !loopDepth; v.lin = val.lin
+            written.add(v.name); say(depth, `${v.name} = ${val.v.txt}`); k++; continue
           }
-          case 'PUSH': pushBytes(atom(`&H${HEX(x.data)}`)); k++; continue
+          case '2!': {
+            const a = Number(popAddr()), b = popBytes()
+            /* a head field bound to a variable the compiler named takes that name: the binding is the frame's, not a line */
+            if (b.field !== undefined && opts.names?.[a] && !vars.has(a)) {
+              b.e = atom(opts.names[a]); b.len = b.len ?? lin(0); vars.set(a, { name: opts.names[a], type: 'b' }); opts.onField?.(b.field, opts.names[a]); k++; continue
+            }
+            const v = varFor(a, 'b')
+            written.add(v.name); say(depth, `${v.name} = ${b.e.txt}`); k++; continue
+          }
+
+          // ── the stack ──
+          case 'DUP': {
+            // `DUP 0< (ABORT") 1 SWAP 0 (?DO) OVER * (LOOP) NIP` — the compiler's `^`
+            if (is(k + 1, '0<') && is(k + 2, '(ABORT")') && ins[k + 2].data.length === 0
+              && isNum(k + 3, 1) && is(k + 4, 'SWAP') && isNum(k + 5, 0)
+              && is(k + 6, '(?DO)', ins[k + 10]?.at) && is(k + 7, 'OVER') && is(k + 8, '*') && is(k + 9, '(LOOP)', ins[k + 7].at)
+              && is(k + 10, 'NIP')) {
+              const r = popNum(), l = popNum(); st.push(N(pow(l.v, r.v))); k += 11; continue
+            }
+            const c = mat(pop()); st.push(c, c); k++; continue
+          }
+          case 'DROP': pop(); k++; continue
+          case '2DROP': pop(); pop(); k++; continue
           case 'NIP': {
             const t = pop(), s = pop()
-            if (t.k === 'u' && s.k === 'a' && t.b === s.b) { st.push(N(call('SIZE', t.b))); k++; continue }
-            throw new Stop('NIP of something other than a byte string\'s address')
+            if (t.k === 'u' && s.k === 'a' && t.b === s.b) { st.push(N(call('SIZE', t.b.e), false, { lin: t.b.len })); k++; continue }
+            st.push(t); k++; continue
           }
-          case 'BIN2NUM': st.push(N(call('BIN2NUM', popBytes()))); k++; continue
-          case 'BYTES=': { const b2 = popBytes(), b1 = popBytes(); st.push(N(call('SAMEBYTES', b1, b2), true)); k++; continue }
-          case 'ED25519-CHECKSIG': {
-            const m = popBytes(), p = popBytes(), s = popBytes(); st.push(N(call('ED25519SIG', s, p, m), true)); k++; continue
+          case 'SWAP': { const b2 = pop(), a2 = pop(); st.push(b2, a2); k++; continue }
+          case 'OVER': { const b2 = pop(), a2 = mat(pop()); st.push(a2, b2, a2); k++; continue }
+          case 'TUCK': { const b2 = mat(pop()), a2 = pop(); st.push(b2, a2, b2); k++; continue }
+          case 'ROT': { const c3 = pop(), b3 = pop(), a3 = pop(); st.push(b3, c3, a3); k++; continue }
+          case '2DUP': { const b2 = mat(pop()), a2 = mat(pop()); st.push(a2, b2, a2, b2); k++; continue }
+          case '2SWAP': { const d4 = pop(), c4 = pop(), b4 = pop(), a4 = pop(); st.push(c4, d4, a4, b4); k++; continue }
+          case '2OVER': { const d4 = pop(), c4 = pop(), b4 = mat(pop()), a4 = mat(pop()); st.push(a4, b4, c4, d4, a4, b4); k++; continue }
+          case 'PICK': { const d = depthOf(popNum()); ensure(d + 1); const c = mat(st[st.length - 1 - d]); st.push(c); k++; continue }
+          case '>R': rs.push(pop()); k++; continue
+          case 'R>': { if (!rs.length) throw new Stop('R> with nothing set aside'); st.push(rs.pop()); k++; continue }
+          case 'R@': { if (!rs.length) throw new Stop('R@ with nothing set aside'); st.push(mat(rs.at(-1))); k++; continue }
+          case '2>R': { const b2 = pop(), a2 = pop(); rs.push(a2, b2); k++; continue }
+          case '2R>': { if (rs.length < 2) throw new Stop('2R> with nothing set aside'); const b2 = rs.pop(), a2 = rs.pop(); st.push(a2, b2); k++; continue }
+          case '2R@': { if (rs.length < 2) throw new Stop('2R@ with nothing set aside'); const b2 = mat(rs.at(-1)), a2 = mat(rs.at(-2)); st.push(a2, b2); k++; continue }
+
+          // ── byte strings ──
+          case 'SIZE': { const t = pop(); st.push(t, t.k === 'u' ? N(call('SIZE', t.b.e), false, { lin: t.b.len }) : mat(numOf(t))); k++; continue }
+          case 'BIN2NUM': st.push(N(call('BIN2NUM', popBytes().e))); k++; continue
+          case 'BYTES=': { const b2 = popBytes(), b1 = popBytes(); st.push(N(call('SAMEBYTES', b1.e, b2.e), true)); k++; continue }
+          case 'CAT': {
+            const d = popAddr(), b2 = popBytes(), b1 = popBytes(), b = B(call('CAT', b1.e, b2.e), linAdd(b1.len, b2.len))
+            write(d, b); pushBytes(b); k++; continue
+          }
+          case 'NUM2BIN': {
+            const d = popAddr(), w = popNum(), v = popNum(), b = B(call('NUM2BIN', v.v, w.v), w.lin ?? null); b.n = w.v
+            if (!b.len) b.len = linOf(`SIZE(${b.e.txt})`)
+            write(d, b); pushBytes(b); k++; continue
+          }
+          case 'SUBSTR': case 'LEFT': case 'RIGHT': {
+            const d = popAddr(), n = popNum(), beg = x.name === 'SUBSTR' ? popNum() : null, s = popBytes()
+            const b = B(x.name === 'SUBSTR' ? call('SUBSTR', s.e, beg.v, n.v) : call(x.name, s.e, n.v), n.lin ?? null); b.n = n.v
+            if (!b.len) b.len = linOf(`SIZE(${b.e.txt})`)
+            write(d, b); pushBytes(b); k++; continue
+          }
+          case 'MOVE': {
+            const n = pop(), d = popAddr(), a = pop()
+            write(d, spanOf(a, n)); k++; continue
           }
           case 'SPLIT': {
             const n = popNum(), b = popBytes()
-            if (!(isNum(k + 1) && is(k + 2, '2!') && isNum(k + 3) && is(k + 4, '2!'))) {
-              throw new Stop('SPLIT whose halves are not stored straight away')
+            if (isNum(k + 1) && is(k + 2, '2!') && isNum(k + 3) && is(k + 4, '2!')) {
+              const r = varFor(addrAt(k + 1), 'b'), l = varFor(addrAt(k + 3), 'b')
+              written.add(l.name); written.add(r.name)
+              say(depth, `${l.name}, ${r.name} = SPLIT(${b.e.txt}, ${n.v.txt})`)
+              k += 5; continue
             }
-            const r = varFor(addrAt(k + 1), 'b'), l = varFor(addrAt(k + 3), 'b')
-            written.add(l.name); written.add(r.name)
-            say(depth, `${l.name}, ${r.name} = SPLIT(${b.txt}, ${n.v.txt})`)
-            k += 5; continue
+            /* SPLIT gives two values: both get names, one expression cannot stand for two results */
+            const tl = temp(), tr = temp()
+            say(depth, `${tl}, ${tr} = SPLIT(${b.e.txt}, ${n.v.txt})`)
+            const lb = B(atom(tl), n.lin ?? linOf(`SIZE(${tl})`)), rb = B(atom(tr), n.lin ? linAdd(b.len, n.lin, -1n) : linOf(`SIZE(${tr})`))
+            pushBytes(lb); pushBytes(rb); k++; continue
           }
-          case '+': case '-': case '*': case '/': {
-            const r = popNum(), l = popNum(); st.push(N(bin(l.v, x.name, r.v))); k++; continue
+          case 'PREIMAGE': case 'SCRIPTCODE': case 'OUTPUTS-HASH': case 'PREVOUTS-HASH': case 'SEQUENCES-HASH': case 'OUTPOINT': {
+            const d = popAddr(), [name, n] = FIELD[x.name], b = B(call(name), n === null ? null : lin(n))
+            if (!b.len) b.len = linOf(`SIZE(${b.e.txt})`)
+            write(d, b); pushBytes(b); k++; continue
           }
+          case 'TXVALUE': case 'NSEQUENCE': case 'LOCKTIME': st.push(N(call(x.name))); k++; continue
+          case 'SHA256': case 'HASH256': case 'HASH160': case 'RIPEMD160': case 'SHA1': {
+            const d = popAddr(), b = popBytes(); write(d, B(call(x.name, b.e), lin(HASH[x.name]))); k++; continue
+          }
+          case 'ED25519-CHECKSIG': {
+            const m = popBytes(), p = popBytes(), s = popBytes(); st.push(N(call('ED25519SIG', s.e, p.e, m.e), true)); k++; continue
+          }
+          case 'CHECKSIG': {
+            const m = popBytes(), p = popBytes(), s = popBytes(); st.push(N(call('CHECKSIG', s.e, p.e, m.e), true)); k++; continue
+          }
+
+          // ── numbers ──
+          case '+': case '-': {
+            const r = popNum(), l = popNum()
+            st.push(N(bin(l.v, x.name, r.v), false, l.lin && r.lin ? { lin: linAdd(l.lin, r.lin, x.name === '+' ? 1n : -1n) } : {})); k++; continue
+          }
+          case '1+': case '1-': {
+            const v = popNum(), one = lin(1n)
+            st.push(N(bin(v.v, x.name === '1+' ? '+' : '-', atom('1')), false, v.lin ? { lin: linAdd(v.lin, one, x.name === '1+' ? 1n : -1n) } : {})); k++; continue
+          }
+          case '*': case '/': { const r = popNum(), l = popNum(); st.push(N(bin(l.v, x.name, r.v))); k++; continue }
           case '=': case '<>': case '<': case '>': {
             const r = popNum(), l = popNum(); st.push(N(bin(l.v, x.name, r.v), true, { cmp: x.name, l: l.v, r: r.v })); k++; continue
           }
@@ -238,28 +475,27 @@ function machine(ins, vars, nameOf) {
             const c = popNum(), b2 = popNum(), a2 = popNum()
             if (c.v.txt === String(S32)) st.push(N(call('FMUL', a2.v, b2.v)))
             else if (b2.v.txt === String(S32)) st.push(N(call('FDIV', a2.v, c.v)))
-            else throw new Stop('*/ that is neither FMUL nor FDIV')
+            else st.push(N(call('MULDIV', a2.v, b2.v, c.v)))
             k++; continue
-          }
-          case 'DUP': {
-            // `DUP 0< (ABORT") 1 SWAP 0 (?DO) OVER * (LOOP) NIP` — the compiler's `^`
-            if (is(k + 1, '0<') && is(k + 2, '(ABORT")') && ins[k + 2].data.length === 0
-              && isNum(k + 3, 1) && is(k + 4, 'SWAP') && isNum(k + 5, 0)
-              && is(k + 6, '(?DO)', ins[k + 10]?.at) && is(k + 7, 'OVER') && is(k + 8, '*') && is(k + 9, '(LOOP)', ins[k + 7].at)
-              && is(k + 10, 'NIP')) {
-              const r = popNum(), l = popNum(); st.push(N(pow(l.v, r.v))); k += 11; continue
-            }
-            throw new Stop('DUP outside a sequence the compiler emits')
           }
           case '0<>': { const v = popNum(); st.push(N(call('ISTRUE', v.v), true, { istrue: v.v })); k++; continue }
+          case '0<': { const v = popNum(); st.push(N(bin(v.v, '<', atom('0')), true, { cmp: '<', l: v.v, r: atom('0') })); k++; continue }
+          case '0>': { const v = popNum(); st.push(N(bin(v.v, '>', atom('0')), true, { cmp: '>', l: v.v, r: atom('0') })); k++; continue }
           case '0=': {
             const v = popNum()
-            if (is(k + 1, '(ABORT")') && ins[k + 1].data.length === 0) { say(depth, `VERIFY ${v.v.txt}`); k += 2; continue }
-            if (v.cmp === '>') st.push(N(bin(v.l, '<=', v.r), true))
-            else if (v.cmp === '<') st.push(N(bin(v.l, '>=', v.r), true))
-            else st.push(N(call('NOT', v.v), true))
+            if (v.cmp === '>') st.push(N(bin(v.l, '<=', v.r), true, { not: v.v, cmp: '<=', l: v.l, r: v.r }))
+            else if (v.cmp === '<') st.push(N(bin(v.l, '>=', v.r), true, { not: v.v, cmp: '>=', l: v.l, r: v.r }))
+            else st.push(N(call('NOT', v.v), true, { not: v.v }))
             k++; continue
           }
+
+          // ── checks and branches ──
+          case '(ABORT")': {
+            const f = popNum(), h = holds(f)
+            say(depth, `VERIFY ${h.txt}` + (x.data.length ? `   REM  else it aborts with "${new TextDecoder().decode(x.data)}"` : ''))
+            k++; continue
+          }
+          case 'ABORT': say(depth, 'STOP'); k++; continue
           case '0BRANCH': { k = ifThen(k, depth); continue }
         }
         throw new Stop('this reader does not model it')
@@ -271,23 +507,29 @@ function machine(ins, vars, nameOf) {
     return k
   }
 
-  /** IF at the 0BRANCH k: the THEN arm runs to its target, and a BRANCH just before that target is the ELSE. */
+  /** IF at the 0BRANCH k: the THEN arm runs to its target, and a BRANCH just before that target is the ELSE. Values
+   *  held across it are named first, and both arms must leave the same values. */
   function ifThen(k, depth) {
     const cond = popNum()
-    if (st.length) throw new Stop('values held on the stack across an IF, which this reader does not follow')
+    for (const c of st) mat(c)
+    const before = st.slice()
     const lElse = idxAt.get(ins[k].arg)
     if (lElse === undefined || lElse <= k) throw new Stop('a 0BRANCH that is not forward to an instruction')
     say(depth, `IF ${cond.v.txt} THEN`)
     const j = lElse - 1
+    const same = (a, b) => a.length === b.length && a.every((c, i) => c === b[i])
     if (is(j, 'BRANCH') && ins[j].arg > ins[j].at) {
       const lEnd = idxAt.get(ins[j].arg) ?? ins.length
       block(k + 1, j, depth + 1)
+      const thenEnd = st.splice(0); st.push(...before)
       say(depth, 'ELSE')
       block(lElse, lEnd, depth + 1)
+      if (!same(thenEnd, st)) throw new Stop('the two arms of an IF leave different values on the stack, which this reader does not follow')
       say(depth, 'END IF')
       return lEnd
     }
     block(k + 1, lElse, depth + 1)
+    if (!same(before, st)) throw new Stop('an IF whose arm changes what is on the stack, which this reader does not follow')
     say(depth, 'END IF')
     return lElse
   }
@@ -322,12 +564,12 @@ function machine(ins, vars, nameOf) {
     if (stK >= 0) vars.set(stK, { name: '#st', type: 'hidden' })
     written.add(i.name)
     say(depth, `FOR ${i.name} = ${vFrom.v.txt} TO ${vTo.v.txt}${vStep ? ` STEP ${vStep.v.txt}` : ''}`)
-    block(body, inc, depth + 1)
+    loopDepth++; block(body, inc, depth + 1); loopDepth--
     say(depth, `NEXT ${i.name}`)
     return back + 1
   }
 
-  return { lines, st, written, block, is, isNum }
+  return { lines, st, written, block, is, isNum, inputs, pushBytes }
 }
 
 /** A field's value in the head of the script: a number for `%`, its bytes for `$`. */
@@ -427,10 +669,11 @@ function readCovenant(bytes, ins, opts, version) {
 /**
  * Read bytecode as BASIC.
  * @param {Uint8Array} bytes
- * @param {{ names?: Record<number, string>, stack?: string[], nVersion?: number }} [opts]
+ * @param {{ names?: Record<number, string>, stack?: string[], nVersion?: number, general?: boolean }} [opts]
  *   names     address → variable name (the compiler returns this)
  *   stack     what is on the stack when a program starts, bottom first, as given to compileBasic
  *   nVersion  the version the entry names; bytes numbered in another revision are not read as this one
+ *   general   read it as any script, as what it computes, even when it is laid out as this compiler writes one
  * @returns {{ lines: string[], covenant: boolean, leave: string[], stack: string[], state?: object, stoppedAt?: string }}
  */
 export function unbasic(bytes, opts = {}) {
@@ -451,10 +694,18 @@ export function unbasic(bytes, opts = {}) {
   const lines = [`VERSION ${versionText(declared)}`]
   let ins
   try { ins = disassemble(bytes).slice(1) } catch (e) { return { lines, covenant: false, leave: [], stack: [], stoppedAt: e.message } }
+  if (opts.general) return readAny(ins, opts, lines)
   const cov = readCovenant(bytes, ins, opts, lines[0])
   if (cov) return { ...cov, leave: [], stack: [] }
+  const own = readProgram(ins, opts, lines)
+  return own.stoppedAt === undefined ? own : readAny(ins, opts, lines)
+}
 
-  // a program: what is on the stack is bound to variables first, then the program, then what it leaves
+/**
+ * A program as the compiler writes one: what is on the stack bound to variables first, then the program, then what it
+ * leaves, so the reading compiles back to the same bytes. Stops where the script is not laid out so.
+ */
+function readProgram(ins, opts, lines) {
   const vars = new Map()
   const m = machine(ins, vars, a => opts.names?.[a] ?? `v${a}`)
   const inputs = opts.stack ?? []
@@ -477,6 +728,9 @@ export function unbasic(bytes, opts = {}) {
     let lv = ins.length
     while (lv - 2 >= k && m.isNum(lv - 2) && (m.is(lv - 1, '@') || m.is(lv - 1, '2@'))) lv -= 2
     m.block(k, lv, 0)
+    /* what a program leaves is its variables, fetched at its end: anything else left is not laid out as this compiler
+       writes a program, and the general reading says what it is */
+    if (m.st.length) throw new Stop('values left on the stack that are not fetched variables')
     const leave = []
     for (let t = lv; t < ins.length; t += 2) {
       const v = vars.get(Number(ins[t].value))
@@ -490,11 +744,56 @@ export function unbasic(bytes, opts = {}) {
   }
 }
 
+/**
+ * Any script, read as what it computes: the method of grafverse/mint/src/unbasic.ts. Under everything the lock pushes
+ * are the tick's own pushes, named in0, in1, … the first pushed first, or as `opts.stack` names them. A script that
+ * uses a word only a covenant's lock runs is a covenant: its leading pushes are its state, read back as DIM fields,
+ * each named by the variable it is bound to when `opts.names` names it. What is left on the stack at the end is
+ * what the script leaves, and a lock is accepted when that is exactly one non-zero cell.
+ */
+function readAny(ins, opts, lines) {
+  const covenant = ins.some(x => COVENANT_WORDS.has(x.name))
+  let n = 0
+  if (covenant) while (ins[n]?.name === 'PUSH') n++
+  const fields = ins.slice(0, n).map((x, i) => ({ name: `f${i}`, width: x.data.length, data: x.data }))
+  const vars = new Map()
+  const m = machine(ins, vars, a => opts.names?.[a] ?? `v${a}`,
+    { inputs: true, names: opts.names, onField: (i, name) => { fields[i].name = name } })
+  for (const raw of opts.stack ?? []) {
+    const name = raw.replace(/\$$/, ''), b = B(atom(name), linOf(`SIZE(${name})`))
+    if (raw.endsWith('$')) m.pushBytes(b); else m.st.push(N(atom(name)))
+  }
+  for (const [i, f] of fields.entries()) { const b = B(atom(f.name), lin(f.width)); b.field = i; m.pushBytes(b) }
+  let stoppedAt
+  try { m.block(n, ins.length, 0) }
+  catch (e) { if (!(e instanceof Stop)) throw e; stoppedAt = e.message }
+  /* the tick's pushes, named as the reading reached them, the last pushed first: in0 is the first pushed */
+  const total = m.inputs.length
+  const named = s => s.replace(/in·(\d+)/g, (_, d) => `in${total - 1 - Number(d)}`)
+  const left = []
+  for (let k = 0; k < m.st.length; k++) {
+    const c = m.st[k]
+    if (c.k === 'a' && m.st[k + 1]?.k === 'u' && m.st[k + 1].b === c.b) { left.push(named(c.b.e.txt)); k++ }
+    else left.push(named(c.k === 'n' ? c.v.txt : c.k === 'u' ? `SIZE(${c.b.e.txt})` : `the address of ${c.b.e.txt}`))
+  }
+  const state = Object.fromEntries(fields.map(f => [f.name, [...f.data]]))
+  return {
+    covenant, general: true, layout: fields.map(f => ({ name: f.name, width: f.width, bytes: true })), state,
+    lines: [...lines, ...fields.map(f => `DIM ${f.name}$${f.width}`),
+            ...(total ? [`REM  ${Array.from({ length: total }, (_, i) => `in${i}`).join(', ')}: what the tick pushes, the first pushed first`] : []),
+            ...m.lines.map(named)],
+    leave: left, stack: opts.stack ?? [], inputs: total, stoppedAt: stoppedAt && named(stoppedAt),
+  }
+}
+
 /** A full listing, numbered the way BASIC always was. */
 export function unbasicListing(bytes, opts = {}) {
   const r = unbasic(bytes, opts)
   const out = r.lines.map((l, i) => `${String((i + 1) * 10).padStart(5)} ${l}`)
-  if (r.leave.length) out.push('', `REM  left on the stack: ${r.leave.join(', ')}`)
+  if (r.general && r.leave.length) {
+    out.push('', `REM  left on the stack${r.covenant ? ' (the tick is accepted when exactly one cell is left, and it is not zero)' : ''}:`)
+    r.leave.forEach((s, i) => out.push(`REM    [${i}] ${s}`))
+  } else if (r.leave.length) out.push('', `REM  left on the stack: ${r.leave.join(', ')}`)
   if (r.stoppedAt) out.push('', `REM  ⚠ STOPPED: ${r.stoppedAt}`)
   return out.join('\n')
 }
