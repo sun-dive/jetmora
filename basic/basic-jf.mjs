@@ -10,7 +10,7 @@
  *
  *   values      a number is one 64-bit cell; bytes are two cells, ( c-addr u ), the bytes in memory
  *   variables   cells at fixed addresses, chosen when compiling: `addr @`, `addr !`; bytes `addr 2@`, `addr 2!`
- *   bytes made  CAT, NUM2BIN, the hashes and PREIMAGE each write to their own fixed place
+ *   bytes made  CAT, NUM2BIN, the hashes, PREIMAGE and the preimage's byte fields each write to their own fixed place
  *   loops       FOR … NEXT is a loop that branches back to its test. It is never unrolled
  *   truth       a comparison gives -1 or 0: jetForth's TRUE, every bit set
  *
@@ -35,11 +35,12 @@
  *                   nSequence equal to it
  *   the program     the covenant's own rules; it may assign the fields
  *   the rebuild     rules 3 and 4: the successor is this script with its new state, value + 1,
- *                   and HASH256 of it is the tick's hashOutputs
- *   TRUE
+ *                   and HASH256 of it is the tick's hashOutputs. It is made in one place: value + 1,
+ *                   then this script copied once, each field the program writes written over its own
  *
  * A tick is run as its unlocking script (byte pushes only) followed by this one, and is accepted when
- * it leaves exactly one non-zero cell.
+ * it leaves exactly one non-zero cell: the rebuild's last check, the next output's hash against hashOutputs.
+ * Every other check is one comparison and one abort (Emitter.verify).
  *
  * INPUT names what a tick carries: the pushes its unlocking script makes after the signature and the key,
  * in the order INPUT names them, bound to variables before the program runs. `code$` is bytes of any
@@ -55,7 +56,7 @@
 import { JF_PUSH_MAX, JF_SMALL0, JF_LIT, JF_WORD } from '../tools/ops-jf.mjs'
 
 /** The version of this compiler. A script's bytes are a function of it. */
-export const BASIC_JF_VERSION = '0.7'
+export const BASIC_JF_VERSION = '0.8'
 
 /** The JF revision the bytes are numbered in: tools/ops-jf.mjs, revision 3. */
 export const JF_REVISION = 3
@@ -407,7 +408,6 @@ const W = name => {
 }
 const le = (v, n) => { const o = []; let u = v < 0n ? v + (1n << BigInt(8 * n)) : v
   for (let k = 0; k < n; k++) { o.push(Number(u & 0xffn)); u >>= 8n } return o }
-const hex = d => d.map(b => b.toString(16).padStart(2, '0')).join('')
 
 /** Instructions and labels. Every instruction's size is known when it is laid down, so one pass places the labels. */
 class Code {
@@ -471,6 +471,8 @@ const NUMWORD = {
 const HASHES = { SHA256: 32, HASH256: 32, HASH160: 20, RIPEMD160: 20, SHA1: 20 }
 const ARITH = { '+': '+', '-': '-', '*': '*', '/': '/' }
 const CMP = { '=': '=', '<>': '<>', '<': '<', '>': '>' }
+/** The word that is true when a comparison is false, where jetForth has one */
+const OPPOSITE = { '=': '<>', '<>': '=', '<=': '>', '>=': '<' }
 
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
 /** The larger of two lengths; unknown if either is. */
@@ -502,12 +504,17 @@ const INPUT_FIRST = 'BASIC: every INPUT comes before the first statement that ru
   'before anything reads it'
 
 /**
- * Memory, laid out when compiling. Variables are low, so the program's addresses are short to write; the
- * frame's own variables sit at a fixed place, so the frame's bytes are the same whatever the program is;
- * the byte strings words make sit above both. Pushed bytes are not in this memory: the interpreter keeps them
- * in a push space of their own, read-only.
+ * Memory, laid out when compiling, from 0 up, so most addresses are one-byte literals (LIT8 is signed: below 128):
+ *   the variables named before the program runs   a covenant's fields, its inputs and the frame's own; what a program
+ *                                                 finds on the stack
+ *   the scratch                                   bytes a word makes for the statement it is in: each statement uses it
+ *                                                 from its start again. A hash reads all it hashes before it writes, so
+ *                                                 it writes over its input when that was made in the scratch
+ *   the program's variables, and the bytes kept   bytes a statement assigns or SPLITs stay where they were made
+ * The scratch's size is the most any statement uses, measured by compiling, so a script is compiled until it holds.
+ * The frame and the rebuild use only the first two: their bytes are the same whatever the program is. Pushed bytes
+ * are not in this memory: the interpreter keeps them in a push space of their own, read-only.
  */
-const FRAME_BASE = 4096, BUF_BASE = 4608
 /** JF revision 3's program memory and push space, and the signature and key a covenant's tick pushes. */
 const MEMORY = 65536, PUSH_MEM = 65536, TICK_PUSHES = 64 + 32
 /** The widths INPUT gives, in bytes, from 1: a % input at most a cell, a $ input at most what the push space holds */
@@ -518,13 +525,16 @@ export const INPUT_WIDEST = Object.freeze({ number: 8, bytes: PUSH_MEM })
  * @typedef {{ name: string, addr: number, type: 'num'|'bytes', max: number|null }} Var
  */
 class Emitter {
-  constructor(consts = {}) {
+  /** `scratch` is the scratch's size, as the last compile of this script measured it. */
+  constructor(consts = {}, scratch = 0) {
     this.consts = consts
     /** @type {Map<string, Var>} */
     this.vars = new Map()
-    this.next = 0                // the next free address for a variable
-    this.frameNext = FRAME_BASE  // … for one of the frame's own
-    this.bufNext = BUF_BASE      // … for a byte string a word makes
+    this.next = 0                // the next free address for a variable, or for bytes kept
+    this.scratch = scratch
+    this.scratchAt = null        // where the scratch starts, once the variables before the program are laid out
+    this.top = null              // the next free scratch address in this statement
+    this.used = 0                // the most scratch a statement has used in this compile
     this.code = new Code()
     this.loops = 0               // how many FOR bodies deep
     this.open = new Set()        // FOR counters whose loops are open
@@ -535,27 +545,31 @@ class Emitter {
     this.loopMax = []            // per open FOR: the longest a byte string can be inside it
   }
   declare(name, type, max = null) {
-    const n = type === 'bytes' ? 16 : 8
-    let addr
-    if (this.internal) {
-      addr = this.frameNext; this.frameNext += n
-      if (this.frameNext > BUF_BASE) throw new Error('BASIC: the frame has run out of room for its variables')
-    } else {
-      addr = this.next; this.next += n
-      if (this.next > FRAME_BASE) throw new Error('BASIC: more variables than fit below the frame: the program is too large')
-    }
+    const addr = this.next
+    this.next += type === 'bytes' ? 16 : 8
     const v = { name, addr, type: type === 'bytes' ? 'bytes' : 'num', max }
     this.vars.set(name, v)
     return v
   }
-  /** A fixed place for a byte string a word makes. Inside a loop the place would be rewritten every trip. */
-  site(n, what) {
+  /** The variables before the program are laid out: the scratch starts here, and what comes later goes past it. */
+  layScratch() { this.scratchAt = this.top = this.next; this.next += this.scratch }
+  /** A statement starts: the scratch is free again. */
+  freeScratch() { if (this.scratchAt !== null) this.top = this.scratchAt }
+  /** How much memory the script uses: up to the last thing laid out, or the scratch's end if that is further. */
+  memory() { return Math.max(this.next, (this.scratchAt ?? 0) + this.used) }
+  /**
+   * A fixed place for a byte string a word makes: in the scratch, or past it when `kept`, for bytes a statement
+   * assigns. Inside a loop the place would be rewritten every trip.
+   */
+  site(n, what, kept = false) {
     if (this.loops) {
       throw new Error(`BASIC: ${what} writes its bytes to a place fixed when the program is compiled, and inside a ` +
         'FOR loop it would write that place again on every trip: work it out before the loop')
     }
     if (n === null) throw new Error(`BASIC: ${what}: the length of what it is given is not known when compiling`)
-    const a = this.bufNext; this.bufNext += n
+    if (kept || this.scratchAt === null) { const a = this.next; this.next += n; return a }
+    const a = this.top
+    this.top += n; this.used = Math.max(this.used, this.top - this.scratchAt)
     return a
   }
   fetch(v) { this.code.num(v.addr); this.code.word(v.type === 'bytes' ? '2@' : '@') }
@@ -599,7 +613,7 @@ class Emitter {
   }
 
   /** Emit an expression. @returns {{ t: 'num'|'flag'|'bytes', max?: number|null }} */
-  emit(e) {
+  emit(e, kept = false) {
     const c = this.code
     switch (e.t) {
       case 'num': if (e.v > I64_MAX) throw new Error(`BASIC: ${e.v} is past what a 64-bit cell holds`)
@@ -672,11 +686,17 @@ class Emitter {
           need(2); this.want(this.emit(e.a[0]), 'bytes', f); this.want(this.emit(e.a[1]), 'bytes', f)
           c.word('BYTES='); return { t: 'flag' }
         }
+        // the frame's next output, made in one place: see place()
+        if (this.internal && (f === 'CAT' || f === 'REPLACE')) {
+          need(f === 'CAT' ? 2 : 3)
+          const r = this.place(e, this.site(this.spanOf(e).max, f, kept))
+          return { t: 'bytes', max: r.max }
+        }
         if (f === 'CAT') {
           need(2)
           const a = this.want(this.emit(e.a[0]), 'bytes', f), b = this.want(this.emit(e.a[1]), 'bytes', f)
           const max = a.max === null || b.max === null ? null : a.max + b.max
-          c.num(this.site(max, 'CAT')); c.word('CAT'); return { t: 'bytes', max }
+          c.num(this.site(max, 'CAT', kept)); c.word('CAT'); return { t: 'bytes', max }
         }
         if (f === 'NUM2BIN') {
           need(2)
@@ -684,11 +704,15 @@ class Emitter {
           if (w === undefined) throw new Error('BASIC: NUM2BIN: the width has to be a number known when compiling, so its bytes have a place')
           if (w < 0n || w > 65536n) throw new Error(`BASIC: NUM2BIN: a width of ${w} bytes; it is 0 to 65536`)
           this.want(this.emit(e.a[0]), 'num', f); this.want(this.emit(e.a[1]), 'num', f)
-          c.num(this.site(Number(w), 'NUM2BIN')); c.word('NUM2BIN'); return { t: 'bytes', max: Number(w) }
+          c.num(this.site(Number(w), 'NUM2BIN', kept)); c.word('NUM2BIN'); return { t: 'bytes', max: Number(w) }
         }
         if (HASHES[f]) {
-          need(1); this.want(this.emit(e.a[0]), 'bytes', f)
-          const d = this.site(HASHES[f], f)
+          need(1)
+          const from = this.top
+          this.want(this.emit(e.a[0]), 'bytes', f)
+          /* what its input made in the scratch is used up once it is hashed: the hash is written from where that began */
+          if (!kept && from !== null) this.top = from
+          const d = this.site(HASHES[f], f, kept)
           c.num(d); c.word(f); c.num(d); c.num(BigInt(HASHES[f]))
           return { t: 'bytes', max: HASHES[f] }
         }
@@ -701,9 +725,16 @@ class Emitter {
         }
         // the frame's own words
         if (this.internal && f === 'PREIMAGE') {
-          need(0); c.num(this.site(this.preMax, 'PREIMAGE')); c.word('PREIMAGE'); return { t: 'bytes', max: this.preMax }
+          need(0); c.num(this.site(this.preMax, 'PREIMAGE', kept)); c.word('PREIMAGE'); return { t: 'bytes', max: this.preMax }
         }
         if (this.internal && f === 'DEPTH') { need(0); c.word('DEPTH'); return { t: 'num' } }
+        // the preimage's fields, each its own word: the value and nSequence as numbers; the scriptCode field (the
+        // script, its length in front) and hashOutputs as bytes, each written to its own place
+        if (this.internal && (f === 'TXVALUE' || f === 'NSEQUENCE')) { need(0); c.word(f); return { t: 'num' } }
+        if (this.internal && (f === 'SCRIPTCODE' || f === 'OUTPUTS_HASH')) {
+          const n = f === 'SCRIPTCODE' ? this.preMax - PREIMAGE_AROUND : 32
+          need(0); c.num(this.site(n, f, kept)); c.word(f === 'SCRIPTCODE' ? 'SCRIPTCODE' : 'OUTPUTS-HASH'); return { t: 'bytes', max: n }
+        }
         if (f === 'SPLIT') {
           throw new Error('BASIC: SPLIT gives back TWO values, a left half and a right half, so it ' +
             'needs two names: left, right = SPLIT(bytes, at)')
@@ -715,6 +746,64 @@ class Emitter {
         throw new Error(`BASIC: no such word: ${f}`)
       }
     }
+  }
+
+  /**
+   * VERIFY: one comparison and one abort, `(ABORT")` refusing when the flag on top is non-zero. A comparison aborts on
+   * its opposite where jetForth has one word for it: = on <>, <> on =, <= on >, >= on <. NOT(x) aborts on x itself.
+   * Anything else, < and > among them, aborts when it is 0.
+   */
+  verify(e) {
+    const c = this.code
+    if (e.t === 'bin' && OPPOSITE[e.op]) {
+      this.want(this.emit(e.l), 'num', e.op); this.want(this.emit(e.r), 'num', e.op)
+      c.word(OPPOSITE[e.op]); c.abortIf(); return
+    }
+    if (e.t === 'call' && e.f === 'NOT' && e.a.length === 1) { this.want(this.emit(e.a[0]), 'num', 'NOT'); c.abortIf(); return }
+    this.want(this.emit(e), 'num', 'VERIFY'); c.word('0='); c.abortIf()
+  }
+
+  /** How long the frame's next output can be (`max`), and how long it is when that is known when compiling (`exact`). */
+  spanOf(e) {
+    if (e.t === 'call' && e.f === 'CAT') {
+      const a = this.spanOf(e.a[0]), b = this.spanOf(e.a[1])
+      return { max: a.max + b.max, exact: a.exact === undefined || b.exact === undefined ? undefined : a.exact + b.exact }
+    }
+    if (e.t === 'call' && e.f === 'REPLACE') return this.spanOf(e.a[0])
+    if (e.t === 'call' && e.f === 'NUM2BIN') { const w = Number(this.constEval(e.a[1])); return { max: w, exact: w } }
+    if (e.t === 'call' && e.f === 'SCRIPTCODE') return { max: this.preMax - PREIMAGE_AROUND }
+    if (e.t === 'var' && this.vars.has(e.v)) return { max: this.vars.get(e.v).max }
+    throw new Error('BASIC: the frame\'s next output is made of CAT, REPLACE, NUM2BIN, SCRIPTCODE and variables')
+  }
+  /**
+   * The frame's next output, made where it belongs: `e`'s bytes are written from the address `d`, and ( d u ) left
+   * when `keep`. CAT lays its halves end to end, the first of a length known when compiling. REPLACE(x, at, y) writes
+   * y over x from `at`, in place: the frame checks y's size first. NUM2BIN and SCRIPTCODE write there themselves;
+   * a variable's bytes are copied there with MOVE.
+   */
+  place(e, d, keep = true) {
+    const c = this.code, s = this.spanOf(e)
+    if (e.f === 'CAT') {
+      const a = this.spanOf(e.a[0])
+      if (a.exact === undefined) throw new Error('BASIC: the frame\'s CAT: the first half\'s length is not known when compiling')
+      this.place(e.a[0], d, keep); this.place(e.a[1], d + a.exact, keep)
+      if (keep) { c.word('ROT'); c.word('+'); c.word('NIP') }     // ( d ua d+ua ub ) → ( d ua+ub )
+    } else if (e.f === 'REPLACE') {
+      const at = this.constEval(e.a[1])
+      if (at === undefined) throw new Error('BASIC: the frame\'s REPLACE: where it writes is known when compiling')
+      this.place(e.a[0], d, keep); this.place(e.a[2], d + Number(at), false)
+    } else if (e.f === 'NUM2BIN') {
+      this.want(this.emit(e.a[0]), 'num', 'NUM2BIN'); c.num(s.exact); c.num(d); c.word('NUM2BIN')
+      if (!keep) c.word('2DROP')
+    } else if (e.f === 'SCRIPTCODE') {
+      c.num(d); c.word('SCRIPTCODE')
+      if (!keep) c.word('2DROP')
+    } else {
+      this.want(this.emit(e), 'bytes', 'the frame')
+      if (keep) { c.word('TUCK'); c.num(d); c.word('SWAP'); c.word('MOVE'); c.num(d); c.word('SWAP') }   // ( a u ) → ( d u )
+      else { c.num(d); c.word('SWAP'); c.word('MOVE') }
+    }
+    return s
   }
 
   /** Assign what `r` describes, on top of the stack, to `name`, creating it on first assignment. */
@@ -736,10 +825,11 @@ class Emitter {
   run(ss) {
     const c = this.code
     for (const s of ss) {
-      if (s.t === 'let') { this.assign(s.name, this.emit(s.e)); continue }
-      if (s.t === 'verify') { this.want(this.emit(s.e), 'num', 'VERIFY'); c.word('0='); c.abortIf(); continue }
+      this.freeScratch()
+      if (s.t === 'let') { this.assign(s.name, this.emit(s.e, true)); continue }
+      if (s.t === 'verify') { this.verify(s.e); continue }
       if (s.t === 'split') {
-        const of = this.want(this.emit(s.of), 'bytes', 'SPLIT'); this.want(this.emit(s.at), 'num', 'SPLIT')
+        const of = this.want(this.emit(s.of, true), 'bytes', 'SPLIT'); this.want(this.emit(s.at), 'num', 'SPLIT')
         c.word('SPLIT')
         /* Both names are created left first, as written; the right half is on top, so it is stored first. */
         for (const n of [s.left, s.right]) if (!this.vars.has(n) && !has(this.consts, n)) this.declare(n, 'bytes', of.max)
@@ -843,8 +933,9 @@ class Emitter {
   }
 
   /** Bind what is on the stack, bottom first, to variables: a number takes one cell, bytes two. */
-  bind(vars, num2bin = new Set()) {
+  bind(vars, num2bin = new Set(), unbound = new Set()) {
     for (const v of [...vars].reverse()) {
+      if (unbound.has(v.name)) { this.code.word('2DROP'); continue }   // pushed bytes nothing reads
       if (num2bin.has(v.name)) this.code.word('BIN2NUM')      // a % field: its pushed bytes, read as a number
       this.store(v)
     }
@@ -874,24 +965,31 @@ export function compileBasic(src, env = {}) {
     throw new Error('BASIC: INPUT names what a covenant\'s tick carries, and a covenant has DIM owner$20: compile it ' +
       'with compileCovenant. What a program finds on the stack is named by env.stack')
   }
-  const em = new Emitter(env.consts ?? {})
-  const inputs = (env.stack ?? []).map(raw => {
-    const m = /^([A-Za-z][A-Za-z0-9_]*)(\$)?$/.exec(raw)
-    if (!m) throw new Error(`BASIC: ${raw} is not a name for what is on the stack`)
-    if (em.vars.has(m[1])) throw new Error(`BASIC: ${m[1]} is named twice on the stack`)
-    return em.declare(m[1], m[2] ? 'bytes' : 'num', null)
-  })
-  em.bind(inputs)
-  em.run(prog)
   const leave = env.leave ?? []
-  for (const n of leave) {
-    const l = em.vars.get(n)
-    if (!l || n.startsWith('#')) throw new Error(`BASIC: ${n} is left on the stack but never given a value`)
-    em.fetch(l)
+  const build = scratch => {
+    const em = new Emitter(env.consts ?? {}, scratch)
+    const inputs = (env.stack ?? []).map(raw => {
+      const m = /^([A-Za-z][A-Za-z0-9_]*)(\$)?$/.exec(raw)
+      if (!m) throw new Error(`BASIC: ${raw} is not a name for what is on the stack`)
+      if (em.vars.has(m[1])) throw new Error(`BASIC: ${m[1]} is named twice on the stack`)
+      return em.declare(m[1], m[2] ? 'bytes' : 'num', null)
+    })
+    em.layScratch()
+    em.bind(inputs)
+    em.run(prog)
+    for (const n of leave) {
+      const l = em.vars.get(n)
+      if (!l || n.startsWith('#')) throw new Error(`BASIC: ${n} is left on the stack but never given a value`)
+      em.fetch(l)
+    }
+    return em
   }
+  /* The scratch's size is what the program's statements use, which no address changes: a second compile holds it. */
+  let em = build(0)
+  if (em.used > 0) em = build(em.used)
   /* What it pushes goes to the push space as it runs; nothing it pushes is in a loop. Bytes on the stack
      when it starts are not counted: their length is the caller's. */
-  const memory = em.bufNext, pushed = em.code.pushed ?? 0
+  const memory = em.memory(), pushed = em.code.pushed ?? 0
   if (memory > MEMORY) throw new Error(`BASIC: the program needs ${memory} bytes of memory, and the interpreter has ${MEMORY}`)
   if (pushed > PUSH_MEM) throw new Error(`BASIC: the program pushes ${pushed} bytes, and the push space has ${PUSH_MEM}`)
   /* The VERSION line is the declaration, ahead of the code: every branch is relative, so nothing in the code moves. */
@@ -914,7 +1012,9 @@ const PREIMAGE_AROUND = 156
  *   the inputs       the pushes after them, one for each name INPUT gives. A push left over is still on the
  *                    stack at the end, where a tick must leave exactly one item; a push missing leaves the
  *                    binding short of what it stores
- *   the preimage     … ‖ scriptCode field [104, u−52) ‖ value 8 ‖ nSequence 4 ‖ hashOutputs 32 ‖ locktime 4 ‖ type 4
+ *   the preimage     read with its own words: TXVALUE and NSEQUENCE, numbers; SCRIPTCODE, the script with its length
+ *                    in front, as an output carries it; OUTPUTS_HASH, hashOutputs. PREIMAGE, all of it, only for the
+ *                    owner's signature, which is over HASH256 of it
  * `written` is the fields the program assigns. A `$` field the program writes is checked for its width:
  * a push of another length would leave bytes in the successor that run as code.
  */
@@ -934,35 +1034,29 @@ function frameText(layout, vl, written, inputs) {
   }
   const before = [
     ...given,
-    '#pre = PREIMAGE()',
-    '#head, #tail = SPLIT(#pre, SIZE(#pre) - 52)',
-    '#val, #tail = SPLIT(#tail, 8)',
-    '#seq, #tail = SPLIT(#tail, 4)',
-    '#hout, #tail = SPLIT(#tail, 32)',
-    '#skip, #field = SPLIT(#head, 104)',
     "REM  rule 2: the next tick, never another — the value plus one, and nSequence that same number",
-    '#next = BIN2NUM(#val) + 1',
-    'VERIFY BIN2NUM(#seq) = #next',
+    '#next = TXVALUE() + 1',
+    'VERIFY NSEQUENCE() = #next',
     "REM  nSequence counts from 1: a value of all ones reads as -1 and would come round to 0",
-    'VERIFY #next > 0',
+    'VERIFY #next >= 1',
     "REM  rule 1: signed by the thread's owner",
     'VERIFY SAMEBYTES(HASH160(#pub), owner)',
-    'VERIFY ED25519SIG(#sig, #pub, HASH256(#pre))',
+    'VERIFY ED25519SIG(#sig, #pub, HASH256(PREIMAGE()))',
   ]
-  /* Rules 3 and 4: the successor is this script, its state rebuilt. Untouched, the scriptCode field is
-     already the successor's script with its length in front, as an output carries it. */
-  if (!layout.some(f => written.has(f.name))) {
-    return { before, after: ['VERIFY SAMEBYTES(HASH256(CAT(NUM2BIN(#next, 8), #field)), #hout)'] }
-  }
-  const H = layout.reduce((n, f) => n + pushHead(f.width).length + f.width, 0)
-  const piece = f => `CAT(&H${hex(pushHead(f.width))}, ${f.bytes ? f.name : `NUM2BIN(${f.name}, ${f.width})`})`
-  /* #vi is what comes before the state: the length prefix and the declaration, carried into the successor as they are. */
-  const after = [`#vi, #rest = SPLIT(#field, ${vl + DECLARATION.length})`, `#old, #suf = SPLIT(#rest, ${H})`]
+  /* Rules 3 and 4: the successor is this script, its state rebuilt. The scriptCode field is already the successor's
+     script with its length in front, as an output carries it: it is copied once, behind the value, and each field the
+     program writes is written over its place, its push's head left as it is. The next output is made in one place. */
+  const after = []
   for (const f of layout) if (f.bytes && written.has(f.name)) after.push(`VERIFY SIZE(${f.name}) = ${f.width}`)
   /* A % field is unsigned. Below 8 bytes NUM2BIN refuses a negative; at 8 a negative cell fits, so it is checked. */
   for (const f of layout) if (!f.bytes && f.width === 8 && written.has(f.name)) after.push(`VERIFY ${f.name} >= 0`)
-  layout.forEach((f, i) => after.push(i === 0 ? `#st = ${piece(f)}` : `#st = CAT(#st, ${piece(f)})`))
-  after.push('VERIFY SAMEBYTES(HASH256(CAT(CAT(CAT(NUM2BIN(#next, 8), #vi), #st), #suf)), #hout)')
+  let out = 'SCRIPTCODE()', at = vl + DECLARATION.length
+  for (const f of layout) {
+    at += pushHead(f.width).length
+    if (written.has(f.name)) out = `REPLACE(${out}, ${at}, ${f.bytes ? f.name : `NUM2BIN(${f.name}, ${f.width})`})`
+    at += f.width
+  }
+  after.push(`VERIFY SAMEBYTES(HASH256(CAT(NUM2BIN(#next, 8), ${out})), OUTPUTS_HASH())`)
   return { before, after }
 }
 
@@ -1017,14 +1111,51 @@ function fieldBytes(f, v) {
   return le(n, f.width)
 }
 
-/** Lay the script down for a guess at its own length; `compileCovenant` repeats until the guess holds. */
-function buildCovenant(layout, inputs, body, state, L, written, consts) {
-  const em = new Emitter(consts)
+/** Every name a block's expressions read. */
+function reads(ss, into) {
+  const of = e => {
+    if (!e) return
+    if (e.t === 'var') into.add(e.v)
+    else if (e.t === 'neg') of(e.e)
+    else if (e.t === 'bin') { of(e.l); of(e.r) }
+    else if (e.t === 'call') e.a.forEach(of)
+  }
+  for (const s of ss) {
+    if (s.t === 'let' || s.t === 'verify') of(s.e)
+    else if (s.t === 'split') { of(s.of); of(s.at) }
+    else if (s.t === 'for') { of(s.from); of(s.to); of(s.step); reads(s.body, into) }
+    else if (s.t === 'if') { of(s.cond); reads(s.then, into); reads(s.else, into) }
+  }
+}
+/**
+ * The fields whose value in the head nothing reads, so the frame drops it rather than store it: the frame does not
+ * read it, nor the program, nor the rebuild, because the program never writes the field or writes it in a statement
+ * every tick runs, one not inside an IF or a FOR, and the rebuild reads what the program wrote.
+ */
+function unboundFields(layout, inputs, body, written) {
+  const read = new Set(), top = new Set()
+  reads(parseProgram(frameText(layout, 1, written, inputs).before.join('\n'), true), read)
+  reads(body, read)
+  for (const s of body) {
+    if (s.t === 'let' || s.t === 'for') top.add(s.name)
+    else if (s.t === 'split') { top.add(s.left); top.add(s.right) }
+  }
+  return new Set(layout.filter(f => !read.has(f.name) && (!written.has(f.name) || top.has(f.name))).map(f => f.name))
+}
+
+/**
+ * Lay the script down for a guess at its own length and its scratch's size; `compileCovenant` repeats until both
+ * hold. `unbound` is the fields the frame drops.
+ */
+function buildCovenant(layout, inputs, body, state, L, written, consts, scratch, unbound) {
+  const em = new Emitter(consts, scratch)
   const fields = layout.map(f => em.declare(f.name, f.bytes ? 'bytes' : 'num', f.bytes ? f.width : null))
   const given = inputs.map(x => em.declare(x.name, x.bytes ? 'bytes' : 'num', x.bytes ? x.width : null))
   em.internal = true
   const sig = em.declare('#sig', 'bytes', 64), pub = em.declare('#pub', 'bytes', 32)
   const carried = inputs.map((x, i) => x.bytes ? given[i] : em.declare(`#in_${x.name}`, 'bytes', x.width))
+  em.declare('#next', 'num')
+  em.layScratch()
   em.preMax = PREIMAGE_AROUND + varintSize(L) + L
   const { before, after } = frameText(layout, varintSize(L), written, inputs)
 
@@ -1034,11 +1165,14 @@ function buildCovenant(layout, inputs, body, state, L, written, consts) {
   /* The frame is laid out before the program, so its addresses are the same whatever the program is.
      Emission order is head, frame, program, rebuild; allocation order is frame, rebuild, program. */
   const frame = em.code
-  em.bind([sig, pub, ...carried, ...fields], new Set(layout.filter(f => !f.bytes).map(f => f.name)))
+  em.bind([sig, pub, ...carried, ...fields], new Set(layout.filter(f => !f.bytes).map(f => f.name)), unbound)
   em.run(parseProgram(before.join('\n'), true))
   const rebuildCode = em.code = new Code()
-  em.run(parseProgram(after.join('\n'), true))
-  em.code.word('TRUE')
+  /* The rebuild's last check is the tick's result: its flag is left as the one cell, in place of an abort and TRUE. */
+  const rebuild = parseProgram(after.join('\n'), true), last = rebuild.pop()
+  em.run(rebuild)
+  em.freeScratch()
+  em.want(em.emit(last.e), 'num', 'the rebuild')
   em.internal = false
   const prog = em.code = new Code()
   em.run(body)
@@ -1046,7 +1180,7 @@ function buildCovenant(layout, inputs, body, state, L, written, consts) {
   /* Literals go to the push space as they run, after the tick's own pushes; nothing a covenant pushes is in
      a loop, so their total is known now. An input counts at its width; one of any length is not counted, its
      length being the tick's. */
-  const memory = em.bufNext, pushed = TICK_PUSHES + inputs.reduce((n, x) => n + (x.width ?? 0), 0)
+  const memory = em.memory(), pushed = TICK_PUSHES + inputs.reduce((n, x) => n + (x.width ?? 0), 0)
     + [head, frame, prog, rebuildCode].reduce((n, c) => n + (c.pushed ?? 0), 0)
   return { parts, bytes: Uint8Array.from([...parts.head, ...parts.frame, ...parts.prog, ...parts.rebuild]), em, memory, pushed }
 }
@@ -1068,20 +1202,24 @@ export function compileCovenant(src, env = {}) {
   const { layout, inputs, body } = covenantLayout(prog, env.consts ?? {})
   const all = new Set(); writes(body, all)
   const written = new Set(layout.filter(f => all.has(f.name)).map(f => f.name))
+  const unbound = unboundFields(layout, inputs, body, written)
   /* The script's own length is inside it, twice over: in the preimage's size and in the varint the
-     rebuild steps past. Build, measure, build again until the length holds, as a covenant is built by hand. */
-  let L = 0
-  for (let k = 0; k < 8; k++) {
-    const r = buildCovenant(layout, inputs, body, env.state ?? {}, L, written, env.consts ?? {})
-    if (r.bytes.length === L) {
+     rebuild steps past. Build, measure, build again until the length holds, as a covenant is built by hand.
+     The scratch's size follows the length, and the program's addresses follow the scratch: it is grown, never
+     shrunk, until both hold. */
+  let L = 0, S = 0
+  for (let k = 0; k < 16; k++) {
+    const r = buildCovenant(layout, inputs, body, env.state ?? {}, L, written, env.consts ?? {}, S, unbound)
+    if (r.bytes.length === L && r.em.used <= S) {
       if (r.memory > MEMORY) {
         throw new Error(`BASIC: the covenant needs ${r.memory} bytes of memory, and the interpreter has ${MEMORY}`)
       }
       if (r.pushed > PUSH_MEM) throw new Error(`BASIC: the covenant pushes ${r.pushed} bytes, and the push space has ${PUSH_MEM}`)
       return { bytes: r.bytes, nVersion: JF_NVERSION, revision: JF_REVISION, compiler: BASIC_JF_VERSION,
-               layout, inputs, written: [...written], assigned: r.em.assigned, names: namesOf(r.em), memory: r.memory, pushed: r.pushed }
+               layout, inputs, written: [...written], unbound: [...unbound], assigned: r.em.assigned, names: namesOf(r.em),
+               memory: r.memory, pushed: r.pushed }
     }
-    L = r.bytes.length
+    L = r.bytes.length; S = Math.max(S, r.em.used)
   }
   throw new Error('BASIC: the script\'s length did not settle: it sits where a varint changes size')
 }
@@ -1089,10 +1227,10 @@ export function compileCovenant(src, env = {}) {
 /**
  * The frame and the rebuild of a covenant with this layout and length, as bytes: for the reader, which
  * finds them in a script by laying them down again. `written` is the fields the program assigns, `inputs`
- * what INPUT names. H is where the frame starts: past the declaration and the fields.
+ * what INPUT names, `unbound` the fields the frame drops. H is where the frame starts: past the declaration and the fields.
  */
-export function covenantFrame(layout, L, written, inputs = []) {
+export function covenantFrame(layout, L, written, inputs = [], unbound = []) {
   const state = Object.fromEntries(layout.map(f => [f.name, f.bytes ? new Array(f.width).fill(0) : 0]))
-  const { parts } = buildCovenant(layout, inputs, [], state, L, new Set(written), {})
+  const { parts } = buildCovenant(layout, inputs, [], state, L, new Set(written), {}, 0, new Set(unbound))
   return { H: parts.head.length, frame: parts.frame, rebuild: parts.rebuild }
 }

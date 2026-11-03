@@ -125,10 +125,28 @@ const ALL = [
     widths(0), 41, 42, [out(42, widths(7))], sign({ inputs: CARRIED, under: '01' }), false],
 ]
 
-const verifies = script => disassemble(script).flatMap((x, k, all) =>
-  x.name === '0=' && all[k + 1]?.name === '(ABORT")' && all[k + 1].data.length === 0 ? [x.at] : [])
-/** `0= (ABORT") ""` → `DROP 1 DROP`: the same three bytes, and the check gone. */
-const disable = (script, at) => { const b = Uint8Array.from(script); b[at] = JF_WORD.DROP; b[at + 1] = JF_SMALL0 + 1; b[at + 2] = JF_WORD.DROP; return b }
+/** n bytes that change nothing: jetForth has no NOP, so DUP DROP, and DUP DUP 2DROP for an odd count */
+const noop = n => n === 0 ? [] : n % 2 ? [JF_WORD.DUP, JF_WORD.DUP, JF_WORD['2DROP'], ...noop(n - 3)] : [JF_WORD.DUP, JF_WORD.DROP, ...noop(n - 2)]
+/** Every check in a script, by where it starts and the same number of bytes without it: each VERIFY's `(ABORT") ""`,
+ *  the flag dropped instead (DUP 2DROP); and the last, the next output's hash against hashOutputs, which is the tick's
+ *  result: `addr OUTPUTS-HASH BYTES=` made `2DROP TRUE`, the hash dropped and the result true. */
+const checks = script => {
+  const all = disassemble(script), out = []
+  for (const x of all) if (x.name === '(ABORT")' && x.data.length === 0) out.push({ at: x.at, with: [JF_WORD.DUP, JF_WORD['2DROP']] })
+  const k = all.length - 1
+  if (all[k]?.name === 'BYTES=' && all[k - 1]?.name === 'OUTPUTS-HASH' && all[k - 2]?.name === 'NUM') {
+    const at = all[k - 2].at
+    out.push({ at, with: [JF_WORD['2DROP'], JF_WORD.TRUE, ...noop(script.length - at - 2)] })
+  }
+  return out
+}
+const verifies = script => checks(script).map(c => c.at)
+/** The check that starts at `at` in `base` taken out, in the same number of bytes. `script` is base or one made from it
+ *  with a head of another length: the check is then as far from its end as in base's. */
+const disable = (script, at, base = script) => {
+  const c = checks(base).find(x => x.at === at), b = Uint8Array.from(script)
+  b.set(c.with, at + script.length - base.length); return b
+}
 /** Every tick PHP judged here, for tools/thread.mjs to judge again at the end. */
 const judgedByPhp = []
 /** Judge ticks in PHP. */
@@ -234,7 +252,7 @@ console.log('\n── a program that writes its $ field ──')
      Every length a push can be, measured: none does for this program. The check stays as rule 4 stated
      in the script — the state is fixed-width fields — rather than left to how its last bytes fall. */
   const at = verifies(tipB).at(-2)        // the width check: the last VERIFY before the binding
-  const m = judge([['', disable(tipB, at), 41, 42, [out(42, disable(malformed, at))], sign(), false]])
+  const m = judge([['', disable(tipB, at), 41, 42, [out(42, disable(malformed, at, tipB))], sign(), false]])
   ok(!m[0].accepted, 'wrong width, the check taken out: still refused — by the output comparison, as measured')
 }
 

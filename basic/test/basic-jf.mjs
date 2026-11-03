@@ -8,16 +8,19 @@
 // stack or raise the same refusal. Then every program is read back, and the reading compiles to the
 // same bytes; its listing's offsets are where the engine lets a jump land, and every branch lands on one.
 // Covenants with INPUT are compiled, refused and read back here; their ticks are judged in basic/test/thread.mjs.
-// Last, this compiler is proved against the ones before it, 0.3, 0.4, 0.5 and 0.6 as they were released, read from git.
+// Last, this compiler is proved against 0.7 as it was released, read from git, by results: the same values from every
+// program, and the same verdict from every covenant on the same ticks.
 import { execFileSync } from 'node:child_process'
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compileBasic, compileCovenant, covenantFrame, varintSize, JF_NVERSION, JF_REVISION, DECLARATION, BASIC_JF_VERSION } from '../basic-jf.mjs'
 import { unbasic, disassemble, jfListing } from '../unbasic-jf.mjs'
-import { InterpreterJF } from '../../tools/interpreter-jf.mjs'
+import { InterpreterJF, TICK_LIMITS, PUSH_BASE } from '../../tools/interpreter-jf.mjs'
 import { JF_LIT, JF_WORD, JF_PUSH_MAX } from '../../tools/ops-jf.mjs'
-import { declaredVersion } from '../../tools/thread.mjs'
+import { declaredVersion, tick, judge, jfCrypto } from '../../tools/thread.mjs'
+import { basicUnlock, ed25519Signer } from '../../tools/thread-writer.mjs'
+import { preimage } from '../../tools/preimage.mjs'
 import { verify as ed25519 } from '../../tools/ed25519.mjs'     // libsodium 1.0.22's rules, as server/ed25519.php's
 
 const HERE = dirname(fileURLToPath(import.meta.url)), ROOT = join(HERE, '../..')
@@ -119,6 +122,14 @@ const prog = (name, src, env, inputs, want) => progs.push({ name, src: V + src, 
   const env = { stack: ['a', 'b'], leave: ['x'] }
   prog('VERIFY passes and leaves nothing behind', 'VERIFY a > 0\nx = a + b', env, [3, 4], [7n])
   prog('VERIFY fails: the program is refused', 'VERIFY a > 10\nx = a + b', env, [3, 4], 'refused')
+  /* VERIFY is one comparison and one abort: every comparison, NOT and a plain number, each on both sides of where it holds */
+  const HOLDS = { '=': (a, b) => a === b, '<>': (a, b) => a !== b, '<': (a, b) => a < b, '>': (a, b) => a > b,
+                  '<=': (a, b) => a <= b, '>=': (a, b) => a >= b }
+  for (const [op, f] of Object.entries(HOLDS)) for (const a of [-1n, 0n, 1n, 2n]) {
+    prog(`VERIFY a ${op} b, ${a} and 1`, `VERIFY a ${op} b\nx = a`, env, [a, 1], f(a, 1n) ? [a] : 'refused')
+  }
+  for (const a of [-1n, 0n, 1n]) prog(`VERIFY NOT(a), ${a}`, 'VERIFY NOT(a)\nx = a', env, [a, 0], a === 0n ? [a] : 'refused')
+  for (const a of [-1n, 0n, 5n]) prog(`VERIFY a, ${a}`, 'VERIFY a\nx = a', env, [a, 0], a !== 0n ? [a] : 'refused')
   prog('MOD', 'x = MOD(a, b)', env, [17, 5], [2n])
   prog('WITHIN is [lo, hi), and true is -1', 'x = WITHIN(a, 0, 10) + WITHIN(b, 0, 10)', env, [5, 20], [-1n])
   prog('NOT: 0 becomes -1', 'x = NOT(a) + NOT(b)', env, [0, 7], [-1n])
@@ -150,6 +161,23 @@ const prog = (name, src, env, inputs, want) => progs.push({ name, src: V + src, 
   prog('RIPEMD160', `x = RIPEMD160(&H${d})`, env, [0, 0], [hex(h('ripemd160')(v))])
   prog('SHA1', `x = SHA1(&H${d})`, env, [0, 0], [hex(h('sha1')(v))])
   prog('a byte string left on the stack', 'x = CAT(&H01, NUM2BIN(a, 2))', env, [0x0302, 0], ['010203'])
+}
+
+// 5a. the scratch: bytes a word makes for its statement, used from the scratch's start again by the next one
+{
+  const env = { stack: ['a', 'b'], leave: ['x'] }
+  const n4 = v => Uint8Array.of(v, 0, 0, 0), cat = (...p) => Uint8Array.from(p.flatMap(b => [...b]))
+  const TWO = 'x = SAMEBYTES(SHA256(CAT(NUM2BIN(a, 4), NUM2BIN(b, 4))), SHA256(CAT(NUM2BIN(b, 4), NUM2BIN(a, 4))))'
+  prog('two hashes alive in one statement, unequal', TWO, env, [3, 5], [0n])
+  prog('two hashes alive in one statement, equal', TWO, env, [7, 7], [-1n])
+  prog('a hash written over the hash it hashes', 'x = SAMEBYTES(SHA256(SHA256(NUM2BIN(a, 4))), HASH256(NUM2BIN(a, 4)))', env, [9, 0], [-1n])
+  prog('a hash kept, past the scratch the next statement fills',
+    'h = SHA256(NUM2BIN(a, 4))\nVERIFY SIZE(CAT(CAT(NUM2BIN(b, 8), NUM2BIN(b, 8)), CAT(NUM2BIN(b, 8), NUM2BIN(b, 8)))) = 32\n' +
+    'x = SAMEBYTES(h, SHA256(NUM2BIN(a, 4)))', env, [2, 6], [-1n])
+  prog('SPLIT keeps what it splits', 'l, r = SPLIT(SHA256(NUM2BIN(a, 4)), 4)\nz = SHA256(NUM2BIN(b, 4))\n' +
+    'x = SAMEBYTES(CAT(l, r), SHA256(NUM2BIN(a, 4))) + SIZE(z)', env, [4, 8], [31n])
+  prog('hashes inside hashes, left on the stack', 'x = SHA256(CAT(SHA256(NUM2BIN(a, 4)), HASH160(NUM2BIN(b, 4))))', env, [1, 2],
+    [hex(h('sha256')(cat(h('sha256')(n4(1)), h('ripemd160')(h('sha256')(n4(2))))))])
 }
 
 // 5b. a program that ends with an IF and leaves nothing
@@ -445,14 +473,7 @@ console.log('\n── where a jump lands: on the start of an instruction, in eve
   ok(landed === jumps && jumps > 0, `★ and every branch the compiler writes lands on one, or on the end: ${landed}/${jumps}`)
 }
 
-// ── against 0.3 ──────────────────────────────────────────────────────────────────────────────────────
-/* Rule 3: a new version, proved against the old one. 0.3 is read from git as it was released, with the opcode table
-   it was written against, and its own buildCovenant exported from that copy, so it lays a covenant down for a length
-   it is given. 0.4 adds the declaration: a program is VER JF 3 and then 0.3's bytes. A covenant reads its own script,
-   so its frame is laid down for its own length: it is VER JF 3 and then 0.3's covenant laid down for 0.4's length,
-   but for one number when the program writes a field: how much of the scriptCode field comes before the state,
-   which now takes in the declaration. */
-const REV03 = '5f60455'
+// ── a released compiler, read from git ─────────────────────────────────────────────────────────────
 /** basic-jf.mjs as it was at a revision, importing that revision's opcode table; null when git does not have it */
 async function released(rev) {
   const show = path => {
@@ -477,102 +498,6 @@ const COVENANTS = [
   ...Array.from({ length: JF_PUSH_MAX }, (_, k) => [`DIM owner$20\nDIM tag$${k + 1}`, { owner: OWN, tag: new Array(k + 1).fill(7) }]),
   ...Array.from({ length: JF_PUSH_MAX }, (_, k) => [`DIM owner$20\nDIM tag$${k + 1}\ntag = &H${'cd'.repeat(k + 1)}`, { owner: OWN, tag: new Array(k + 1).fill(7) }]),
 ]
-console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.3, as released (${REV03}, from git) ──`)
-const B3 = await released(REV03)
-if (B3 === null) console.log(`  - no 0.3 to prove against: revision ${REV03} is not in this repository. The comparison is skipped, never counted as passed.`)
-else {
-  ok(B3.BASIC_JF_VERSION === '0.3', '0.3 loads beside this compiler, on its own opcode table')
-  const same = (a, b, keys) => keys.every(k => JSON.stringify(a[k], (_, v) => typeof v === 'bigint' ? String(v) : v)
-                                           === JSON.stringify(b[k], (_, v) => typeof v === 'bigint' ? String(v) : v))
-  let plain = 0
-  for (const p of progs) {
-    const c3 = B3.compileBasic(p.src, p.env)
-    if (hex(p.c.bytes) === hex([...DECLARATION, ...c3.bytes]) && same(p.c, c3, ['nVersion', 'revision', 'assigned', 'names', 'inputs', 'leave', 'memory', 'pushed'])) plain++
-    else console.log(`  ✗ ${p.name}\n      0.3 ${hex(c3.bytes)}\n      ${BASIC_JF_VERSION} ${hex(p.c.bytes)}`)
-  }
-  ok(plain === progs.length, `★★ every program here, ${plain}/${progs.length}: VER JF 3 and then 0.3's bytes, byte for byte, and all else the compiler gives back is 0.3's`)
-  const refused = [...refusals.map(([, src, env]) => [V + src, env]), ...VERSION_REFUSALS.map(([, src]) => [src, {}])]
-  let words = 0
-  for (const [src, env] of refused) {
-    let m3 = ''
-    try { B3.compileBasic(src, env) } catch (e) { m3 = e.message }
-    if (m3 !== '' && m3 === badRaw(src, env)) words++
-  }
-  ok(words === refused.length, `every program 0.3 refuses here, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
-
-  let laid = 0, oneNumber = 0, crossed = 0, back = 0
-  for (const [text, state] of COVENANTS) {
-    const src = V + text, c4 = compileCovenant(src, { state }), c3 = B3.compileCovenant(src, { state })
-    const prog = B3.parseProgram(src); prog.shift()
-    const { layout, body } = B3.covenantLayout(prog)
-    const all = new Set(); B3.writes(body, all)
-    const written = new Set(layout.filter(f => all.has(f.name)).map(f => f.name))
-    const L = c4.bytes.length, r = B3.buildCovenant(layout, body, state, L, written, {})
-    const was = Uint8Array.from([...DECLARATION, ...r.bytes])
-    const at = [...was.keys()].filter(k => was[k] !== c4.bytes[k])
-    // with a field written, the one byte that differs is the number in front of the SPLIT that cuts off what comes before the state
-    const d4 = disassemble(c4.bytes), d3 = disassemble(was), i = d4.findIndex(x => x.at === at[0])
-    const differs = written.size === 0 ? at.length === 0
-      : at.length === 1 && d3[i]?.at === at[0] && d3[i].value === BigInt(varintSize(L)) && d4[i].value === BigInt(varintSize(L) + DECLARATION.length)
-        && d4[i + 1]?.name === 'SPLIT'
-    if (was.length === L && differs && c4.memory === r.memory && c4.pushed === r.pushed
-        && same(c4, c3, ['nVersion', 'revision', 'layout', 'written', 'assigned', 'names'])) {
-      laid++
-      if (written.size) oneNumber++
-      if (c3.bytes.length < 253 && L >= 253) crossed++
-    } else console.log(`  ✗ ${text.split('\n').join(' · ')}: ${L} B, differs from 0.3's at ${at.join(', ') || 'no byte'}`)
-    const u = unbasic(c4.bytes)
-    let again = ''
-    try { again = hex(compileCovenant(u.lines.join('\n'), { state: u.state }).bytes) } catch (e) { again = e.message }
-    if (!u.stoppedAt && again === hex(c4.bytes)) back++
-    else console.log(`  ✗ ${text.split('\n').join(' · ')}: read back, ${u.stoppedAt ?? 'it compiles to different bytes'}`)
-  }
-  ok(laid === COVENANTS.length && crossed > 0,
-    `★★ every covenant here, ${laid}/${COVENANTS.length}, its length settled: VER JF 3 and then 0.3's covenant laid down for that length, byte for byte, `
-    + `but for that one number in the ${oneNumber} that write a field; in ${crossed}, 0.3's is under 253 bytes and ${BASIC_JF_VERSION}'s is not, so its length prefix is three bytes`)
-  ok(back === COVENANTS.length, `★ and each one read back compiles to the same bytes (${back}/${COVENANTS.length})`)
-}
-
-// ── against 0.4 ──────────────────────────────────────────────────────────────────────────────────────
-/* Rule 3 again: 0.5 adds INPUT, so a program or a covenant without it is 0.4's, byte for byte, and so is all else the
-   compiler gives back. 0.4 is read from git as it was released, with the opcode table it was written against. */
-const REV04 = 'd896c7d'
-console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.4, as released (${REV04}, from git) ──`)
-const B4 = await released(REV04)
-if (B4 === null) console.log(`  - no 0.4 to prove against: revision ${REV04} is not in this repository. The comparison is skipped, never counted as passed.`)
-else {
-  ok(B4.BASIC_JF_VERSION === '0.4', '0.4 loads beside this compiler, on its own opcode table')
-  const same = (a, b, keys) => keys.every(k => JSON.stringify(a[k], (_, v) => typeof v === 'bigint' ? String(v) : v)
-                                           === JSON.stringify(b[k], (_, v) => typeof v === 'bigint' ? String(v) : v))
-  let plain = 0
-  for (const p of progs) {
-    const c4 = B4.compileBasic(p.src, p.env)
-    if (hex(p.c.bytes) === hex(c4.bytes) && same(p.c, c4, ['nVersion', 'revision', 'assigned', 'names', 'inputs', 'leave', 'memory', 'pushed'])) plain++
-    else console.log(`  ✗ ${p.name}\n      0.4 ${hex(c4.bytes)}\n      ${BASIC_JF_VERSION} ${hex(p.c.bytes)}`)
-  }
-  ok(plain === progs.length, `★★ every program here, ${plain}/${progs.length}: 0.4's bytes, byte for byte, and all else the compiler gives back is 0.4's`)
-  const refused = [...refusals.map(([, src, env]) => [V + src, env]), ...VERSION_REFUSALS.map(([, src]) => [src, {}])]
-  let words = 0
-  for (const [src, env] of refused) {
-    let m4 = ''
-    try { B4.compileBasic(src, env) } catch (e) { m4 = e.message }
-    if (m4 !== '' && m4 === badRaw(src, env)) words++
-  }
-  ok(words === refused.length, `every program 0.4 refuses here, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
-  const named = [['DIM owner$20\nDIM n%4\ninput = n + 1\nn = input', { owner: OWN, n: 7 }]]
-  let laid = 0
-  for (const [text, state] of [...COVENANTS, ...named]) {
-    const src = V + text, c5 = compileCovenant(src, { state }), c4 = B4.compileCovenant(src, { state })
-    if (hex(c5.bytes) === hex(c4.bytes) && same(c5, c4, ['nVersion', 'revision', 'layout', 'written', 'assigned', 'names', 'memory', 'pushed'])) laid++
-    else console.log(`  ✗ ${text.split('\n').join(' · ')}: differs from 0.4's`)
-  }
-  ok(laid === COVENANTS.length + named.length,
-    `★★ every covenant here, ${laid}/${COVENANTS.length + named.length}, one with a variable named input among them: 0.4's bytes, byte for byte, and all else the compiler gives back is 0.4's`)
-  let none = 0
-  for (const [text, state] of INPUTS) { try { B4.compileCovenant(V + text, { state }) } catch { none++ } }
-  ok(none === INPUTS.length, `and 0.4 compiles none of the INPUT covenants here (${none}/${INPUTS.length}): INPUT is new in 0.5`)
-}
-
 // ── a field wider than a direct push ─────────────────────────────────────────────────────────────────
 /* A $ field is one push in the head, as Code.push lays it down: a direct push to 72 bytes, STR8 to 255, STR16 past that.
    The rebuild writes the same push, so a field of any width the interpreter's memory holds can be written and kept. */
@@ -593,9 +518,10 @@ const wideCov = (w, written) => V + `DIM owner$20\nDIM tag$${w}` + (written ? `\
   ok(forms === WIDE.length * 2, `tag$73 and tag$255 are one STR8 push in the head, tag$256 and tag$1200 one STR16, written or not (${forms}/${WIDE.length * 2})`)
   ok(back === WIDE.length * 2, `and each reads back to BASIC that compiles to the same bytes (${back}/${WIDE.length * 2})`)
   const past = (w, written) => { try { compileCovenant(wideCov(w, written), { state: { owner: OWN, tag: new Array(w).fill(7) } }); return '' } catch (e) { return e.message } }
-  ok(past(29998, false) === '' && /needs \d+ bytes of memory, and the interpreter has 65536/.test(past(29999, false))
-     && past(6458, true) === '' && /needs \d+ bytes of memory, and the interpreter has 65536/.test(past(6459, true)),
-     'the interpreter\'s memory bounds a field: 29,998 bytes never written, 6,458 written from an INPUT, and past it the compiler says so')
+  ok(past(65187, false) === '' && /needs \d+ bytes of memory, and the interpreter has 65536/.test(past(65188, false)),
+     'the interpreter\'s memory bounds a field never written: 65,187 bytes, the preimage holding the script; past it the compiler says so')
+  ok(past(32710, true) === '' && /pushes \d+ bytes, and the push space has 65536/.test(past(32711, true)),
+     'the push space bounds one written from an INPUT: 32,710 bytes, pushed in the head and by the tick; past it the compiler says so')
   ok(/from 1 to 65535/.test(past(65536, false)), `DIM tag$65536 is refused: one push holds at most 65535 bytes`)
 }
 
@@ -698,89 +624,107 @@ for (const [what, src, env, needle] of [...SIGNED_REFUSALS,
   ok(m.includes(needle), `${what}${m ? '' : ': NOT refused'}`)
 }
 
-// ── against 0.5 ──────────────────────────────────────────────────────────────────────────────────────
-/* Rule 3 again: 0.6 lets a $ field be wider than a direct push, so a program or a covenant 0.5 compiles is 0.5's, byte
-   for byte, and so is all else the compiler gives back. 0.5 is read from git as it was released. */
-const REV05 = 'edf926d'
-console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.5, as released (${REV05}, from git) ──`)
-const B5 = await released(REV05)
-if (B5 === null) console.log(`  - no 0.5 to prove against: revision ${REV05} is not in this repository. The comparison is skipped, never counted as passed.`)
+// ── against 0.7, by results ──────────────────────────────────────────────────────────────────────────
+/* Rule 3: a new version, proved against the old one, by results and not by bytes: this version writes other code, and
+   it must mean the same. 0.7 is read from git as it was released. Every program both compile leaves the same values;
+   every program 0.7 refuses, this version refuses in the same words; and every covenant here gives the same verdict on
+   the same ticks, built for each version's own script: its next tick, with the state 0.7's own program writes (its
+   fields read from 0.7's memory after a run), a next state that is not that one, the tick signed by another key, and
+   the value moved by 2, and nSequence not the next number. Each tick is judged by CovenantThread::judge (tools/judge-run.php) and judge() of
+   tools/thread.mjs, which must agree. */
+const REV07 = '64eb708'
+console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.7, as released (${REV07}, from git), by results ──`)
+const B7 = await released(REV07)
+if (B7 === null) console.log(`  - no 0.7 to prove against: revision ${REV07} is not in this repository. The comparison is skipped, never counted as passed.`)
 else {
-  ok(B5.BASIC_JF_VERSION === '0.5', '0.5 loads beside this compiler, on its own opcode table')
-  const same = (a, b, keys) => keys.every(k => JSON.stringify(a[k], (_, v) => typeof v === 'bigint' ? String(v) : v)
-                                           === JSON.stringify(b[k], (_, v) => typeof v === 'bigint' ? String(v) : v))
+  ok(B7.BASIC_JF_VERSION === '0.7', '0.7 loads beside this compiler, on its own opcode table')
+  /** What a compiled program leaves, read as the run above reads it: its values, or why it was refused */
+  const resultOf = async (bytes, p, leave) => {
+    const d = DECLARATION.length, vm = new InterpreterJF({ crypto })
+    try {
+      const stack = await vm.run(Uint8Array.from([...bytes.slice(0, d), ...pushes(p.inputs), ...bytes.slice(d)]))
+      const got = []; let s = 0
+      for (const _ of leave) {
+        if (typeof p.want !== 'string' && typeof p.want[got.length] === 'string') { got.push(hex(vm.read(stack[s], stack[s + 1]))); s += 2 }
+        else { got.push(String(stack[s])); s += 1 }
+      }
+      return JSON.stringify(got)
+    } catch (e) { return `refused: ${e.message}` }
+  }
   let plain = 0
   for (const p of progs) {
-    const c5 = B5.compileBasic(p.src, p.env)
-    if (hex(p.c.bytes) === hex(c5.bytes) && same(p.c, c5, ['nVersion', 'revision', 'assigned', 'names', 'inputs', 'leave', 'memory', 'pushed'])) plain++
-    else console.log(`  ✗ ${p.name}\n      0.5 ${hex(c5.bytes)}\n      ${BASIC_JF_VERSION} ${hex(p.c.bytes)}`)
+    const c7 = B7.compileBasic(p.src, p.env), r7 = await resultOf(c7.bytes, p, c7.leave), r8 = await resultOf(p.c.bytes, p, p.c.leave)
+    if (r7 === r8) plain++
+    else console.log(`  ✗ ${p.name}\n      0.7 ${r7}\n      ${BASIC_JF_VERSION} ${r8}`)
   }
-  ok(plain === progs.length, `★★ every program here, ${plain}/${progs.length}: 0.5's bytes, byte for byte, and all else the compiler gives back is 0.5's`)
-  const refused = [...refusals.map(([, src, env]) => [V + src, env]), ...VERSION_REFUSALS.map(([, src]) => [src, {}])]
-  let words = 0
-  for (const [src, env] of refused) {
-    let m5 = ''
-    try { B5.compileBasic(src, env) } catch (e) { m5 = e.message }
-    if (m5 !== '' && m5 === badRaw(src, env)) words++
-  }
-  ok(words === refused.length, `every program 0.5 refuses here, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
-  let laid = 0
-  for (const [text, state] of [...COVENANTS, ...INPUTS]) {
-    const src = V + text, c6 = compileCovenant(src, { state }), c5 = B5.compileCovenant(src, { state })
-    if (hex(c6.bytes) === hex(c5.bytes) && same(c6, c5, ['nVersion', 'revision', 'layout', 'inputs', 'written', 'assigned', 'names', 'memory', 'pushed'])) laid++
-    else console.log(`  ✗ ${text.split('\n').join(' · ')}: differs from 0.5's`)
-  }
-  ok(laid === COVENANTS.length + INPUTS.length,
-    `★★ every covenant here, ${laid}/${COVENANTS.length + INPUTS.length}, the INPUT ones among them: 0.5's bytes, byte for byte, and all else the compiler gives back is 0.5's`)
-  let none = 0
-  for (const w of WIDE) for (const written of [false, true]) {
-    try { B5.compileCovenant(wideCov(w, written), { state: { owner: OWN, tag: new Array(w).fill(7) } }) } catch (e) { if (/one direct push|from 1 to 75/.test(e.message)) none++ }
-  }
-  ok(none === WIDE.length * 2, `and 0.5 compiles none of the wide-field covenants above (${none}/${WIDE.length * 2}): past 72 bytes it refuses a field, past 75 its parser does; a field past a direct push is new in 0.6`)
-}
-
-// ── against 0.6 ──────────────────────────────────────────────────────────────────────────────────────
-/* Rule 3 again: 0.7 lets a program check a signature, so a program or a covenant 0.6 compiles is 0.6's, byte for byte,
-   and so is all else the compiler gives back. 0.6 is read from git as it was released. */
-const REV06 = 'cc36cd2'
-console.log(`\n── compiler ${BASIC_JF_VERSION} against 0.6, as released (${REV06}, from git) ──`)
-const B6 = await released(REV06)
-if (B6 === null) console.log(`  - no 0.6 to prove against: revision ${REV06} is not in this repository. The comparison is skipped, never counted as passed.`)
-else {
-  ok(B6.BASIC_JF_VERSION === '0.6', '0.6 loads beside this compiler, on its own opcode table')
-  const same = (a, b, keys) => keys.every(k => JSON.stringify(a[k], (_, v) => typeof v === 'bigint' ? String(v) : v)
-                                           === JSON.stringify(b[k], (_, v) => typeof v === 'bigint' ? String(v) : v))
-  let plain = 0
-  for (const p of progs) {
-    const c6 = B6.compileBasic(p.src, p.env)
-    if (hex(p.c.bytes) === hex(c6.bytes) && same(p.c, c6, ['nVersion', 'revision', 'assigned', 'names', 'inputs', 'leave', 'memory', 'pushed'])) plain++
-    else console.log(`  ✗ ${p.name}\n      0.6 ${hex(c6.bytes)}\n      ${BASIC_JF_VERSION} ${hex(p.c.bytes)}`)
-  }
-  ok(plain === progs.length, `★★ every program here, ${plain}/${progs.length}: 0.6's bytes, byte for byte, and all else the compiler gives back is 0.6's`)
+  ok(plain === progs.length, `★★ every program here, ${plain}/${progs.length}: the same values from 0.7's script and from this version's`)
   const refused = [...refusals.map(([, src, env]) => [V + src, env]), ...SIGNED_REFUSALS.map(([, src, env]) => [V + src, env]),
                    ...VERSION_REFUSALS.map(([, src]) => [src, {}])]
   let words = 0
   for (const [src, env] of refused) {
-    let m6 = ''
-    try { B6.compileBasic(src, env) } catch (e) { m6 = e.message }
-    if (m6 !== '' && m6 === badRaw(src, env)) words++
+    let m7 = ''
+    try { B7.compileBasic(src, env) } catch (e) { m7 = e.message }
+    if (m7 !== '' && m7 === badRaw(src, env)) words++
   }
-  ok(words === refused.length, `every program 0.6 refuses here, PREIMAGE and DEPTH among them, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
+  ok(words === refused.length, `every program 0.7 refuses here, PREIMAGE and DEPTH among them, ${BASIC_JF_VERSION} refuses in the same words (${words}/${refused.length})`)
+
+  // ── covenants: the same ticks, judged the same ──
+  const newKey = async () => ed25519Signer(await globalThis.crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']))
+  const OWNER = await newKey(), OTHER = await newKey(), ownerHash = [...h('ripemd160')(h('sha256')(OWNER.publicKey))]
+  const VALUE = 5n, TIP = new Uint8Array(32).fill(0x7e)
+  const le64 = v => hex(Uint8Array.from({ length: 8 }, (_, k) => Number((v >> BigInt(8 * k)) & 0xffn)))
+  /** What a tick carries for a covenant's INPUT line: bytes of its width, 4 when any length; a number, 3 */
+  const inputsFor = c => c.inputs.map(x => x.bytes ? new Uint8Array(x.width ?? 4).fill(0x61) : 3)
+  const tickFor = (lock, next, inputs, { key = OWNER, step = 1n, sequence = Number(VALUE + step) } = {}) =>
+    tick(TIP, 0, lock, VALUE, [{ value: VALUE + step, locking: next }], sequence, basicUnlock(key, inputs))
+  /** The state 0.7's program writes on its next tick: its fields, read from 0.7's memory after a run on a tick whose
+      successor is the tip's own script, which the run checks only at its end */
+  async function nextState(c, inputs) {
+    const t = await tickFor(c.bytes, c.bytes, inputs)
+    const vm = new InterpreterJF({ ...TICK_LIMITS, crypto: jfCrypto })
+    vm.setPreimage(Uint8Array.from(preimage({ entry: t.entry, inputIndex: 0, scriptCode: c.bytes, value: VALUE })))
+    Object.assign(vm, { ds: [], rs: [], frames: [], chan: [], opCount: 0, depth: 0, frameCells: 0, held: 0, sigOps: 0, mem: null,
+                        pmem: new Uint8Array(0), plen: 0, pbase: PUSH_BASE, mbase: 0 })
+    try {
+      await vm.exec(t.entry.inputs[0].unlocking, 0, true)
+      Object.assign(vm, { rs: [], frames: [], depth: 0, frameCells: 0 })
+      await vm.exec(c.bytes, vm.codeStart(c.bytes), true)
+    } catch {}
+    const addr = Object.fromEntries(Object.entries(c.names).map(([a, n]) => [n, BigInt(a)]))
+    return Object.fromEntries(c.layout.map(f => [f.name, f.bytes ? [...vm.read(vm.fetch(addr[f.name] + 8n), vm.fetch(addr[f.name]))] : vm.fetch(addr[f.name])]))
+  }
   const wide = WIDE.flatMap(w => [false, true].map(written => [wideCov(w, written).slice(V.length), { owner: OWN, tag: new Array(w).fill(7) }]))
-  let laid = 0
-  for (const [text, state] of [...COVENANTS, ...INPUTS, ...wide]) {
-    const src = V + text, c7 = compileCovenant(src, { state }), c6 = B6.compileCovenant(src, { state })
-    if (hex(c7.bytes) === hex(c6.bytes) && same(c7, c6, ['nVersion', 'revision', 'layout', 'inputs', 'written', 'assigned', 'names', 'memory', 'pushed'])) laid++
-    else console.log(`  ✗ ${text.split('\n').join(' · ')}: differs from 0.6's`)
+  const all = [...COVENANTS, ...INPUTS, ...wide], built = []
+  const compiles = (B, src, state) => { try { return B.compileCovenant(src, { state }).bytes } catch { return null } }
+  for (const [text, state] of all) {
+    const src = V + text, S0 = { ...state, owner: ownerHash }, c7 = B7.compileCovenant(src, { state: S0 }), inputs = inputsFor(c7)
+    let S1 = await nextState(c7, inputs), next = true
+    /* a program that writes a field at another width than its DIM can never tick: its next state does not compile */
+    if (compiles(B7, src, S1) === null) { S1 = S0; next = false }
+    const wrong = { ...S1, owner: S1.owner.map((b, k) => k === 0 ? b ^ 1 : b) }
+    const cases = [['its next tick', S1, {}, next], ['a next state not the one its program writes', wrong, {}, false],
+                   ['signed by another key', S1, { key: OTHER }, false], ['the value moved by 2', S1, { step: 2n }, false],
+                   ['nSequence not the next number', S1, { sequence: Number(VALUE) + 3 }, false]]
+    for (const [B, version] of [[B7, '0.7'], [{ compileCovenant }, BASIC_JF_VERSION]]) {
+      const lock = B.compileCovenant(src, { state: S0 }).bytes
+      for (const [what, S, opts, want] of cases) {
+        built.push({ text, version, what, want, lock, t: await tickFor(lock, B.compileCovenant(src, { state: S }).bytes, inputs, opts) })
+      }
+    }
   }
-  ok(laid === COVENANTS.length + INPUTS.length + wide.length,
-    `★★ every covenant here, ${laid}/${COVENANTS.length + INPUTS.length + wide.length}, the INPUT and wide-field ones among them: 0.6's bytes, byte for byte, and all else the compiler gives back is 0.6's`)
-  let none = 0
-  for (const p of SIGNED) { try { B6.compileBasic(p.src, p.env) } catch (e) { if (e.message === 'BASIC: no such word: ED25519SIG') none++ } }
-  for (const [text, state] of SIGNED_COVENANTS) { try { B6.compileCovenant(V + text, { state }) } catch (e) { if (e.message === 'BASIC: no such word: ED25519SIG') none++ } }
-  ok(none === SIGNED.length + SIGNED_COVENANTS.length,
-    `and 0.6 compiles none of the programs and covenants above that check a signature (${none}/${SIGNED.length + SIGNED_COVENANTS.length}): "no such word: ED25519SIG"; a program's signature check is new in ${BASIC_JF_VERSION}`)
+  const php = JSON.parse(execFileSync('php', [join(ROOT, 'tools/judge-run.php'), 'judge'], { maxBuffer: 1 << 28,
+    input: JSON.stringify(built.map(b => ({ entry: hex(b.t.bytes), input: 0, lock: hex(b.lock), value: le64(VALUE) }))) }).toString())
+  let judged = 0, accepted = 0
+  for (const [k, b] of built.entries()) {
+    const js = (await judge(b.t.entry, 0, b.lock, VALUE)).accepted === true, ph = php[k].accepted === true
+    if (js === ph && ph === b.want) { judged++; if (ph) accepted++ }
+    else console.log(`  ✗ ${b.text.split('\n').join(' · ')} [${b.version}] ${b.what}: PHP ${ph}, JS ${js}, want ${b.want}`)
+  }
+  ok(judged === built.length, `★★ every covenant here, ${all.length} of them, the INPUT and wide-field ones among them: its next tick, a next state ` +
+    `not the one its program writes, another key, the value moved by 2 and nSequence not the next number, each judged by both judges, under 0.7 and under ${BASIC_JF_VERSION} ` +
+    `(${judged}/${built.length}, ${accepted} accepted)`)
 }
+
 
 console.log(`\n${fail === 0 ? '✅' : '⚠'}  ${pass} passed, ${fail} failed   [BASIC → jetForth]`)
 process.exit(fail === 0 ? 0 : 1)

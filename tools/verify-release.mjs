@@ -640,10 +640,10 @@ console.log('\n── a clone of the repository ──')
     if (out === text) throw new Error(`the test's edit found nothing to change: ${from}`)
     return out
   }
-  /** The compiler bumped: a version of its own, and the bytes its words make placed 64 bytes higher, so the covenant it
-   *  compiles is other bytes */
+  /** The compiler bumped: a version of its own, and each check's abort given a one-character message, so the covenant it
+   *  compiles is other bytes and still a covenant */
   const bump = text => edit(edit(text, /BASIC_JF_VERSION = '([^']+)'/, "BASIC_JF_VERSION = '$1-later'"),
-                            /BUF_BASE = (\d+)/, (_, n) => `BUF_BASE = ${Number(n) + 64}`)
+                            "abortIf() { this.bytes(W('(ABORT\")'), 0) }", "abortIf() { this.bytes(W('(ABORT\")'), 1, 0x21) }")
 
   // the covenant, the compiler and its opcode table changed and not committed: the genesis is the commit's, so none is read
   const covenant = join(CLONE, 'basic', 'code-thread.bas'), compilerFile = join(CLONE, 'basic', 'basic-jf.mjs')
