@@ -407,7 +407,7 @@ async function loadCovenant(commit) {
   return Object.freeze({ commit, sourceHash: sha256(src), names, lockOf: (owner, code, rev = REV) => compile(owner, code, rev).bytes })
 }
 
-/** A lock's state as the reader reads it, with the names the covenant's compiler gives the fields: { owner, rev, code },
+/** A lock's state as the decompiler reads it, with the names the covenant's compiler gives the fields: { owner, rev, code },
  *  or null. It only explains a lock that is not the one expected: whether it is, its bytes decide */
 function stateOf(cov, lock) {
   try { return unbasic(lock, { names: cov.names }).state ?? null } catch { return null }

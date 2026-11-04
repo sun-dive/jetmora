@@ -51,7 +51,7 @@ const compiled = (rev, code, src = SRC) => compileCovenant(src, { state: { owner
 const lockOf = (rev, code) => compiled(rev, code).bytes
 const GENESIS_LOCK = lockOf(3, ZERO)
 const NAMES = compiled(3, ZERO).names
-/** A lock's state, read back by the reader: { owner, rev, code } */
+/** A lock's state, read back by the decompiler: { owner, rev, code } */
 const stateOf = lock => unbasic(lock, { names: NAMES }).state
 
 const file = f => readFileSync(join(ROOT, f))

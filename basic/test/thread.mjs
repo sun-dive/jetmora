@@ -208,7 +208,7 @@ console.log('\n── an 8-byte number field at its top ──')
   ok(!r[1].accepted, '★ n 2^63 − 1 → 2^63 is refused: the field is unsigned, and that value is not one the compiler lays down')
 }
 
-// ── the reader: every covenant here reads back to its BASIC, and that compiles to the same bytes ──
+// ── the decompiler: every covenant here reads back to its BASIC, and that compiles to the same bytes ──
 console.log('\n── every covenant read back ──')
 for (const [src, state] of [
   [MINIMAL, { owner: OWNER }], [COUNTING, { owner: OWNER, n: 7 }],

@@ -357,7 +357,7 @@ for (const p of progs) {
   if (again === hex(p.c.bytes)) round++
   else console.log(`  ✗ ${p.name}: reads as\n${r.lines.map(l => '      ' + l).join('\n')}`)
 }
-ok(read === progs.length, `the reader reads all ${read}/${progs.length} to the end`)
+ok(read === progs.length, `the decompiler reads all ${read}/${progs.length} to the end`)
 ok(round === progs.length, `★★ and every reading compiles back to the SAME BYTES (${round}/${progs.length})`)
 {
   const b = compileBasic(V + 'x = 1', { leave: ['x'] }).bytes

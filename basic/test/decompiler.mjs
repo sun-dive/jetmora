@@ -1,7 +1,7 @@
 // © 2026 sun-dive — Apache License 2.0.
 //
-// THE READER IS A VIEW OVER ANY jetForth (basic/unbasic-jf.mjs): it reads a script whoever wrote it.
-//   node basic/test/reader.mjs
+// THE DECOMPILER IS A VIEW OVER ANY jetForth (basic/unbasic-jf.mjs): it reads a script whoever wrote it.
+//   node basic/test/decompiler.mjs
 //   by hand    the channel covenant written by hand (basic/test/channel-target.mjs), read to its end, line by line
 //   counter    the 7 Sept counter (server/verify-wired.php), written by hand, read to its end
 //   0.7        every covenant here as compiler 0.7 wrote it (read from git, 64eb708), read to its end as a covenant,
@@ -73,7 +73,7 @@ const COVENANTS = [
   [CHANNEL.replace(/^\s*VERSION JF 3\s*$/m, ''), { owner: OWN, details: new Array(32).fill(5) }],
   [readFileSync(join(ROOT, 'basic/code-thread.bas'), 'utf8').replace(/^\s*VERSION JF 3\s*$/m, ''), null],
 ]
-console.log(`\n── every covenant here as 0.7 wrote it, read by this reader ──`)
+console.log(`\n── every covenant here as 0.7 wrote it, read by this decompiler ──`)
 const B7 = await released('64eb708')
 if (B7 === null) console.log('  - no 0.7 to read: revision 64eb708 is not in this repository. Skipped, never counted as passed.')
 else {
@@ -128,5 +128,5 @@ console.log('\n── what it cannot follow, said ──')
     `one whose arms agree is read as IF … ELSE … END IF, what is held across it kept: ${r3.lines.slice(1).join(' · ')}`)
 }
 
-console.log(`\n${fail === 0 ? '✅' : '⚠'}  ${pass} passed, ${fail} failed   [the reader, a view over any jetForth]`)
+console.log(`\n${fail === 0 ? '✅' : '⚠'}  ${pass} passed, ${fail} failed   [the decompiler, a view over any jetForth]`)
 process.exit(fail ? 1 : 0)

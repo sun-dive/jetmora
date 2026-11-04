@@ -1032,7 +1032,7 @@ class Emitter {
   }
 }
 
-/** variable address → name, for the reader: every variable but the compiler's own. */
+/** variable address → name, for the decompiler: every variable but the compiler's own. */
 const namesOf = em => Object.fromEntries([...em.vars.values()].filter(v => !v.name.startsWith('#')).map(v => [v.addr, v.name]))
 
 /**
@@ -1402,7 +1402,7 @@ export function compileCovenant(src, env = {}) {
 }
 
 /**
- * The frame and the rebuild of a covenant with this layout and length, as bytes: for the reader, which
+ * The frame and the rebuild of a covenant with this layout and length, as bytes: for the decompiler, which
  * finds them in a script by laying them down again. `written` is the fields the program assigns, `inputs`
  * what INPUT names, `unbound` the fields the frame drops, `inPlace` those the program writes in their places. H is where
  * the frame starts: past the declaration and the fields.

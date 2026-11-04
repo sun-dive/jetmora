@@ -1,6 +1,6 @@
 // © 2026 sun-dive — Apache License 2.0.
 /**
- * jetForth → BASIC: the reader, a view over any jetForth. It reads bytecode and renders what it computes, so a
+ * jetForth → BASIC: the decompiler, a view over any jetForth. It reads bytecode and renders what it computes, so a
  * script can be checked by reading it, whoever wrote it: this compiler, an earlier version of it, or a person.
  *
  * The method is grafverse/mint/src/unbasic.ts's: symbolic execution, on a stack of expressions instead of values.
@@ -10,11 +10,11 @@
  * by its place, so a span read back from memory is the expression written there, CAT of writes side by side, or
  * REPLACE(x, at, y) where a later write lies inside an earlier one. A value used twice is computed once: it gets a
  * name and a line of its own. Under everything the lock pushes are the tick's own pushes, in0, in1, … the first
- * pushed first. Anything the reader does not model stops the reading, by name, at the instruction. It never guesses:
+ * pushed first. Anything the decompiler does not model stops the reading, by name, at the instruction. It never guesses:
  * a listing that quietly skipped an instruction would be believed.
  *
  * A script's first instruction is the lock's declaration, `VER JF 3`, and it is read back as the VERSION line. A
- * script that declares no version, or another one, is not read: this reader reads JF revision 3.
+ * script that declares no version, or another one, is not read: this decompiler reads JF revision 3.
  *
  * Three readings, the first that holds:
  *   a covenant as this compiler writes one: its head pushes are its DIM fields, the stores that bind the tick's pushes
@@ -51,7 +51,7 @@ export function disassemble(b) {
     const at = i, op = b[i++]
     // a DEFS header opens the script, or follows the lock's declaration
     if (op === JF_RESERVED0 && (at === 0 || (at === 5 && out[0]?.name === 'VER')))
-      throw new Error('a DEFS header: stdForth functions, which this reader does not read')
+      throw new Error('a DEFS header: stdForth functions, which this decompiler does not read')
     if (op <= JF_PUSH_MAX) {
       if (i + op > b.length) throw new Error(`a push past the end, at ${at}`)
       out.push({ at, size: 1 + op, name: 'PUSH', data: b.slice(i, i + op) }); i += op; continue
@@ -66,7 +66,7 @@ export function disassemble(b) {
         let v = u(i, w); if (v >> BigInt(8 * w - 1)) v -= 1n << BigInt(8 * w)
         out.push({ at, size: 1 + w, name: 'NUM', value: v }); i += w; continue
       }
-      if (lit === 'LITBIG') throw new Error(`LITBIG at ${at}: a number wider than a cell, which this reader does not read`)
+      if (lit === 'LITBIG') throw new Error(`LITBIG at ${at}: a number wider than a cell, which this decompiler does not read`)
       const w = { STR8: 1, STR16: 2, STR32: 4 }[lit]
       const n = Number(u(i, w)); i += w
       if (i + n > b.length) throw new Error(`a string past the end, at ${at}`)
@@ -167,7 +167,7 @@ const B = (e, len) => ({ e, len })
 class Stop extends Error {}
 
 /**
- * The reading machine over a run of instructions. `vars` is what the reader knows of memory as variables:
+ * The reading machine over a run of instructions. `vars` is what the decompiler knows of memory as variables:
  * address → { name, type: 'n' | 'b' | 'hidden' }; a store to an address it does not know declares it. With
  * `opts.inputs`, reading below the bottom of the stack reaches the tick's own pushes, each a byte string, and names
  * them; without it, that stops the reading. `opts.names` names the variables a head field is bound to.
@@ -215,7 +215,7 @@ function machine(ins, vars, nameOf, opts = {}) {
   /** A place in memory: a number known when the script is read */
   const popAddr = () => {
     const v = popNum(), a = v.lin ? linConst(v.lin) : null
-    if (a === null) throw new Stop('an address that is worked out as the script runs, which this reader does not follow')
+    if (a === null) throw new Stop('an address that is worked out as the script runs, which this decompiler does not follow')
     return a
   }
   const write = (at, b) => { writes.push({ at, b, seq: ++seq }) }
@@ -512,7 +512,7 @@ function machine(ins, vars, nameOf, opts = {}) {
           case 'ABORT': say(depth, 'STOP'); k++; continue
           case '0BRANCH': { k = ifThen(k, depth); continue }
         }
-        throw new Stop('this reader does not model it')
+        throw new Stop('this decompiler does not model it')
       } catch (e) {
         if (e instanceof Stop && !e.message.includes(' at ')) throw new Stop(`${where}: ${e.message}`)
         throw e
@@ -538,12 +538,12 @@ function machine(ins, vars, nameOf, opts = {}) {
       const thenEnd = st.splice(0); st.push(...before)
       say(depth, 'ELSE')
       block(lElse, lEnd, depth + 1)
-      if (!same(thenEnd, st)) throw new Stop('the two arms of an IF leave different values on the stack, which this reader does not follow')
+      if (!same(thenEnd, st)) throw new Stop('the two arms of an IF leave different values on the stack, which this decompiler does not follow')
       say(depth, 'END IF')
       return lEnd
     }
     block(k + 1, lElse, depth + 1)
-    if (!same(before, st)) throw new Stop('an IF whose arm changes what is on the stack, which this reader does not follow')
+    if (!same(before, st)) throw new Stop('an IF whose arm changes what is on the stack, which this decompiler does not follow')
     say(depth, 'END IF')
     return lElse
   }
@@ -565,7 +565,7 @@ function machine(ins, vars, nameOf, opts = {}) {
     else if (stK >= 0 && isNum(t, stK) && is(t + 1, '@') && is(t + 2, '0<') && is(t + 3, '0BRANCH') && test(t + 4, '<')
       && is(t + 10, 'BRANCH') && test(t + 11, '>') && is(t + 17, '0BRANCH')
       && ins[t + 3].arg === ins[t + 11].at && ins[t + 10].arg === ins[t + 17].at) body = t + 18
-    else throw new Stop('a loop whose test this reader does not recognise')
+    else throw new Stop('a loop whose test this decompiler does not recognise')
     const back = loops.get(top).back
     if (ins[body - 1].arg !== ins[back].at + 3) throw new Stop('a loop whose exit is not straight after its BRANCH back')
     const inc = stK < 0
@@ -718,7 +718,7 @@ function readCovenant(bytes, ins, opts, version) {
 export function unbasic(bytes, opts = {}) {
   if (opts.nVersion !== undefined && opts.nVersion >>> 0 !== JF_NVERSION) {
     return { lines: [], covenant: false, leave: [], stack: [],
-      stoppedAt: `the entry names version 0x${(opts.nVersion >>> 0).toString(16)}, and this reader reads JF revision ${JF_REVISION} (0x${JF_NVERSION.toString(16)})` }
+      stoppedAt: `the entry names version 0x${(opts.nVersion >>> 0).toString(16)}, and this decompiler reads JF revision ${JF_REVISION} (0x${JF_NVERSION.toString(16)})` }
   }
   // the lock's declaration, VER and the four bytes of the version its code is written for, is the VERSION line
   const declared = bytes.length >= 5 && bytes[0] === JF_WORD.VER ? (bytes[1] | (bytes[2] << 8) | (bytes[3] << 16) | (bytes[4] << 24)) >>> 0 : null
@@ -728,7 +728,7 @@ export function unbasic(bytes, opts = {}) {
   }
   if (declared !== JF_NVERSION) {
     return { lines: [], covenant: false, leave: [], stack: [],
-      stoppedAt: `the script declares ${versionText(declared)} (0x${declared.toString(16)}), and this reader reads JF revision ${JF_REVISION} (0x${JF_NVERSION.toString(16)})` }
+      stoppedAt: `the script declares ${versionText(declared)} (0x${declared.toString(16)}), and this decompiler reads JF revision ${JF_REVISION} (0x${JF_NVERSION.toString(16)})` }
   }
   const lines = [`VERSION ${versionText(declared)}`]
   let ins
