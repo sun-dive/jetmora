@@ -495,6 +495,14 @@ const COVENANTS = [
   ['DIM owner$20\nDIM n%4\nDIM tag$3\nIF n > 3 THEN\n tag = &H010203\nELSE\n IF n = 0 THEN n = 9\nEND IF\nn = n + 2 ^ 3', { owner: OWN, n: 9, tag: [7, 8, 9] }],
   ['DIM owner$20\nDIM n%4\nx = n * 2\nVERIFY x > 0', { owner: OWN, n: 3 }],
   ['DIM owner$20\nDIM h$32\nh = HASH256(CAT(h, owner))', { owner: OWN, h: new Array(32).fill(1) }],
+  // a $ field written in its place in the next output: read after, in an IF taken and not, twice, of another width
+  ['DIM owner$20\nDIM h$32\nh = SHA256(owner)\nVERIFY SAMEBYTES(h, SHA256(owner))', { owner: OWN, h: new Array(32).fill(1) }],
+  ['DIM owner$20\nDIM n%4\nDIM h$32\nIF n > 3 THEN h = SHA256(owner)\nn = n + 1', { owner: OWN, n: 2, h: new Array(32).fill(1) }],
+  ['DIM owner$20\nDIM n%4\nDIM h$32\nIF n > 3 THEN h = SHA256(owner)\nn = n + 1', { owner: OWN, n: 5, h: new Array(32).fill(1) }],
+  ['DIM owner$20\nDIM h$32\nh = SHA256(owner)\nk = h\nh = SHA256(k)\nVERIFY SAMEBYTES(k, SHA256(owner))', { owner: OWN, h: new Array(32).fill(1) }],
+  ['DIM owner$20\nDIM h$32\nh = HASH160(owner)', { owner: OWN, h: new Array(32).fill(1) }],
+  ['DIM owner$20\nDIM b$4\nDIM n%4\nb = NUM2BIN(n, 4)\nn = n + 1', { owner: OWN, b: [0, 0, 0, 0], n: 6 }],
+  ['DIM owner$20\nDIM b$52\nb = CAT(SHA256(owner), HASH160(owner))', { owner: OWN, b: new Array(52).fill(2) }],
   ...Array.from({ length: JF_PUSH_MAX }, (_, k) => [`DIM owner$20\nDIM tag$${k + 1}`, { owner: OWN, tag: new Array(k + 1).fill(7) }]),
   ...Array.from({ length: JF_PUSH_MAX }, (_, k) => [`DIM owner$20\nDIM tag$${k + 1}\ntag = &H${'cd'.repeat(k + 1)}`, { owner: OWN, tag: new Array(k + 1).fill(7) }]),
 ]
@@ -518,8 +526,8 @@ const wideCov = (w, written) => V + `DIM owner$20\nDIM tag$${w}` + (written ? `\
   ok(forms === WIDE.length * 2, `tag$73 and tag$255 are one STR8 push in the head, tag$256 and tag$1200 one STR16, written or not (${forms}/${WIDE.length * 2})`)
   ok(back === WIDE.length * 2, `and each reads back to BASIC that compiles to the same bytes (${back}/${WIDE.length * 2})`)
   const past = (w, written) => { try { compileCovenant(wideCov(w, written), { state: { owner: OWN, tag: new Array(w).fill(7) } }); return '' } catch (e) { return e.message } }
-  ok(past(65187, false) === '' && /needs \d+ bytes of memory, and the interpreter has 65536/.test(past(65188, false)),
-     'the interpreter\'s memory bounds a field never written: 65,187 bytes, the preimage holding the script; past it the compiler says so')
+  ok(past(65249, false) === '' && /needs \d+ bytes of memory, and the interpreter has 65536/.test(past(65250, false)),
+     'the interpreter\'s memory bounds a field never written: 65,249 bytes, the preimage holding the script; past it the compiler says so')
   ok(past(32710, true) === '' && /pushes \d+ bytes, and the push space has 65536/.test(past(32711, true)),
      'the push space bounds one written from an INPUT: 32,710 bytes, pushed in the head and by the tick; past it the compiler says so')
   ok(/from 1 to 65535/.test(past(65536, false)), `DIM tag$65536 is refused: one push holds at most 65535 bytes`)

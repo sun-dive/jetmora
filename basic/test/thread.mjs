@@ -234,26 +234,30 @@ console.log('\n── a program that writes its $ field ──')
   const tipT = compileCovenant(TRANSFER, { state: { owner: OWNER } }).bytes
   const nextT = compileCovenant(TRANSFER, { state: { owner: OTHER } }).bytes
   const tipB = compileCovenant(BADWIDTH, { state: { owner: OWNER } }).bytes
-  /* what BADWIDTH's rebuild would make: the declaration, then a push that says 20 bytes and carries 2, so 18 bytes
-     of the code after it would be read as the field, and the rest would run */
-  const malformed = Uint8Array.from([...tipB.slice(0, 5), 20, 1, 2, ...tipB.slice(26)])
+  /* The rebuild writes a field over its own place, so a value shorter than the field would leave the old value's last
+     bytes behind it: what BADWIDTH's rebuild would make without its width check is this script with 01 02 over the
+     owner's first two bytes, at 6, past the declaration and the push's head. */
+  const shortOver = Uint8Array.from(tipB); shortOver.set([1, 2], 6)
+  /* A field the program writes in its place in the next output is one whose bytes have its width: a hash of another
+     width goes to the rebuild and its check. Written in place, its 20 bytes would land over the old field's first 20. */
+  const SHORTHASH = 'VERSION JF 3\nDIM owner$20\nDIM h$32\nh = HASH160(owner)'
+  const tipH = compileCovenant(SHORTHASH, { state: { owner: OWNER, h: new Array(32).fill(9) } }).bytes
+  const overH = Uint8Array.from(tipH); overH.set(hash160(Uint8Array.from(OWNER)), 27)
   const list = [
     ['transfer: the thread passes to the new owner', tipT, 41, 42, [out(42, nextT)], sign(), true],
     ['transfer: and only to them', tipT, 41, 42, [out(42, tipT)], sign(), false],
     ['transfer: the new owner signs the next tick', nextT, 42, 43, [out(43, nextT)], sign({ key: 'other' }), true],
     ['transfer: the old owner no longer can', nextT, 42, 43, [out(43, nextT)], sign(), false],
-    ['wrong width: the malformed successor is refused', tipB, 41, 42, [out(42, malformed)], sign(), false],
+    ['wrong width: the successor with 01 02 over the owner\'s first two bytes is refused', tipB, 41, 42, [out(42, shortOver)], sign(), false],
+    ['wrong width: HASH160 into a 32-byte field, its 20 bytes over the old first 20, is refused', tipH, 41, 42, [out(42, overH)], sign(), false],
   ]
   const r = judge(list)
   list.forEach((c, k) => ok(r[k].accepted === c[6], `${c[0]} — ${r[k].accepted ? 'accepted' : 'refused'}`))
-  /* With the width check taken out, a wrong-width successor is still refused here: its length no longer
-     matches the length the rebuild carries over, so the output's bytes differ. A value LONGER than its
-     field could pass only if the bytes it pushes past the script happened to read as one more output.
-     Every length a push can be, measured: none does for this program. The check stays as rule 4 stated
-     in the script — the state is fixed-width fields — rather than left to how its last bytes fall. */
-  const at = verifies(tipB).at(-2)        // the width check: the last VERIFY before the binding
-  const m = judge([['', disable(tipB, at), 41, 42, [out(42, disable(malformed, at, tipB))], sign(), false]])
-  ok(!m[0].accepted, 'wrong width, the check taken out: still refused — by the output comparison, as measured')
+  /* Taken out, the width check lets that successor through: the check is what refuses it, rule 4 as the script states
+     it, the state being fixed-width fields. */
+  const at = verifies(tipB).at(-2)        // the width check: the last check before the result
+  const m = judge([['', disable(tipB, at), 41, 42, [out(42, disable(shortOver, at))], sign(), true]])
+  ok(m[0].accepted, 'wrong width, the check taken out: that tick is accepted, so the check is what refuses it')
 }
 
 // ── INPUT: a release that carries its code; the successor holds its SHA-256 and its revision ──

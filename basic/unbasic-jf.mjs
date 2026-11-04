@@ -219,6 +219,17 @@ function machine(ins, vars, nameOf, opts = {}) {
     return a
   }
   const write = (at, b) => { writes.push({ at, b, seq: ++seq }) }
+  /* A word that writes a $ field's bytes in their place in the next output (`opts.places`) is the program assigning
+     the field; when what it wrote is then stored in a variable, the store says so instead. `n` is where that store's
+     2! is: past the address CAT and NUM2BIN leave, or past the ( d u ) a hash's is given. */
+  const placed = (k, d, b, n) => {
+    const f = opts.places?.get(Number(d))
+    if (!f || !b.len || linConst(b.len) !== BigInt(f.width)) return
+    let stored = is(k + n, '2!')
+    for (let j = 1; j < n; j++) stored &&= isNum(k + j)
+    if (stored) return
+    say(cur, `${f.name} = ${b.e.txt}`); written.add(f.name)
+  }
   /** The byte string a ( c-addr u ) pair stands for: a string on the stack, or what was written to memory there */
   const spanOf = (a, u) => {
     if (a.k === 'a' && u.k === 'u' && a.b === u.b) return a.b
@@ -402,12 +413,12 @@ function machine(ins, vars, nameOf, opts = {}) {
           case 'BYTES=': { const b2 = popBytes(), b1 = popBytes(); st.push(N(call('SAMEBYTES', b1.e, b2.e), true)); k++; continue }
           case 'CAT': {
             const d = popAddr(), b2 = popBytes(), b1 = popBytes(), b = B(call('CAT', b1.e, b2.e), linAdd(b1.len, b2.len))
-            write(d, b); pushBytes(b, d); k++; continue
+            write(d, b); placed(k, d, b, 2); pushBytes(b, d); k++; continue
           }
           case 'NUM2BIN': {
             const d = popAddr(), w = popNum(), v = popNum(), b = B(call('NUM2BIN', v.v, w.v), w.lin ?? null); b.n = w.v
             if (!b.len) b.len = linOf(`SIZE(${b.e.txt})`)
-            write(d, b); pushBytes(b, d); k++; continue
+            write(d, b); placed(k, d, b, 2); pushBytes(b, d); k++; continue
           }
           case 'SUBSTR': case 'LEFT': case 'RIGHT': {
             const d = popAddr(), n = popNum(), beg = x.name === 'SUBSTR' ? popNum() : null, s = popBytes()
@@ -440,7 +451,7 @@ function machine(ins, vars, nameOf, opts = {}) {
           }
           case 'TXVALUE': case 'NSEQUENCE': case 'LOCKTIME': st.push(N(call(x.name))); k++; continue
           case 'SHA256': case 'HASH256': case 'HASH160': case 'RIPEMD160': case 'SHA1': {
-            const d = popAddr(), b = popBytes(); write(d, B(call(x.name, b.e), lin(HASH[x.name]))); k++; continue
+            const d = popAddr(), b = popBytes(), h = B(call(x.name, b.e), lin(HASH[x.name])); write(d, h); placed(k, d, h, 4); k++; continue
           }
           case 'ED25519-CHECKSIG': {
             const m = popBytes(), p = popBytes(), s = popBytes(); st.push(N(call('ED25519SIG', s.e, p.e, m.e), true)); k++; continue
@@ -611,15 +622,14 @@ function readCovenant(bytes, ins, opts, version) {
     })
     if (kinds.every((x, i) => !bound[i] || bound[i].addr === x.addr)) kindsTried.push(kinds)
   }
-  // then the inputs, the last first, and the key and the signature: the last two of the frame's stores are its own
+  // then the inputs, the last first; the key and the signature stay on the stack
   const stores = []
   while (ins[k]?.name === 'NUM' && ins[k + 1]?.name === '2!') { stores.push(Number(ins[k].value)); k += 2 }
-  if (stores.length < 2) return null
   /* Each input's checks follow, in the order INPUT names them: a $ input's size when it has a width; a % input's size,
      its bytes read as a number into the variable the program reads, and at 8 bytes that the number is not negative.
      What is read here is only a reading: the frame laid down for it must then match byte for byte. */
   const given = []
-  for (const a of stores.slice(0, -2).reverse()) {
+  for (const a of [...stores].reverse()) {
     const at = (j, name, v) => ins[k + j]?.name === name && (v === undefined || ins[k + j].value === BigInt(v))
     /* each check is one comparison, the opposite of what must hold, and an abort: SIZE <> w for SIZE = w, > for <= */
     const size = cmp => at(0, 'NUM', a) && at(1, '2@') && at(2, 'NIP') && at(3, 'NUM') && at(4, cmp)
@@ -644,18 +654,26 @@ function readCovenant(bytes, ins, opts, version) {
     const dollars = layout.filter(f => f.bytes).map(f => f.name)
     const numbers = layout.filter(f => !f.bytes).map(f => f.name)
     const dropped = layout.filter((_, i) => kinds[i].dropped).map(f => f.name)
-    const { H, frame } = covenantFrame(layout, L, [], inputs, dropped)
+    const { H, frame, places } = covenantFrame(layout, L, [], inputs, dropped)
     if (!same(H, frame)) continue
-    // which fields the program writes decides the rebuild: try each, then hold the reading to it
+    /* which fields the program writes decides the rebuild, and of its $ fields, which it writes in their places in the
+       next output, which the rebuild then leaves: try each, then hold the reading to it */
     const tries = [[]]
     for (let m = 0; m < 1 << dollars.length; m++) {
       const d = dollars.filter((_, j) => m >> j & 1)
       if (d.length) tries.push(d)
       if (numbers.length) tries.push([...d, numbers[0]])
     }
-    for (const written of tries) {
-      const { rebuild } = covenantFrame(layout, L, written, inputs, dropped)
-      if (!same(L - rebuild.length, rebuild)) continue
+    const placings = written => {
+      const d = written.filter(x => dollars.includes(x))
+      return Array.from({ length: 1 << d.length }, (_, m) => d.filter((_, j) => m >> j & 1))
+    }
+    /* The rebuild with no field to write is the last check alone, the tail of every covenant: the longest rebuild that
+       matches is tried first, or a shorter one would read the rest of it as the program */
+    const matching = tries.flatMap(written => placings(written).map(inPlace =>
+      ({ written, inPlace, rebuild: covenantFrame(layout, L, written, inputs, dropped, inPlace).rebuild })))
+      .filter(x => same(L - x.rebuild.length, x.rebuild)).sort((a, b) => b.rebuild.length - a.rebuild.length)
+    for (const { written, rebuild } of matching) {
       const state = Object.fromEntries(layout.map((f, i) => [f.name, fieldValue(f, ins[i].data)]))
       const dims = layout.map(f => `DIM ${f.name}${f.bytes ? '$' : '%'}${f.width}`)
       if (odd) {
@@ -667,7 +685,8 @@ function readCovenant(bytes, ins, opts, version) {
       const vars = new Map([...layout.map((f, i) => [kinds[i].addr, { name: f.name, type: f.bytes ? 'b' : 'n' }]),
                             ...inputs.map((x, i) => [given[i].addr, { name: x.name, type: x.bytes ? 'b' : 'n' }])])
       const body = disassemble(bytes.slice(start, stop))
-      const m = machine(body, vars, a => opts.names?.[a] ?? `v${a}`)
+      /* every $ field's place: a field written there is one the program writes, which the reading is then held to */
+      const m = machine(body, vars, a => opts.names?.[a] ?? `v${a}`, { places })
       let stoppedAt
       try { m.block(0, body.length, 0); if (m.st.length) throw new Stop('values left on the stack at the end of the program') }
       catch (e) { if (!(e instanceof Stop)) throw e; stoppedAt = e.message }
